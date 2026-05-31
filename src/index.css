@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+html,
+body {
+  overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root {
+  --bg-main: #121212;
+  --bg-card: #1a1a1a;
+  --shadow-dark: #0e0e0e;
+  --shadow-light: #262626;
+  --text-main: #e5e7eb;
+  --text-muted: #9ca3af;
+  --accent: #ffc107;
+}
+
+.light {
+  --bg-main: #f0f2f5;
+  --bg-card: #ffffff;
+  --shadow-dark: #d1d9e6;
+  --shadow-light: #ffffff;
+  --text-main: #1f2937;
+  --text-muted: #6b7280;
+}
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-main: var(--bg-main);
+  --color-card: var(--bg-card);
+  --color-accent: var(--accent);
+  --color-main-text: var(--text-main);
+  --color-muted-text: var(--text-muted);
+}
+
+@layer components {
+  .neumorphic {
+    background: var(--bg-card);
+    box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+    border-radius: 1rem;
+    color: var(--text-main);
+  }
+
+  .neumorphic-inset {
+    background: var(--bg-card);
+    box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+    border-radius: 0.5rem;
+    color: var(--text-main);
+  }
+
+  .btn-neumorphic {
+    @apply transition-all active:scale-95 cursor-pointer flex items-center justify-center;
+    background: var(--bg-card);
+    box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
+    color: var(--text-main);
+  }
+
+  .btn-neumorphic:active {
+    box-shadow: inset 2px 2px 5px var(--shadow-dark), inset -2px -2px 5px var(--shadow-light);
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all hover:text-accent;
+    color: var(--text-muted);
+  }
+
+  .nav-item.active {
+    @apply text-accent;
+    background: var(--bg-main);
+    box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+  }
+}
+
+body {
+  @apply bg-main text-main-text antialiased;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}

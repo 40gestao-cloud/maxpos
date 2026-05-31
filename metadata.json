@@ -1,0 +1,6 @@
+{
+  "name": "MaxPOS ERP/PDV",
+  "description": "Sistema de Gestão e Ponto de Venda Moderno com Design Neumórfico",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}
