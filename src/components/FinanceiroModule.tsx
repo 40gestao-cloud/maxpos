@@ -69,6 +69,32 @@ export default function FinanceiroModule() {
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [installmentsMap, setInstallmentsMap] = useState<Record<string, CreditInstallment[]>>({});
   const [loadingInst, setLoadingInst] = useState<Record<string, boolean>>({});
+  const [dismissedFlow, setDismissedFlow] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = localStorage.getItem('financeiro_dismissed_flow');
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch { return new Set<string>(); }
+  });
+
+  const persistDismissedFlow = (set: Set<string>) => {
+    localStorage.setItem('financeiro_dismissed_flow', JSON.stringify([...set]));
+  };
+
+  const dismissFlow = (key: string) => {
+    setDismissedFlow(prev => {
+      const next = new Set<string>(prev);
+      next.add(key);
+      persistDismissedFlow(next);
+      return next;
+    });
+  };
+
+  const restoreAllFlow = () => {
+    const empty = new Set<string>();
+    setDismissedFlow(empty);
+    persistDismissedFlow(empty);
+  };
 
   useEffect(() => {
     let active = true;
@@ -145,13 +171,18 @@ export default function FinanceiroModule() {
     }
   };
 
-  // ─── derived totals ────────────────────────────────────────
+  // ─── derived totals (respeitam dismissedFlow) ──────────────
+  // Apagar um registro do "Fluxo de Caixa Recente" reduz os
+  // totalizadores correspondentemente. "Mostrar todas" restaura.
 
-  const totalSales = sales.reduce((acc, s) => acc + s.total, 0);
-  const totalReceivable = accounts
+  const visibleSalesForStats = sales.filter(s => !dismissedFlow.has(`sale-${s.id}`));
+  const visibleAccountsForStats = accounts.filter(a => !dismissedFlow.has(`acc-${a.id}`));
+
+  const totalSales = visibleSalesForStats.reduce((acc, s) => acc + s.total, 0);
+  const totalReceivable = visibleAccountsForStats
     .filter(a => a.type === 'receivable' && a.status === 'pending')
     .reduce((acc, a) => acc + a.amount, 0);
-  const totalPayable = accounts
+  const totalPayable = visibleAccountsForStats
     .filter(a => a.type === 'payable' && a.status === 'pending')
     .reduce((acc, a) => acc + a.amount, 0);
 
@@ -210,7 +241,7 @@ export default function FinanceiroModule() {
     { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, color: 'text-emerald-500', icon: DollarSign },
     { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, color: 'text-blue-500', icon: ArrowUpCircle },
     { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, color: 'text-red-500', icon: ArrowDownCircle },
-    { label: 'Ticket Médio', value: `R$ ${sales.length ? (totalSales / sales.length).toFixed(2) : '0.00'}`, color: 'text-[#FFC107]', icon: CreditCard },
+    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, color: 'text-[#FFC107]', icon: CreditCard },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
@@ -238,6 +269,7 @@ export default function FinanceiroModule() {
   };
 
   const filteredAccounts = accounts.filter(a => {
+    if (dismissedFlow.has(`acc-${a.id}`)) return false;
     const matchesType = activeTab === 'all' || a.type === activeTab;
     const matchesStatus = filters.status === 'all' || a.status === filters.status;
     const matchesDate = (!filters.startDate || a.dueDate >= filters.startDate) &&
@@ -246,6 +278,7 @@ export default function FinanceiroModule() {
   });
 
   const filteredSales = sales.filter(s => {
+    if (dismissedFlow.has(`sale-${s.id}`)) return false;
     const matchesType = activeTab === 'all' || activeTab === 'receivable';
     const matchesStatus = filters.status === 'all' || filters.status === 'paid';
     const saleDate = s.date.split('T')[0];
@@ -253,6 +286,8 @@ export default function FinanceiroModule() {
                         (!filters.endDate || saleDate <= filters.endDate);
     return matchesType && matchesStatus && matchesDate;
   });
+
+  const dismissedFlowCount = dismissedFlow.size;
 
   const [fiadoClients, setFiadoClients] = useState<any[]>([]);
   useEffect(() => {
@@ -270,7 +305,7 @@ export default function FinanceiroModule() {
           return (
             <div key={i} className="neumorphic p-4 md:p-6 group cursor-default relative overflow-hidden">
               <div className="flex justify-between items-start mb-2 relative z-10">
-                <span className="text-[8px] md:text-[10px] text-muted-text font-black uppercase tracking-widest leading-tight">{stat.label}</span>
+                <span className="text-[8px] md:text-sm text-gray-600 font-black uppercase tracking-widest leading-tight">{stat.label}</span>
                 <Icon size={14} className={`${stat.color} opacity-40`} />
               </div>
               <h3 className={`text-sm md:text-2xl font-black ${stat.color} relative z-10`}>
@@ -290,8 +325,8 @@ export default function FinanceiroModule() {
           <div className="flex items-center gap-4">
             <div className="p-4 rounded-2xl bg-red-500/10 text-red-500"><ArrowDownCircle size={24} /></div>
             <div className="text-left">
-              <h4 className="text-sm font-black text-main-text uppercase tracking-widest">Lançar Conta a Pagar</h4>
-              <p className="text-[10px] text-muted-text uppercase font-bold">Registrar nova saída financeira</p>
+              <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Lançar Conta a Pagar</h4>
+              <p className="text-sm text-gray-600 uppercase font-bold">Registrar nova saída financeira</p>
             </div>
           </div>
           <Plus size={24} className="text-red-500 opacity-20 group-hover:opacity-100 transition-opacity" />
@@ -304,8 +339,8 @@ export default function FinanceiroModule() {
           <div className="flex items-center gap-4">
             <div className="p-4 rounded-2xl bg-blue-500/10 text-blue-500"><ArrowUpCircle size={24} /></div>
             <div className="text-left">
-              <h4 className="text-sm font-black text-main-text uppercase tracking-widest">Lançar Conta a Receber</h4>
-              <p className="text-[10px] text-muted-text uppercase font-bold">Registrar nova entrada financeira</p>
+              <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Lançar Conta a Receber</h4>
+              <p className="text-sm text-gray-600 uppercase font-bold">Registrar nova entrada financeira</p>
             </div>
           </div>
           <Plus size={24} className="text-blue-500 opacity-20 group-hover:opacity-100 transition-opacity" />
@@ -316,63 +351,63 @@ export default function FinanceiroModule() {
       {showAddModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[#FFC107]">
-            <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-muted-text hover:text-red-500 transition-colors">
+            <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-gray-600 hover:text-red-500 transition-colors">
               <X size={24} />
             </button>
             <div className="space-y-1">
-              <h3 className="text-xl font-black text-main-text uppercase tracking-widest">
+              <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">
                 {accountType === 'payable' ? 'Nova Conta a Pagar' : 'Nova Conta a Receber'}
               </h3>
-              <p className="text-[10px] text-muted-text font-black uppercase tracking-widest">Preencha os dados do lançamento financeiro</p>
+              <p className="text-sm text-gray-600 font-black uppercase tracking-widest">Preencha os dados do lançamento financeiro</p>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                   {accountType === 'payable' ? 'Fornecedor / Descrição' : 'Cliente / Descrição'}
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-text opacity-40"><Search size={14} /></span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 opacity-40"><Search size={14} /></span>
                   <input
                     value={formData.description}
                     onChange={e => setFormData({ ...formData, description: e.target.value })}
                     placeholder="EX: ALUGUEL, FORNECEDOR X..."
-                    className="w-full neumorphic-inset p-3 pl-10 bg-transparent outline-none text-main-text text-sm font-bold placeholder:opacity-20 uppercase"
+                    className="w-full neumorphic-inset p-3 pl-10 bg-transparent outline-none text-gray-900 text-sm font-bold placeholder:text-gray-400 uppercase"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Valor (R$)</label>
+                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Valor (R$)</label>
                   <input
                     type="text"
                     value={maskCurrency(formData.amount)}
                     onChange={e => setFormData({ ...formData, amount: maskCurrency(e.target.value) })}
                     placeholder="0,00"
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold placeholder:opacity-20"
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold placeholder:text-gray-400"
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Vencimento</label>
+                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Vencimento</label>
                   <input
                     type="date"
                     value={formData.dueDate}
                     onChange={e => setFormData({ ...formData, dueDate: e.target.value })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold"
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Status</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Status</label>
                 <div className="flex gap-2">
                   {(['pending', 'paid'] as const).map(s => (
                     <button
                       key={s}
                       onClick={() => setFormData({ ...formData, status: s })}
-                      className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                        formData.status === s ? 'bg-[#FFC107] text-black' : 'neumorphic-inset text-muted-text'
+                      className={`flex-1 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all ${
+                        formData.status === s ? 'bg-[#FFC107] text-black' : 'neumorphic-inset text-gray-600'
                       }`}
                     >
                       {s === 'pending' ? 'Pendente' : 'Pago'}
@@ -397,8 +432,17 @@ export default function FinanceiroModule() {
         <div className="lg:col-span-2 neumorphic p-4 md:p-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-            <h3 className="text-base md:text-lg font-bold flex items-center gap-2 text-main-text">
+            <h3 className="text-base md:text-lg font-bold flex items-center gap-2 text-gray-900">
               <History className="text-[#FFC107]" /> Fluxo de Caixa Recente
+              {dismissedFlowCount > 0 && (
+                <button
+                  onClick={restoreAllFlow}
+                  className="ml-2 text-xs font-bold text-[#172554] hover:underline"
+                  title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} apagado${dismissedFlowCount === 1 ? '' : 's'} da visualização`}
+                >
+                  Mostrar todas
+                </button>
+              )}
             </h3>
             <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
               <div className="flex neumorphic-inset p-1 rounded-xl overflow-x-auto min-w-0 flex-1 sm:flex-none">
@@ -407,7 +451,7 @@ export default function FinanceiroModule() {
                     key={tab}
                     onClick={() => setActiveTab(tab)}
                     className={`px-3 py-2 sm:py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-1 sm:flex-none ${
-                      activeTab === tab ? 'bg-[#FFC107] text-black shadow-lg' : 'text-muted-text hover:text-main-text'
+                      activeTab === tab ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     {tab === 'all' ? 'Tudo' : tab === 'payable' ? 'Pagar' : 'Receber'}
@@ -417,13 +461,13 @@ export default function FinanceiroModule() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowFilters(!showFilters)}
-                  className={`p-3 sm:p-2 neumorphic-inset transition-colors ${showFilters ? 'text-[#FFC107] border border-[#FFC107]/30' : 'text-muted-text hover:text-main-text'}`}
+                  className={`p-3 sm:p-2 neumorphic-inset transition-colors ${showFilters ? 'text-[#FFC107] border border-[#FFC107]/30' : 'text-gray-600 hover:text-gray-900'}`}
                 >
                   <Filter size={14} />
                 </button>
                 <button
                   onClick={handlePrintReport}
-                  className="flex items-center justify-center gap-2 text-[10px] font-black text-[#FFC107] uppercase tracking-widest bg-[#FFC107]/5 px-4 py-3 sm:py-2 rounded-lg hover:bg-[#FFC107]/10 transition-colors flex-1 sm:flex-none"
+                  className="flex items-center justify-center gap-2 text-sm font-black text-[#172554] uppercase tracking-widest bg-[#FFC107]/5 px-4 py-3 sm:py-2 rounded-lg hover:bg-[#FFC107]/10 transition-colors flex-1 sm:flex-none"
                 >
                   <Printer size={14} /> <span className="sm:inline">Gerar PDF</span>
                 </button>
@@ -436,22 +480,22 @@ export default function FinanceiroModule() {
             <div className="mb-6 p-4 md:p-6 neumorphic-inset rounded-2xl animate-in slide-in-from-top-4 duration-300">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1 flex items-center gap-1">
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
                     <Calendar size={10} /> Início
                   </label>
-                  <input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-main-text text-xs font-bold" />
+                  <input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1 flex items-center gap-1">
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
                     <Calendar size={10} /> Fim
                   </label>
-                  <input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-main-text text-xs font-bold" />
+                  <input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1 flex items-center gap-1">
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
                     <CheckCircle2 size={10} /> Status
                   </label>
-                  <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value as any })} className="w-full bg-transparent border-none outline-none text-main-text text-xs font-bold">
+                  <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value as any })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold">
                     <option value="all" className="bg-[#1A1A1A]">TODOS OS STATUS</option>
                     <option value="pending" className="bg-[#1A1A1A]">SOMENTE PENDENTES</option>
                     <option value="paid" className="bg-[#1A1A1A]">SOMENTE PAGOS</option>
@@ -484,8 +528,8 @@ export default function FinanceiroModule() {
                       {a.type === 'payable' ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-bold text-sm text-main-text truncate">{a.description}</p>
-                      <p className="text-[10px] text-muted-text">{new Date(a.dueDate + 'T12:00:00').toLocaleDateString()} • {a.status.toUpperCase()}</p>
+                      <p className="font-bold text-sm text-gray-900 truncate">{a.description}</p>
+                      <p className="text-sm text-gray-600">{new Date(a.dueDate + 'T12:00:00').toLocaleDateString()} • {a.status.toUpperCase()}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
@@ -493,10 +537,10 @@ export default function FinanceiroModule() {
                       {a.type === 'payable' ? '-' : '+'} R$ {a.amount.toFixed(2)}
                     </span>
                     <div className="flex gap-2">
-                      <button onClick={() => handleToggleAccountStatus(a.id)} className={`p-2 rounded-lg transition-colors ${a.status === 'paid' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-white/5 text-muted-text hover:text-emerald-500'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
+                      <button onClick={() => handleToggleAccountStatus(a.id)} className={`p-2 rounded-lg transition-colors ${a.status === 'paid' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-gray-100 text-gray-600 hover:text-emerald-500'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
                         <CheckCircle2 size={14} />
                       </button>
-                      <button onClick={() => handleDeleteAccount(a.id)} className="p-2 rounded-lg bg-white/5 text-muted-text hover:text-red-500 transition-colors" title="Excluir Lançamento">
+                      <button onClick={() => handleDeleteAccount(a.id)} className="p-2 rounded-lg bg-gray-100 text-gray-600 hover:text-red-500 transition-colors" title="Excluir Lançamento">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -520,7 +564,7 @@ export default function FinanceiroModule() {
                         {credit ? <CreditCard size={18} /> : <ArrowUpCircle size={18} />}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-bold text-sm text-main-text flex flex-wrap items-center gap-2">
+                        <p className="font-bold text-sm text-gray-900 flex flex-wrap items-center gap-2">
                           Venda PDV #{s.id.slice(0, 8)}
                           {credit && (
                             <span className="text-[9px] font-black bg-violet-500/15 text-violet-400 px-2 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
@@ -528,7 +572,7 @@ export default function FinanceiroModule() {
                             </span>
                           )}
                         </p>
-                        <p className="text-[10px] text-muted-text">
+                        <p className="text-sm text-gray-600">
                           {new Date(s.date).toLocaleDateString()} • {new Date(s.date).toLocaleTimeString()}
                         </p>
                       </div>
@@ -544,20 +588,27 @@ export default function FinanceiroModule() {
                           className={`p-2 rounded-lg transition-all ${
                             isExpanded
                               ? 'bg-violet-500/20 text-violet-400'
-                              : 'bg-white/5 text-muted-text hover:text-violet-400 hover:bg-violet-500/10'
+                              : 'bg-gray-100 text-gray-600 hover:text-violet-400 hover:bg-violet-500/10'
                           }`}
                           title={isExpanded ? 'Ocultar Parcelas' : 'Ver Parcelas'}
                         >
                           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </button>
                       )}
+                      <button
+                        onClick={() => dismissFlow(`sale-${s.id}`)}
+                        className="p-2 rounded-lg bg-gray-100 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        title="Apagar da visualização"
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
                   </div>
 
                   {/* Accordion de parcelas */}
                   {credit && isExpanded && (
-                    <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
-                      <p className="text-[9px] font-black text-muted-text uppercase tracking-widest mb-3">
+                    <div className="border-t border-gray-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
+                      <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-3">
                         Parcelas — {credit.installments}x de R$ {(credit.amount / (credit.installments ?? 1)).toFixed(2)}
                       </p>
 
@@ -566,7 +617,7 @@ export default function FinanceiroModule() {
                           <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
                         </div>
                       ) : saleInstallments.length === 0 ? (
-                        <p className="text-center text-xs text-muted-text opacity-50 py-2">Nenhuma parcela encontrada.</p>
+                        <p className="text-center text-xs text-gray-600 opacity-50 py-2">Nenhuma parcela encontrada.</p>
                       ) : (
                         saleInstallments.map(inst => (
                           <div
@@ -574,16 +625,16 @@ export default function FinanceiroModule() {
                             className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
                               inst.status === 'paid'
                                 ? 'bg-emerald-500/5 border-emerald-500/20'
-                                : 'bg-white/[0.03] border-white/5'
+                                : 'bg-gray-50 border-gray-200'
                             }`}
                           >
                             <div className="flex items-center gap-3">
-                              <span className={`text-[10px] font-black w-10 shrink-0 ${inst.status === 'paid' ? 'text-emerald-400' : 'text-muted-text'}`}>
+                              <span className={`text-sm font-black w-10 shrink-0 ${inst.status === 'paid' ? 'text-emerald-400' : 'text-gray-600'}`}>
                                 {inst.installment_number}/{inst.total_installments}
                               </span>
                               <div>
-                                <p className="text-xs font-bold text-main-text">R$ {inst.amount.toFixed(2)}</p>
-                                <p className="text-[10px] text-muted-text">
+                                <p className="text-xs font-bold text-gray-900">R$ {inst.amount.toFixed(2)}</p>
+                                <p className="text-sm text-gray-600">
                                   Venc. {new Date(inst.due_date + 'T12:00:00').toLocaleDateString()}
                                 </p>
                               </div>
@@ -631,20 +682,20 @@ export default function FinanceiroModule() {
 
         {/* Controle de Fiado */}
         <div className="neumorphic p-4 md:p-8">
-          <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2 text-main-text">
+          <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2 text-gray-900">
             <CreditCard className="text-blue-500" /> Controle de Fiado
           </h3>
           <div className="space-y-4">
             {fiadoClients.map((c, i) => (
               <div key={i} className="p-4 neumorphic-inset">
                 <div className="flex justify-between items-center mb-2">
-                  <p className="font-bold text-sm text-main-text">{c.name}</p>
+                  <p className="font-bold text-sm text-gray-900">{c.name}</p>
                   <p className="text-xs text-red-500 font-bold">R$ {Math.abs(c.balance).toFixed(2)}</p>
                 </div>
                 <div className="w-full h-1 bg-black/20 rounded-full overflow-hidden">
                   <div className="h-full bg-blue-500" style={{ width: `${Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100)}%` }} />
                 </div>
-                <p className="text-[10px] text-muted-text mt-2 text-right">LIMITE: R$ {c.creditLimit.toFixed(2)}</p>
+                <p className="text-sm text-gray-600 mt-2 text-right">LIMITE: R$ {c.creditLimit.toFixed(2)}</p>
               </div>
             ))}
             {fiadoClients.length === 0 && (

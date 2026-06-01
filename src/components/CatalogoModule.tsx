@@ -4,117 +4,160 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ExternalLink, ShoppingBag, Share2, Globe } from 'lucide-react';
+import { ExternalLink, ShoppingBag, Share2, Globe, Check } from 'lucide-react';
 
-const CATALOG_URL = 'maxpos.com/loja/meunegocio';
+interface CatalogSettings {
+  catalogUrl: string;
+  welcomeMessage: string;
+}
 
 export default function CatalogoModule() {
+  const [catalogUrl, setCatalogUrl] = useState('');
   const [welcomeMessage, setWelcomeMessage] = useState('');
-  const [showCostPrice, setShowCostPrice] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('catalog_settings');
-    if (saved) {
-      const { welcomeMessage: msg, showCostPrice: scp } = JSON.parse(saved);
-      setWelcomeMessage(msg ?? '');
-      setShowCostPrice(scp ?? false);
+    const raw = localStorage.getItem('catalog_settings');
+    if (raw) {
+      try {
+        const data = JSON.parse(raw) as Partial<CatalogSettings>;
+        setCatalogUrl(data.catalogUrl ?? '');
+        setWelcomeMessage(data.welcomeMessage ?? '');
+      } catch { /* ignore */ }
     }
   }, []);
 
+  const normalizedUrl = (() => {
+    const u = catalogUrl.trim();
+    if (!u) return '';
+    if (/^https?:\/\//i.test(u)) return u;
+    return `https://${u}`;
+  })();
+
+  const isValidUrl = (() => {
+    if (!normalizedUrl) return false;
+    try { new URL(normalizedUrl); return true; } catch { return false; }
+  })();
+
+  const handleOpen = () => {
+    if (!isValidUrl) {
+      alert('Cole um link válido (ex.: https://www.canva.com/...)');
+      return;
+    }
+    window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const handleShare = async () => {
-    const url = `https://${CATALOG_URL}`;
+    if (!isValidUrl) {
+      alert('Salve um link antes de compartilhar.');
+      return;
+    }
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Catálogo MaxPOS', url });
-      } catch {
-        // user cancelled
-      }
+        await navigator.share({ title: 'Catálogo MaxPOS', url: normalizedUrl });
+      } catch { /* user cancelled */ }
     } else {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(normalizedUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
   const handleSave = () => {
-    localStorage.setItem('catalog_settings', JSON.stringify({ welcomeMessage, showCostPrice }));
-    alert('Configurações da vitrine salvas com sucesso!');
+    const settings: CatalogSettings = { catalogUrl: catalogUrl.trim(), welcomeMessage };
+    localStorage.setItem('catalog_settings', JSON.stringify(settings));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="neumorphic p-10 text-center space-y-6">
-        <div className="w-24 h-24 neumorphic-inset mx-auto flex items-center justify-center text-[#FFC107]">
-          <Globe size={48} />
-        </div>
-        <div>
-          <h2 className="text-3xl font-black text-main-text">Sua Loja está Online</h2>
-          <p className="text-muted-text font-bold uppercase tracking-widest text-xs mt-2">Link público do seu catálogo digital</p>
+    <div className="space-y-6 max-w-full">
+      {/* Card principal — URL do catálogo */}
+      <section className="smart-card">
+        <div className="flex items-center gap-4 mb-5 pb-4 border-b border-gray-200">
+          <div className="w-14 h-14 rounded-lg flex items-center justify-center" style={{ background: '#172554' }}>
+            <Globe size={28} className="text-white" />
+          </div>
+          <div>
+            <h2 className="section-header" style={{ marginBottom: 0 }}>Link do Catálogo</h2>
+            <p className="text-sm text-gray-600 mt-0.5">Cole o link da sua vitrine — pode ser um catálogo do Canva, um site, PDF público, etc.</p>
+          </div>
         </div>
 
-        <div className="max-w-md mx-auto neumorphic-inset p-4 flex items-center justify-between gap-4">
-          <span className="text-sm font-mono text-[#FFC107] truncate">{CATALOG_URL}</span>
+        <div className="space-y-3">
+          <label className="smart-stat-label">URL do catálogo</label>
           <div className="flex gap-2">
+            <input
+              type="url"
+              value={catalogUrl}
+              onChange={e => setCatalogUrl(e.target.value)}
+              placeholder="https://www.canva.com/design/..."
+              className="smart-input flex-1 font-mono"
+              autoComplete="off"
+              spellCheck={false}
+            />
             <button
               onClick={handleShare}
-              className="p-2 hover:bg-white/5 rounded-lg text-muted-text hover:text-[#FFC107] transition-colors"
+              disabled={!isValidUrl}
+              className="smart-btn-secondary disabled:opacity-40"
               title={copied ? 'Link copiado!' : 'Compartilhar'}
             >
-              <Share2 size={18} className={copied ? 'text-emerald-500' : ''} />
+              {copied ? <Check size={18} className="text-emerald-600" /> : <Share2 size={18} />}
             </button>
             <button
-              onClick={() => window.open(`https://${CATALOG_URL}`, '_blank')}
-              className="bg-[#FFC107] text-black font-black px-4 py-2 rounded-lg text-xs flex items-center gap-2 active:scale-95 transition-transform"
+              onClick={handleOpen}
+              disabled={!isValidUrl}
+              className="smart-btn-primary disabled:opacity-40"
             >
-              <ExternalLink size={14} /> ABRIR
+              <ExternalLink size={18} /> ABRIR
             </button>
           </div>
+          {catalogUrl && !isValidUrl && (
+            <p className="text-sm text-red-600 font-bold">URL inválida — confira o link e tente de novo.</p>
+          )}
         </div>
-      </div>
+      </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="neumorphic p-8">
-          <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-main-text">
-            <ShoppingBag className="text-emerald-500" /> Pedidos Online Novos
-          </h3>
-          <div className="space-y-4">
-            <div className="text-center py-20 opacity-30">
-              <ShoppingBag size={48} className="mx-auto mb-2" />
-              <p className="text-xs font-black uppercase tracking-widest">Nenhum pedido online</p>
-            </div>
+      {/* Dois cards lado a lado: pedidos + configurações */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Pedidos */}
+        <section className="smart-card">
+          <h2 className="section-header mb-4 pb-3 border-b border-gray-200">
+            <ShoppingBag size={22} className="text-emerald-700" /> Pedidos Online
+          </h2>
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+            <ShoppingBag size={56} className="mb-3" />
+            <p className="text-base font-bold">Nenhum pedido online</p>
+            <p className="text-sm mt-1">Pedidos vindos do seu catálogo aparecerão aqui</p>
           </div>
-        </div>
+        </section>
 
-        <div className="neumorphic p-8">
-          <h3 className="text-lg font-bold mb-6 text-main-text">Configurações da vitrine</h3>
-          <div className="space-y-6">
+        {/* Configurações */}
+        <section className="smart-card">
+          <h2 className="section-header mb-4 pb-3 border-b border-gray-200">
+            <Globe size={22} style={{ color: '#172554' }} /> Configurações da Vitrine
+          </h2>
+
+          <div className="space-y-5">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Mensagem de Boas-vindas</label>
+              <label className="smart-stat-label">Mensagem de Boas-vindas</label>
               <textarea
                 value={welcomeMessage}
                 onChange={e => setWelcomeMessage(e.target.value)}
-                className="w-full neumorphic-inset p-4 bg-transparent border-none outline-none text-main-text text-sm h-24 resize-none"
-                placeholder="Ex: Bem-vindo à nossa loja! Escolha seus produtos e finalize pelo WhatsApp."
+                placeholder="Ex.: Bem-vindo à nossa loja! Escolha seus produtos e finalize pelo WhatsApp."
+                className="smart-input h-28 resize-none"
               />
             </div>
-            <button
-              onClick={() => setShowCostPrice(v => !v)}
-              className="w-full flex items-center justify-between p-4 neumorphic-inset hover:bg-white/2 transition-colors"
-            >
-              <span className="text-sm font-bold text-muted-text">Exibir Preço de Custo</span>
-              <div className={`w-12 h-6 rounded-full transition-colors relative ${showCostPrice ? 'bg-[#FFC107]' : 'bg-white/10'}`}>
-                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${showCostPrice ? 'left-7' : 'left-1'}`} />
-              </div>
-            </button>
+
             <button
               onClick={handleSave}
-              className="w-full bg-[#FFC107] text-black py-4 rounded-xl font-black neumorphic hover:opacity-90 transition-opacity active:scale-95 uppercase text-xs tracking-widest"
+              className="smart-btn-primary w-full"
             >
-              SALVAR ALTERAÇÕES
+              {saved ? <><Check size={18} /> SALVO</> : 'SALVAR ALTERAÇÕES'}
             </button>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

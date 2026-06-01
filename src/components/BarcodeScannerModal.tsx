@@ -83,7 +83,7 @@ export default function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerM
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
       <div className="neumorphic p-6 max-w-sm w-full bg-card space-y-4 relative animate-in zoom-in duration-300">
         <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-black text-[#FFC107] uppercase tracking-widest leading-none flex items-center gap-2">
+          <h3 className="text-lg font-black text-[#172554] uppercase tracking-widest leading-none flex items-center gap-2">
             <Camera size={20} /> Leitor
           </h3>
           <button 

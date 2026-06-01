@@ -4,13 +4,13 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import { Client, User, UserRole } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber } from '../lib/masks';
+import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 
 interface CadastrosModuleProps {
   currentUser: User;
@@ -39,31 +39,103 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   const [barcodeModal, setBarcodeModal] = useState<{ isOpen: boolean, product: any | null }>({ isOpen: false, product: null });
   const [stockModal, setStockModal] = useState<{ isOpen: boolean, product: any | null, action: 'sum' | 'subtract' | 'correct', amount: number }>({ isOpen: false, product: null, action: 'sum', amount: 0 });
   const barcodeRef = useRef<SVGSVGElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [eanInput, setEanInput] = useState('');
+  const [savingEan, setSavingEan] = useState(false);
 
-  useEffect(() => {
-    if (barcodeModal.isOpen && barcodeModal.product?.ean13) {
-      const timer = setTimeout(() => {
-        if (barcodeRef.current) {
-          try {
-            JsBarcode(barcodeRef.current, barcodeModal.product.ean13, {
-              format: "EAN13",
-              flat: true,
-              width: 2,
-              height: 100,
-              displayValue: true,
-              fontOptions: "bold",
-              fontSize: 20,
-              background: "white",
-              lineColor: "#000000"
-            });
-          } catch (e) {
-            console.error("Erro ao gerar barcode:", e);
-          }
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+  const handleProductImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite re-upload do mesmo arquivo
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      alert('Formato não suportado. Use JPG, PNG ou WEBP.');
+      return;
     }
-  }, [barcodeModal]);
+
+    const MAX_BYTES = 120 * 1024;
+    if (file.size > MAX_BYTES) {
+      alert(`Imagem muito grande (${Math.round(file.size / 1024)} KB). Máximo permitido: 120 KB.`);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setFormData((prev: any) => ({ ...prev, image: dataUrl }));
+    };
+    reader.onerror = () => alert('Erro ao ler a imagem.');
+    reader.readAsDataURL(file);
+  };
+
+  // ---------- EAN-13 helpers ----------
+  const isValidEAN13 = (code: string): boolean => {
+    if (!/^\d{13}$/.test(code)) return false;
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      sum += parseInt(code[i]) * (i % 2 === 0 ? 1 : 3);
+    }
+    return parseInt(code[12]) === (10 - (sum % 10)) % 10;
+  };
+
+  const generateEAN13 = (): string => {
+    let digits = '789'; // prefixo Brasil (uso interno é OK)
+    for (let i = 0; i < 9; i++) digits += Math.floor(Math.random() * 10).toString();
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += parseInt(digits[i]) * (i % 2 === 0 ? 1 : 3);
+    return digits + ((10 - (sum % 10)) % 10).toString();
+  };
+
+  const eanValid = isValidEAN13(eanInput);
+  const eanDirty = barcodeModal.product && eanInput !== (barcodeModal.product.ean13 || '');
+
+  // Reset eanInput sempre que abre o modal
+  useEffect(() => {
+    if (barcodeModal.isOpen) {
+      setEanInput(barcodeModal.product?.ean13 || '');
+    } else {
+      setEanInput('');
+      setSavingEan(false);
+    }
+  }, [barcodeModal.isOpen, barcodeModal.product]);
+
+  // Renderiza/atualiza o barcode SVG quando EAN muda
+  useEffect(() => {
+    if (!barcodeModal.isOpen || !barcodeRef.current) return;
+    // Limpa primeiro (caso EAN inválido)
+    barcodeRef.current.innerHTML = '';
+    if (!eanValid) return;
+    try {
+      JsBarcode(barcodeRef.current, eanInput, {
+        format: 'EAN13',
+        flat: true,
+        width: 2,
+        height: 100,
+        displayValue: true,
+        fontOptions: 'bold',
+        fontSize: 20,
+        background: 'white',
+        lineColor: '#000000',
+      });
+    } catch (e) {
+      console.error('Erro ao gerar barcode:', e);
+    }
+  }, [eanInput, eanValid, barcodeModal.isOpen]);
+
+  const saveEanToProduct = async () => {
+    if (!eanValid || !barcodeModal.product) return;
+    setSavingEan(true);
+    try {
+      const updated = { ...barcodeModal.product, ean13: eanInput };
+      await Storage.upsertProduct(updated);
+      setBarcodeModal({ isOpen: true, product: updated });
+    } catch (err: any) {
+      alert('Erro ao salvar EAN: ' + (err?.message || err));
+    } finally {
+      setSavingEan(false);
+    }
+  };
 
   const downloadBarcode = () => {
     if (!barcodeRef.current) return;
@@ -90,7 +162,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         
         const pngFile = canvas.toDataURL("image/png");
         const downloadLink = document.createElement("a");
-        downloadLink.download = `etiqueta-${barcodeModal.product?.ean13}.png`;
+        downloadLink.download = `etiqueta-${eanInput || barcodeModal.product?.ean13 || 'ean'}.png`;
         downloadLink.href = pngFile;
         downloadLink.click();
       }
@@ -125,7 +197,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           format: [canvas.width, canvas.height]
         });
         pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-        pdf.save(`etiqueta-${barcodeModal.product?.ean13}.pdf`);
+        pdf.save(`etiqueta-${eanInput || barcodeModal.product?.ean13 || 'ean'}.pdf`);
       }
     };
     img.src = "data:image/svg+xml;base64," + btoa(svgData);
@@ -437,7 +509,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       case 'equipe':
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="bg-main text-muted-text uppercase text-[10px] font-black tracking-widest sticky top-0 z-10">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
               <tr>
                 <th className="p-6">Membro</th>
                 <th className="p-6">Cargo</th>
@@ -446,35 +518,35 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <th className="p-6">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-200">
               {filteredUsers.map((u) => (
-                <tr key={u.id} className="hover:bg-white/2 transition-colors">
+                <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                   <td className="p-6">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[#FFC107]/20 flex items-center justify-center text-[#FFC107] font-black text-xs">
+                      <div className="w-8 h-8 rounded-full bg-[#FFC107]/20 flex items-center justify-center text-[#172554] font-black text-xs">
                         {u.name.charAt(0)}
                       </div>
-                      <span className="font-bold text-main-text">{u.name}</span>
+                      <span className="font-bold text-gray-900">{u.name}</span>
                     </div>
                   </td>
                   <td className="p-6">
-                    <span className="bg-white/5 px-3 py-1 rounded text-[10px] font-black text-muted-text uppercase tracking-widest">
+                    <span className="bg-gray-100 px-3 py-1 rounded text-sm font-black text-gray-600 uppercase tracking-widest">
                       {u.role.replace('_', ' ')}
                     </span>
                   </td>
-                  <td className="p-6 text-sm text-muted-text">{u.email}</td>
-                  <td className="p-6 text-[10px] font-mono text-muted-text/60">{u.id}</td>
+                  <td className="p-6 text-sm text-gray-600">{u.email}</td>
+                  <td className="p-6 text-sm font-mono text-gray-600/60">{u.id}</td>
                   <td className="p-6">
                     <div className="flex gap-2">
                       <button 
                         onClick={() => handleEdit(u, 'equipe')}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -488,98 +560,105 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       case 'produtos':
         return (
           <table className="w-full text-left min-w-[1000px]">
-            <thead className="bg-main text-muted-text uppercase text-[10px] font-black tracking-widest sticky top-0 z-10">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
               <tr>
-                <th className="p-6">Produto</th>
-                <th className="p-6">Categoría</th>
-                <th className="p-6">Custo</th>
-                <th className="p-6">Venda</th>
-                <th className="p-6">Margem (Lucro)</th>
-                <th className="p-6">Estoque</th>
-                <th className="p-6">Barcode / EAN</th>
-                <th className="p-6">Ações</th>
+                <th className="px-5 py-3">Produto</th>
+                <th className="px-5 py-3">Categoria</th>
+                <th className="px-5 py-3 text-right">Custo</th>
+                <th className="px-5 py-3 text-right">Venda</th>
+                <th className="px-5 py-3 text-right">Margem</th>
+                <th className="px-5 py-3 text-right">Estoque</th>
+                <th className="px-5 py-3">Cód. Barras</th>
+                <th className="px-5 py-3 text-center">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredProducts.map((p) => (
-                <tr key={p.id} className="hover:bg-white/2 transition-colors group">
-                  <td className="p-6">
-                    <div className="font-bold text-main-text">{p.name}</div>
-                    <div className="text-[10px] text-muted-text uppercase font-black tracking-tighter opacity-60">ID: {p.id}</div>
+            <tbody className="divide-y divide-gray-200 text-base">
+              {filteredProducts.map((p) => {
+                const margem = p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100) : 0;
+                const stockBaixo = p.controlStock !== false && p.stock <= (p.minStock || 0);
+                return (
+                <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded border border-gray-300 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
+                        {p.image ? (
+                          <img src={p.image} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <Package size={22} className="text-gray-400" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
+                        <div className="text-xs text-gray-500 font-mono mt-0.5">ID: {p.id}</div>
+                      </div>
+                    </div>
                   </td>
-                  <td className="p-6 text-sm text-muted-text">
-                    <span className="bg-white/5 px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest">{p.category}</span>
+                  <td className="px-5 py-4">
+                    <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded text-sm font-bold">{p.category || '—'}</span>
                   </td>
-                  <td className="p-6 font-mono text-xs text-red-500/70">R$ {p.costPrice ? p.costPrice.toFixed(2) : '0.00'}</td>
-                  <td className="p-6 font-mono font-black text-emerald-500">R$ {p.price.toFixed(2)}</td>
-                  <td className="p-6">
-                    <div className="flex flex-col">
-                      <span className="font-black text-xs text-[#FFC107]">
-                        {p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100).toFixed(1) : '0.0'}%
+                  <td className="px-5 py-4 text-right tabular-nums text-base text-gray-700">
+                    {formatBRL(p.costPrice)}
+                  </td>
+                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold" style={{ color: '#172554' }}>
+                    {formatBRL(p.price)}
+                  </td>
+                  <td className="px-5 py-4 text-right tabular-nums">
+                    <div className="font-bold text-base" style={{ color: '#172554' }}>{margem.toFixed(1)}%</div>
+                  </td>
+                  <td className="px-5 py-4 text-right">
+                    {p.controlStock === false ? (
+                      <span className="text-sm bg-gray-100 text-gray-600 px-2.5 py-1 rounded font-bold">Sem Controle</span>
+                    ) : (
+                      <span className={`tabular-nums font-black text-lg ${stockBaixo ? 'text-red-600' : 'text-gray-900'}`}>
+                        {p.stock} <span className="text-xs text-gray-500 uppercase font-bold">{p.unit || 'un'}</span>
                       </span>
-                      <span className="text-[10px] text-emerald-500 font-bold">R$ {(p.price - (p.costPrice || 0)).toFixed(2)}</span>
-                    </div>
+                    )}
                   </td>
-                  <td className="p-6">
-                    <div className="flex flex-col gap-1">
-                      {p.controlStock === false ? (
-                        <span className="text-[10px] bg-white/5 px-2 py-1 rounded font-black text-muted-text uppercase tracking-widest">Sem Controle</span>
-                      ) : (
-                        <>
-                          <div className="flex items-center gap-2">
-                            <span className={`font-mono font-black text-sm ${p.stock <= (p.minStock || 0) ? 'text-red-500 hover:animate-pulse' : 'text-main-text'}`}>
-                              {p.stock}
-                            </span>
-                            <span className="text-[10px] text-muted-text font-black uppercase tracking-widest">{p.unit || 'UN'}</span>
-                          </div>
-                          {p.minStock > 0 && <div className="text-[9px] text-muted-text uppercase font-bold tracking-widest">MIN: {p.minStock}</div>}
-                        </>
-                      )}
-                    </div>
+                  <td className="px-5 py-4">
+                    <span className="text-sm text-gray-600 font-mono">{p.ean13 || '—'}</span>
                   </td>
-                  <td className="p-6">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] text-muted-text/60 font-mono tracking-tighter">{p.ean13 || 'N/A'}</span>
-                    </div>
-                  </td>
-                  <td className="p-6">
-                    <div className="flex gap-2">
-                      <button 
+                  <td className="px-5 py-4">
+                    <div className="flex gap-1.5 justify-center">
+                      <button
                         onClick={() => setBarcodeModal({ isOpen: true, product: p })}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-emerald-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-yellow shimmer"
                         title="Gerar Etiqueta"
                       >
-                        <Barcode size={16} />
+                        <Barcode size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleEdit(p, 'produto')}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Editar"
                       >
-                        <Edit2 size={16} />
+                        <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDelete(p.id, 'produto', p.name)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-yellow shimmer"
+                        title="Excluir"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleView(p)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Detalhes"
                       >
-                        <ChevronRight size={16} />
+                        <ChevronRight size={16} className="relative z-[2]" />
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         );
       case 'servicos':
         return (
           <table className="w-full text-left min-w-[900px]">
-            <thead className="bg-main text-muted-text uppercase text-[10px] font-black tracking-widest sticky top-0 z-10">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
               <tr>
                 <th className="p-6">Serviço</th>
                 <th className="p-6">Categoria</th>
@@ -589,43 +668,43 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <th className="p-6">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-200">
               {filteredServices.map((s) => (
-                <tr key={s.id} className="hover:bg-white/2 transition-colors group">
+                <tr key={s.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="p-6">
-                    <div className="font-bold text-main-text">{s.name}</div>
-                    <div className="text-[10px] text-muted-text uppercase font-black tracking-tighter opacity-60">ID: {s.id}</div>
+                    <div className="font-bold text-gray-900">{s.name}</div>
+                    <div className="text-sm text-gray-600 uppercase font-black tracking-tighter opacity-60">ID: {s.id}</div>
                   </td>
-                  <td className="p-6 text-sm text-muted-text">
-                    <span className="bg-white/5 px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest">{s.category}</span>
+                  <td className="p-6 text-sm text-gray-600">
+                    <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{s.category}</span>
                   </td>
                   <td className="p-6 font-mono text-xs text-red-500/70">R$ {s.costPrice ? s.costPrice.toFixed(2) : '0.00'}</td>
                   <td className="p-6 font-mono font-black text-emerald-500">R$ {s.price.toFixed(2)}</td>
                   <td className="p-6">
                     <div className="flex flex-col">
-                      <span className="font-black text-xs text-[#FFC107]">
+                      <span className="font-black text-xs text-[#172554]">
                         {s.price && s.costPrice ? (((s.price - s.costPrice) / s.price) * 100).toFixed(1) : '0.0'}%
                       </span>
-                      <span className="text-[10px] text-emerald-500 font-bold">R$ {(s.price - (s.costPrice || 0)).toFixed(2)}</span>
+                      <span className="text-sm text-emerald-500 font-bold">R$ {(s.price - (s.costPrice || 0)).toFixed(2)}</span>
                     </div>
                   </td>
                   <td className="p-6">
                     <div className="flex gap-2">
                       <button 
                         onClick={() => handleEdit(s, 'servico')}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleDelete(s.id, 'servico', s.name)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
                       >
                         <Trash2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -639,7 +718,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       case 'fornecedores':
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="bg-main text-muted-text uppercase text-[10px] font-black tracking-widest sticky top-0 z-10">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
               <tr>
                 <th className="p-6">Fornecedor</th>
                 <th className="p-6">Tipo</th>
@@ -648,38 +727,38 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <th className="p-6">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-200">
               {filteredSuppliers.map((s) => (
-                <tr key={s.id} className="hover:bg-white/2 transition-colors group">
+                <tr key={s.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="p-6">
-                    <div className="font-bold text-main-text">{s.name}</div>
-                    {s.tradeName && <div className="text-[10px] text-muted-text uppercase font-black opacity-60">{s.tradeName}</div>}
+                    <div className="font-bold text-gray-900">{s.name}</div>
+                    {s.tradeName && <div className="text-sm text-gray-600 uppercase font-black opacity-60">{s.tradeName}</div>}
                   </td>
                   <td className="p-6">
-                    <span className="bg-white/5 px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest">{s.type || 'PF'}</span>
+                    <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{s.type || 'PF'}</span>
                   </td>
-                  <td className="p-6 font-mono text-muted-text text-sm">{s.document}</td>
+                  <td className="p-6 font-mono text-gray-600 text-sm">{s.document}</td>
                   <td className="p-6">
-                    <div className="text-sm text-muted-text">{s.phone || s.cellphone || 'N/A'}</div>
-                    <div className="text-xs text-muted-text/60">{s.email || 'Sem e-mail'}</div>
+                    <div className="text-sm text-gray-600">{s.phone || s.cellphone || 'N/A'}</div>
+                    <div className="text-xs text-gray-600/60">{s.email || 'Sem e-mail'}</div>
                   </td>
                   <td className="p-6">
                     <div className="flex gap-2">
                       <button 
                         onClick={() => handleEdit(s, 'fornecedor')}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
                       >
                         <Trash2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -693,7 +772,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       default: // clientes
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="bg-main text-muted-text uppercase text-[10px] font-black tracking-widest sticky top-0 z-10">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
               <tr>
                 <th className="p-6">Cliente</th>
                 <th className="p-6">Tipo</th>
@@ -703,22 +782,22 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <th className="p-6">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-200">
               {filteredClients.map((client) => (
-                <tr key={client.id} className="hover:bg-white/2 transition-colors group">
+                <tr key={client.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="p-6">
                     <div>
-                      <div className="font-bold text-main-text">{client.name}</div>
-                      <div className="text-xs text-muted-text">{client.email || 'Sem e-mail'}</div>
+                      <div className="font-bold text-gray-900">{client.name}</div>
+                      <div className="text-xs text-gray-600">{client.email || 'Sem e-mail'}</div>
                     </div>
                   </td>
                   <td className="p-6">
-                    <span className="bg-white/5 px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest">{client.type || 'PF'}</span>
+                    <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{client.type || 'PF'}</span>
                   </td>
-                  <td className="p-6 font-mono text-muted-text text-sm">{client.document}</td>
-                  <td className="p-6 text-muted-text text-sm">{client.phone}</td>
+                  <td className="p-6 font-mono text-gray-600 text-sm">{client.document}</td>
+                  <td className="p-6 text-gray-600 text-sm">{client.phone}</td>
                   <td className="p-6">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                    <span className={`px-3 py-1 rounded-full text-sm font-black uppercase tracking-widest ${
                       client.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
                     }`}>
                       {client.status === 'active' ? 'ATIVO' : 'INATIVO'}
@@ -728,19 +807,19 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     <div className="flex gap-2">
                       <button 
                         onClick={() => handleEdit(client, 'cliente')}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <Edit2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleDelete(client.id, 'cliente', client.name)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
                       >
                         <Trash2 size={16} />
                       </button>
                       <button 
                         onClick={() => handleView(client)}
-                        className="p-2 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -769,25 +848,33 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   return (
     <div className="space-y-8 flex flex-col max-w-full">
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 overflow-x-auto pb-2 custom-scrollbar">
-        <div className="flex gap-2 p-2 neumorphic-inset shrink-0">
-          {(['clientes', 'produtos', 'servicos', 'fornecedores', 'equipe'] as const).map((t) => (
-            <button 
-              key={t}
-              onClick={() => { setSubTab(t); setShowAddUser(false); }}
-              className={`px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-black uppercase tracking-widest transition-all ${subTab === t ? 'text-[#FFC107] bg-main shadow-inner' : 'text-muted-text hover:text-main-text'}`}
-            >
-              {({ clientes: 'Clientes', produtos: 'Produtos', servicos: 'Serviços', fornecedores: 'Fornecedores', equipe: 'Equipe' } as const)[t]}
-            </button>
-          ))}
+        <div className="flex gap-2 shrink-0 flex-wrap">
+          {(['clientes', 'produtos', 'servicos', 'fornecedores', 'equipe'] as const).map((t) => {
+            const isActive = subTab === t;
+            return (
+              <button
+                key={t}
+                onClick={() => { setSubTab(t); setShowAddUser(false); }}
+                className={`relative overflow-hidden isolate glass-blue shimmer px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide transition-all text-white border-2 ${
+                  isActive ? 'ring-2 ring-offset-2 ring-[#FFC107]' : 'opacity-80 hover:opacity-100'
+                }`}
+                style={{ borderColor: '#FFC107' }}
+              >
+                <span className="relative z-[2]">
+                  {({ clientes: 'Clientes', produtos: 'Produtos', servicos: 'Serviços', fornecedores: 'Fornecedores', equipe: 'Equipe' } as const)[t]}
+                </span>
+              </button>
+            );
+          })}
         </div>
         
         <div className="flex gap-4 w-full xl:w-auto">
           <div className="flex-1 md:w-64 neumorphic-inset flex items-center px-4 py-2 gap-3">
-            <Search size={18} className="text-muted-text" />
+            <Search size={18} className="text-gray-600" />
             <input
               type="text"
               placeholder={`Buscar em ${subTab}...`}
-              className="bg-transparent border-none outline-none text-main-text text-sm w-full font-medium placeholder:text-muted-text/30"
+              className="bg-transparent border-none outline-none text-gray-900 text-sm w-full font-medium placeholder:text-gray-400"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -807,9 +894,10 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 setShowAddSupplier(true);
               }
             }}
-            className="bg-[#FFC107] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase"
+            className="bg-[#FFC107] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase shimmer border-2 border-[#B8860B]"
           >
-            <Plus size={20} /> NOVO
+            <Plus size={20} className="relative z-[2]" />
+            <span className="relative z-[2]">NOVO</span>
           </button>
         </div>
       </div>
@@ -817,60 +905,60 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       {showAddUser && subTab === 'equipe' && (
         <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#FFC107] flex items-center gap-2">
+            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2">
               <UserPlus /> {editingItem ? 'EDITAR MEMBRO' : 'CADASTRAR NOVO MEMBRO'}
             </h3>
-            <button onClick={() => { setShowAddUser(false); setEditingItem(null); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-muted-text font-bold hover:text-main-text uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddUser(false); setEditingItem(null); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           
           <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Nome Completo</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Completo</label>
               <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <UserIcon size={16} className="text-muted-text" />
+                <UserIcon size={16} className="text-gray-600" />
                 <input 
                   type="text" required value={newUser.name}
                   onChange={e => setNewUser({...newUser, name: e.target.value})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-main-text font-bold" 
+                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold" 
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">E-mail de Acesso</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail de Acesso</label>
               <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <Mail size={16} className="text-muted-text" />
+                <Mail size={16} className="text-gray-600" />
                 <input 
                   type="email" required value={newUser.email}
                   onChange={e => setNewUser({...newUser, email: e.target.value})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-main-text font-bold" 
+                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold" 
                 />
               </div>
             </div>
             {!editingItem && (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Senha Temporária</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Senha Temporária</label>
                 <div className="neumorphic-inset p-3 flex items-center gap-2">
-                  <Lock size={16} className="text-muted-text" />
+                  <Lock size={16} className="text-gray-600" />
                   <input
                     type="password" required value={newUser.password}
                     onChange={e => setNewUser({...newUser, password: e.target.value})}
-                    className="bg-transparent border-none outline-none text-sm w-full text-main-text font-bold"
+                    className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold"
                   />
                 </div>
               </div>
             )}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Cargo / Permissão</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Cargo / Permissão</label>
               <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <Shield size={16} className="text-muted-text" />
+                <Shield size={16} className="text-gray-600" />
                 <select 
                   required value={newUser.role}
                   onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-main-text font-medium appearance-none"
+                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium appearance-none"
                 >
-                  <option value="" className="bg-card text-main-text">Selecione...</option>
+                  <option value="" className="bg-card text-gray-900">Selecione...</option>
                   {availableRoles.map(role => (
-                    <option key={role} value={role} className="bg-card text-main-text">{role.replace('_', ' ').toUpperCase()}</option>
+                    <option key={role} value={role} className="bg-card text-gray-900">{role.replace('_', ' ').toUpperCase()}</option>
                   ))}
                 </select>
               </div>
@@ -887,22 +975,22 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       {showAddClient && subTab === 'clientes' && (
         <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#FFC107] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
             </h3>
-            <button onClick={() => { setShowAddClient(false); setEditingItem(null); }} className="text-muted-text font-bold hover:text-main-text uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddClient(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
               onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-muted-text hover:text-main-text'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
               onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-muted-text hover:text-main-text'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -911,58 +999,58 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Common Fields or Type Specific Labels */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 {formData.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
               </label>
               <input 
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                 placeholder={formData.type === 'PJ' ? 'Ex: Empresa LTDA' : 'Ex: João Silva'}
               />
             </div>
 
             {formData.type === 'PJ' && (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Nome Fantasia</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Fantasia</label>
                 <input 
                   value={formData.tradeName || ''}
                   onChange={e => setFormData({ ...formData, tradeName: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                   placeholder="Nome Fantasia"
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 {formData.type === 'PJ' ? 'CNPJ' : 'CPF'}
               </label>
               <input 
                 value={formData.document || ''}
                 onChange={e => setFormData({ ...formData, document: formData.type === 'PJ' ? maskCNPJ(e.target.value) : maskCPF(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                 placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
               />
             </div>
 
             {formData.type === 'PF' ? (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">RG</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">RG</label>
                 <input 
                   value={formData.rg || ''}
                   onChange={e => setFormData({ ...formData, rg: maskRG(e.target.value) })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                   placeholder="00.000.000-0"
                 />
               </div>
             ) : (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
                 <input 
                   value={formData.ie || ''}
                   onChange={e => setFormData({ ...formData, ie: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                   placeholder="Inscrição Estadual"
                 />
               </div>
@@ -970,120 +1058,120 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
             {/* Contacts */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Telefone Fixo</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Telefone Fixo</label>
               <input 
                 value={formData.phone || ''}
                 onChange={e => setFormData({ ...formData, phone: maskPhone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
                 placeholder="(00) 0000-0000"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Celular</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Celular</label>
               <input 
                 value={formData.cellphone || ''}
                 onChange={e => setFormData({ ...formData, cellphone: maskCellphone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                 placeholder="(00) 00000-0000"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">E-mail</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail</label>
               <input 
                 type="email"
                 value={formData.email || ''}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
                 placeholder="email@exemplo.com"
               />
             </div>
 
             {/* Financial and other */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Limite de Crédito</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Limite de Crédito</label>
               <input 
                 type="text"
                 value={maskCurrency(Math.round((formData.creditLimit || 0) * 100))}
                 onChange={e => setFormData({ ...formData, creditLimit: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-[#FFC107] text-sm font-black" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-[#172554] text-sm font-black" 
                 placeholder="0,00"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 {formData.type === 'PJ' ? 'Data de Fundação' : 'Data de Aniversário'}
               </label>
               <input 
                 type="date"
                 value={formData.birthDate || ''}
                 onChange={e => setFormData({ ...formData, birthDate: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm uppercase font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm uppercase font-bold" 
               />
             </div>
 
             {/* Address Section */}
-            <div className="lg:col-span-3 pt-4 border-t border-white/5 mt-4">
-              <h4 className="text-[10px] font-black text-[#FFC107] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+            <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
+              <h4 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">CEP</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
                   <input 
                     value={formData.zipCode || ''}
                     onChange={e => setFormData({ ...formData, zipCode: maskCEP(e.target.value) })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="00000-000"
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Endereço</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Endereço</label>
                   <input 
                     value={formData.address || ''}
                     onChange={e => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="Rua / Avenida"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Número</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Número</label>
                   <input 
                     value={formData.number || ''}
                     onChange={e => setFormData({ ...formData, number: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="123"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Bairro</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Bairro</label>
                   <input 
                     value={formData.neighborhood || ''}
                     onChange={e => setFormData({ ...formData, neighborhood: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Estado (UF)</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Estado (UF)</label>
                   <input 
                     value={formData.state || ''}
                     onChange={e => setFormData({ ...formData, state: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs uppercase" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs uppercase" 
                     maxLength={2}
                     placeholder="UF"
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Cidade</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Cidade</label>
                   <input 
                     value={formData.city || ''}
                     onChange={e => setFormData({ ...formData, city: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-4">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Complemento</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Complemento</label>
                   <input 
                     value={formData.complement || ''}
                     onChange={e => setFormData({ ...formData, complement: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="Apto, Sala, Ponto de Referência"
                   />
                 </div>
@@ -1091,11 +1179,11 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="lg:col-span-3 space-y-2 mt-4">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Observações</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Observações</label>
               <textarea 
                 value={formData.observations || ''}
                 onChange={e => setFormData({ ...formData, observations: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm min-h-[80px]" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm min-h-[80px]" 
                 placeholder="Observações importantes sobre o cliente..."
               />
             </div>
@@ -1112,26 +1200,68 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       {showAddProduct && subTab === 'produtos' && (
         <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#FFC107] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
             </h3>
-            <button onClick={() => { setShowAddProduct(false); setEditingItem(null); }} className="text-muted-text font-bold hover:text-main-text uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddProduct(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Image picker */}
+            <div className="lg:col-span-3 space-y-2">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Imagem do Produto</label>
+              <div className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <div className="w-24 h-24 border-2 border-gray-300 rounded bg-white flex items-center justify-center overflow-hidden shrink-0">
+                  {formData.image ? (
+                    <img src={formData.image} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Package size={40} className="text-gray-400" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleProductImage}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      className="smart-btn-secondary"
+                    >
+                      <Upload size={16} /> {formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
+                    </button>
+                    {formData.image && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, image: undefined })}
+                        className="smart-btn-danger"
+                      >
+                        <CloseIcon size={16} /> REMOVER
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600">JPG, PNG ou WEBP — máximo <b>120 KB</b>. Sem imagem, o produto exibe um ícone padrão.</p>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2 lg:col-span-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Nome do Produto</label>
-              <input 
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Produto</label>
+              <input
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Categoria</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
               <select 
                 value={formData.category || 'Outros'}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold appearance-none"
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
                 <option value="Bebidas" className="bg-card">BEBIDAS</option>
                 <option value="Comidas" className="bg-card">COMIDAS</option>
@@ -1141,17 +1271,17 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
               <input 
                 type="text"
                 value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
                 onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-black text-red-500/80" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80" 
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
               <input 
                 type="text"
                 value={maskCurrency(Math.round((formData.price || 0) * 100))}
@@ -1161,41 +1291,41 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
-              <div className="w-full neumorphic-inset p-3 bg-transparent text-main-text text-sm font-black flex items-center justify-between">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
+              <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-900 text-sm font-black flex items-center justify-between">
                 <span>
                   {formData.price && formData.costPrice 
                     ? (((formData.price - formData.costPrice) / formData.price) * 100).toFixed(2)
                     : '0.00'}
                 </span>
-                <span className="text-[10px] text-muted-text">AUTO</span>
+                <span className="text-sm text-gray-600">AUTO</span>
               </div>
             </div>
 
-            <div className="lg:col-span-3 space-y-4 pt-4 border-t border-white/5 mt-4">
+            <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-4">
               <div className="flex items-center gap-2 mb-2">
                 <ChevronRight size={18} className="text-[#FFC107] rotate-90" />
-                <h4 className="text-lg font-black text-main-text tracking-tight uppercase">Estoque</h4>
+                <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Estoque atual</label>
+                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque atual</label>
                   <input 
                     type="number"
                     disabled
                     value={(formData.stock || 0) + (formData.purchasedQuantity || 0)}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold opacity-50 cursor-not-allowed" 
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold opacity-50 cursor-not-allowed" 
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-[#FFC107] uppercase tracking-widest ml-1">Quantidade Comprada</label>
+                  <label className="text-sm font-black text-[#172554] uppercase tracking-widest ml-1">Quantidade Comprada</label>
                   <input 
                     type="number"
                     value={formData.purchasedQuantity || ''}
                     onChange={e => setFormData({ ...formData, purchasedQuantity: parseInt(e.target.value) || 0 })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold border border-[#FFC107]/30 focus:border-[#FFC107]" 
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold border border-[#FFC107]/30 focus:border-[#FFC107]" 
                     placeholder="0"
                   />
                 </div>
@@ -1203,12 +1333,12 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 gap-4 items-end">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Estoque mínimo</label>
+                      <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque mínimo</label>
                       <input 
                         type="number"
                         value={formData.minStock || ''}
                         onChange={e => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
-                        className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                        className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                       />
                     </div>
                   </div>
@@ -1219,7 +1349,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     <button 
                       type="button" 
                       onClick={() => setStockModal({ isOpen: true, product: formData, action: 'sum', amount: 0 })}
-                      className="text-[#FFC107] font-black uppercase text-sm hover:underline tracking-widest"
+                      className="text-[#172554] font-black uppercase text-sm hover:underline tracking-widest"
                     >
                       Editar estoque
                     </button>
@@ -1228,11 +1358,11 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 </div>
 
                 <div className="space-y-2 lg:col-span-2">
-                  <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Unidade de medida (cm, kg, m², etc)</label>
+                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida (cm, kg, m², etc)</label>
                   <select 
                     value={formData.unit || 'UN'}
                     onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold appearance-none"
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
                   >
                     <option value="UN" className="bg-card">UNIDADE (UN)</option>
                     <option value="KG" className="bg-card">QUILOGRAMA (KG)</option>
@@ -1253,7 +1383,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     onChange={e => setFormData({ ...formData, controlStock: !e.target.checked })}
                     className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[#FFC107] transition-all"
                   />
-                  <label htmlFor="controlStock" className="text-xs font-black text-muted-text uppercase tracking-widest cursor-pointer select-none">
+                  <label htmlFor="controlStock" className="text-xs font-black text-gray-600 uppercase tracking-widest cursor-pointer select-none">
                     Não controlar estoque
                   </label>
                 </div>
@@ -1261,11 +1391,11 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="space-y-2 lg:col-span-3">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Código EAN-13 (Barcode)</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Código EAN-13 (Barcode)</label>
               <input 
                 value={formData.ean13 || ''}
                 onChange={e => setFormData({ ...formData, ean13: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
               />
             </div>
 
@@ -1281,26 +1411,26 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       {showAddService && subTab === 'servicos' && (
         <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#FFC107] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR SERVIÇO' : 'CADASTRAR NOVO SERVIÇO'}
             </h3>
-            <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-muted-text font-bold hover:text-main-text uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="space-y-2 lg:col-span-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Nome do Serviço</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Serviço</label>
               <input 
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Categoria</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
               <select 
                 value={formData.category || 'Geral'}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold appearance-none"
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
                 <option value="Manutenção" className="bg-card">MANUTENÇÃO</option>
                 <option value="Consultoria" className="bg-card">CONSULTORIA</option>
@@ -1310,17 +1440,17 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
               <input 
                 type="text"
                 value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
                 onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-black text-red-500/80" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80" 
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
               <input 
                 type="text"
                 value={maskCurrency(Math.round((formData.price || 0) * 100))}
@@ -1330,24 +1460,24 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
-              <div className="w-full neumorphic-inset p-3 bg-transparent text-main-text text-sm font-black flex items-center justify-between">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
+              <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-900 text-sm font-black flex items-center justify-between">
                 <span>
                   {formData.price && formData.costPrice 
                     ? (((formData.price - formData.costPrice) / formData.price) * 100).toFixed(2)
                     : '0.00'}
                 </span>
-                <span className="text-[10px] text-muted-text">AUTO</span>
+                <span className="text-sm text-gray-600">AUTO</span>
               </div>
             </div>
 
             <div className="space-y-2 lg:col-span-3">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Informações Adicionais</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Informações Adicionais</label>
               <textarea 
                 value={formData.additionalInfo || ''}
                 onChange={e => setFormData({ ...formData, additionalInfo: e.target.value })}
                 rows={3}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-medium resize-none" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-medium resize-none" 
                 placeholder="Detalhes sobre o serviço, prazos, etc..."
               />
             </div>
@@ -1364,22 +1494,22 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       {showAddSupplier && subTab === 'fornecedores' && (
         <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#FFC107] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
             </h3>
-            <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); }} className="text-muted-text font-bold hover:text-main-text uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
               onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-muted-text hover:text-main-text'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
               onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-muted-text hover:text-main-text'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -1387,155 +1517,155 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 {formData.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
               </label>
               <input 
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                 placeholder={formData.type === 'PJ' ? 'Ex: Fornecedor LTDA' : 'Ex: José Silva'}
               />
             </div>
 
             {formData.type === 'PJ' && (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Nome Fantasia</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Fantasia</label>
                 <input 
                   value={formData.tradeName || ''}
                   onChange={e => setFormData({ ...formData, tradeName: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                   placeholder="Nome Fantasia"
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 {formData.type === 'PJ' ? 'CNPJ' : 'CPF'}
               </label>
               <input 
                 value={formData.document || ''}
                 onChange={e => setFormData({ ...formData, document: formData.type === 'PJ' ? maskCNPJ(e.target.value) : maskCPF(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                 placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
               />
             </div>
 
             {formData.type === 'PF' ? (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">RG</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">RG</label>
                 <input 
                   value={formData.rg || ''}
                   onChange={e => setFormData({ ...formData, rg: maskRG(e.target.value) })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                   placeholder="00.000.000-0"
                 />
               </div>
             ) : (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
                 <input 
                   value={formData.ie || ''}
                   onChange={e => setFormData({ ...formData, ie: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-mono" 
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                   placeholder="Inscrição Estadual"
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Telefone Fixo</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Telefone Fixo</label>
               <input 
                 value={formData.phone || ''}
                 onChange={e => setFormData({ ...formData, phone: maskPhone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                 placeholder="(00) 0000-0000"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Celular</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Celular</label>
               <input 
                 value={formData.cellphone || ''}
                 onChange={e => setFormData({ ...formData, cellphone: maskCellphone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
                 placeholder="(00) 00000-0000"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">E-mail</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail</label>
               <input 
                 type="email"
                 value={formData.email || ''}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
                 placeholder="email@exemplo.com"
               />
             </div>
 
             {/* Address Section */}
-            <div className="lg:col-span-3 pt-4 border-t border-white/5 mt-4">
-              <h4 className="text-[10px] font-black text-[#FFC107] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+            <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
+              <h4 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">CEP</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
                   <input 
                     value={formData.zipCode || ''}
                     onChange={e => setFormData({ ...formData, zipCode: maskCEP(e.target.value) })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="00000-000"
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Endereço</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Endereço</label>
                   <input 
                     value={formData.address || ''}
                     onChange={e => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="Rua / Avenida"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Número</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Número</label>
                   <input 
                     value={formData.number || ''}
                     onChange={e => setFormData({ ...formData, number: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="123"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Bairro</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Bairro</label>
                   <input 
                     value={formData.neighborhood || ''}
                     onChange={e => setFormData({ ...formData, neighborhood: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Estado (UF)</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Estado (UF)</label>
                   <input 
                     value={formData.state || ''}
                     onChange={e => setFormData({ ...formData, state: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs uppercase" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs uppercase" 
                     maxLength={2}
                     placeholder="UF"
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Cidade</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Cidade</label>
                   <input 
                     value={formData.city || ''}
                     onChange={e => setFormData({ ...formData, city: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                   />
                 </div>
                 <div className="space-y-1 lg:col-span-4">
-                  <label className="text-[9px] font-black text-muted-text uppercase tracking-widest ml-1">Complemento</label>
+                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Complemento</label>
                   <input 
                     value={formData.complement || ''}
                     onChange={e => setFormData({ ...formData, complement: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-main-text text-xs" 
+                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
                     placeholder="Apto, Sala, Ponto de Referência"
                   />
                 </div>
@@ -1543,11 +1673,11 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
 
             <div className="lg:col-span-3 space-y-2 mt-4">
-              <label className="text-[10px] font-black text-muted-text uppercase tracking-widest ml-1">Observações</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Observações</label>
               <textarea 
                 value={formData.observations || ''}
                 onChange={e => setFormData({ ...formData, observations: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-sm min-h-[80px]" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm min-h-[80px]" 
                 placeholder="Observações importantes sobre o fornecedor..."
               />
             </div>
@@ -1568,43 +1698,99 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         
         {/* Barcode Modal */}
         {barcodeModal.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300 print:bg-white print:p-0">
-            <div className="neumorphic p-8 max-w-sm w-full bg-card space-y-6 relative print:shadow-none print:bg-white print:p-0 print:m-0">
-              <button 
-                onClick={() => setBarcodeModal({ isOpen: false, product: null })}
-                className="absolute top-4 right-4 text-muted-text hover:text-red-500 p-2 print:hidden"
-              >
-                <CloseIcon size={24} />
-              </button>
-
-              <div className="text-center space-y-2 print:mt-10">
-                <h3 className="text-xl font-black text-main-text print:text-black">ETIQUETA DO PRODUTO</h3>
-                <p className="text-xs text-muted-text font-black uppercase tracking-widest print:text-black">{barcodeModal.product?.name}</p>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:p-0">
+            <div className="bg-white max-w-md w-full border-2 border-gray-300 shadow-2xl relative print:shadow-none print:border-0 print:m-0">
+              {/* Header navy */}
+              <div className="px-5 py-3 flex items-center justify-between text-white print:hidden" style={{ background: '#172554' }}>
+                <h3 className="text-base font-black uppercase tracking-wide">Etiqueta do Produto</h3>
+                <button
+                  onClick={() => setBarcodeModal({ isOpen: false, product: null })}
+                  className="text-white hover:opacity-70"
+                >
+                  <CloseIcon size={22} />
+                </button>
               </div>
 
-              <div className="bg-white p-8 rounded-2xl flex justify-center shadow-inner print:shadow-none">
-                <svg ref={barcodeRef} className="max-w-full"></svg>
-              </div>
+              <div className="p-6 space-y-5 print:p-0 print:mt-10">
+                <div className="text-center">
+                  <p className="text-base font-bold text-gray-900 print:text-black">{barcodeModal.product?.name}</p>
+                  {barcodeModal.product?.ref && (
+                    <p className="text-sm text-gray-500 mt-0.5 print:hidden">REF: {barcodeModal.product.ref}</p>
+                  )}
+                </div>
 
-              <div className="grid grid-cols-2 gap-4 print:hidden">
-                <button 
-                  onClick={downloadBarcode}
-                  className="bg-[#FFC107] text-black font-black py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all text-[10px] tracking-widest"
-                >
-                  <Download size={14} /> PNG
-                </button>
-                <button 
-                  onClick={downloadPDF}
-                  className="bg-[#FFC107] text-black font-black py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all text-[10px] tracking-widest"
-                >
-                  <Download size={14} /> PDF
-                </button>
-                <button 
-                  onClick={printLabel}
-                  className="col-span-2 bg-card text-muted-text border border-white/5 font-black py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all text-[10px] tracking-widest"
-                >
-                  <Printer size={18} /> IMPRIMIR ETIQUETA
-                </button>
+                {/* Editor de EAN — escondido na impressão */}
+                <div className="space-y-2 print:hidden">
+                  <label className="smart-stat-label">Código EAN-13</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={eanInput}
+                      onChange={e => setEanInput(e.target.value.replace(/\D/g, '').slice(0, 13))}
+                      placeholder="13 dígitos (ex.: 7891234567895)"
+                      className="smart-input flex-1 font-mono tabular-nums text-base"
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={13}
+                    />
+                    <button
+                      onClick={() => setEanInput(generateEAN13())}
+                      className="smart-btn-secondary shrink-0"
+                      title="Gerar EAN-13 válido aleatório"
+                    >
+                      GERAR
+                    </button>
+                  </div>
+                  {eanInput.length === 0 ? (
+                    <p className="text-xs text-gray-500">Digite ou gere um código EAN-13 para visualizar o código de barras.</p>
+                  ) : !eanValid ? (
+                    <p className="text-sm text-red-600 font-bold">
+                      EAN-13 inválido — precisa ter 13 dígitos com check digit correto.
+                    </p>
+                  ) : eanDirty ? (
+                    <p className="text-sm font-bold" style={{ color: '#172554' }}>
+                      EAN válido. Clique em "Salvar no produto" para persistir.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-emerald-700 font-bold">EAN salvo no produto.</p>
+                  )}
+                </div>
+
+                {/* Barcode visual */}
+                <div className="bg-white p-5 border-2 border-gray-200 rounded flex justify-center min-h-[140px] items-center print:border-0 print:p-0">
+                  {eanValid ? (
+                    <svg ref={barcodeRef} className="max-w-full" />
+                  ) : (
+                    <div className="text-gray-400 text-sm text-center py-6 print:hidden">
+                      Insira um EAN-13 válido para gerar o código de barras
+                    </div>
+                  )}
+                </div>
+
+                {/* Salvar EAN */}
+                {eanValid && eanDirty && (
+                  <button
+                    onClick={saveEanToProduct}
+                    disabled={savingEan}
+                    className="smart-btn-primary w-full print:hidden disabled:opacity-50"
+                  >
+                    {savingEan ? 'SALVANDO...' : 'SALVAR EAN NO PRODUTO'}
+                  </button>
+                )}
+
+                {/* Ações de exportação — só com EAN válido */}
+                {eanValid && (
+                  <div className="grid grid-cols-3 gap-2 print:hidden">
+                    <button onClick={downloadBarcode} className="smart-btn-secondary">
+                      <Download size={16} /> PNG
+                    </button>
+                    <button onClick={downloadPDF} className="smart-btn-secondary">
+                      <Download size={16} /> PDF
+                    </button>
+                    <button onClick={printLabel} className="smart-btn-primary">
+                      <Printer size={16} /> IMPRIMIR
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1625,7 +1811,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     <select 
                       value={stockModal.action}
                       onChange={e => setStockModal({ ...stockModal, action: e.target.value as any })}
-                      className="w-full neumorphic-inset p-3 bg-transparent border-none outline-none text-main-text text-lg font-medium appearance-none"
+                      className="w-full neumorphic-inset p-3 bg-transparent border-none outline-none text-gray-900 text-lg font-medium appearance-none"
                     >
                       <option value="sum" className="bg-card">Somar ao estoque</option>
                       <option value="subtract" className="bg-card">Subtrair do estoque</option>
@@ -1643,7 +1829,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     type="number"
                     value={stockModal.amount || ''}
                     onChange={e => setStockModal({ ...stockModal, amount: parseInt(e.target.value) || 0 })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-main-text text-xl font-bold" 
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-2xl font-bold" 
                     placeholder="0"
                   />
                 </div>
@@ -1676,24 +1862,24 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </div>
               
               <div className="space-y-4">
-                <h3 className="text-xl font-black text-main-text uppercase tracking-widest">Confirmar Exclusão</h3>
-                <p className="text-sm text-muted-text">
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">Confirmar Exclusão</h3>
+                <p className="text-sm text-gray-600">
                   Deseja realmente excluir <strong>{deleteConfirm.name}</strong>?
                   <br />
-                  <span className="text-[10px] uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
+                  <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4 pt-4">
                 <button 
                   onClick={() => setDeleteConfirm(null)}
-                  className="p-4 neumorphic-inset text-muted-text font-black text-[10px] tracking-widest uppercase hover:text-main-text transition-colors"
+                  className="p-4 neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button 
                   onClick={confirmDelete}
-                  className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-[10px] tracking-widest uppercase"
+                  className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
                 >
                   Confirmar
                 </button>
@@ -1708,7 +1894,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             <div className="neumorphic p-8 max-w-2xl w-full space-y-8 relative animate-in zoom-in duration-300 bg-card">
               <button 
                 onClick={() => setViewingDetails(null)}
-                className="absolute top-4 right-4 text-muted-text hover:text-red-500 p-2 transition-colors"
+                className="absolute top-4 right-4 text-gray-600 hover:text-red-500 p-2 transition-colors"
               >
                 <CloseIcon size={24} />
               </button>
@@ -1718,78 +1904,78 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   {subTab === 'clientes' ? <UserIcon size={40} /> : subTab === 'produtos' ? <Barcode size={40} /> : <Shield size={40} />}
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black text-main-text uppercase tracking-tighter">{viewingDetails.name}</h3>
-                  <p className="text-xs text-muted-text font-black tracking-widest uppercase flex items-center gap-2">
+                  <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">{viewingDetails.name}</h3>
+                  <p className="text-xs text-gray-600 font-black tracking-widest uppercase flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                     {subTab.slice(0, -1)} ATIVO
                   </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6 border-y border-white/5 overflow-y-auto max-h-[60vh] custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6 border-y border-gray-200 overflow-y-auto max-h-[60vh] custom-scrollbar">
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">
+                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
                       {viewingDetails.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
                     </span>
-                    <p className="text-sm font-bold text-main-text">{viewingDetails.name}</p>
+                    <p className="text-sm font-bold text-gray-900">{viewingDetails.name}</p>
                   </div>
 
                   {viewingDetails.type === 'PJ' && viewingDetails.tradeName && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Nome Fantasia</span>
-                      <p className="text-sm font-bold text-main-text">{viewingDetails.tradeName}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Nome Fantasia</span>
+                      <p className="text-sm font-bold text-gray-900">{viewingDetails.tradeName}</p>
                     </div>
                   )}
 
                   <div className="space-y-1">
-                    <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">
+                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
                       {viewingDetails.type === 'PJ' ? 'CNPJ' : 'CPF'} / ID
                     </span>
-                    <p className="text-sm font-mono text-main-text">{viewingDetails.document} <span className="opacity-30 text-[10px]">({viewingDetails.id})</span></p>
+                    <p className="text-sm font-mono text-gray-900">{viewingDetails.document} <span className="opacity-30 text-sm">({viewingDetails.id})</span></p>
                   </div>
 
                   {viewingDetails.type === 'PF' && viewingDetails.rg && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">RG</span>
-                      <p className="text-sm font-mono text-main-text">{viewingDetails.rg}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">RG</span>
+                      <p className="text-sm font-mono text-gray-900">{viewingDetails.rg}</p>
                     </div>
                   )}
 
                   {viewingDetails.type === 'PJ' && viewingDetails.ie && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">IE</span>
-                      <p className="text-sm font-mono text-main-text">{viewingDetails.ie}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">IE</span>
+                      <p className="text-sm font-mono text-gray-900">{viewingDetails.ie}</p>
                     </div>
                   )}
 
                   <div className="space-y-1">
-                    <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">E-mail</span>
-                    <p className="text-sm font-bold text-main-text">{viewingDetails.email || 'N/A'}</p>
+                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">E-mail</span>
+                    <p className="text-sm font-bold text-gray-900">{viewingDetails.email || 'N/A'}</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Telefone</span>
-                      <p className="text-sm font-bold text-main-text">{viewingDetails.phone || 'N/A'}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Telefone</span>
+                      <p className="text-sm font-bold text-gray-900">{viewingDetails.phone || 'N/A'}</p>
                     </div>
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Celular</span>
-                      <p className="text-sm font-bold text-main-text">{viewingDetails.cellphone || 'N/A'}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Celular</span>
+                      <p className="text-sm font-bold text-gray-900">{viewingDetails.cellphone || 'N/A'}</p>
                     </div>
                   </div>
 
                   {subTab !== 'fornecedores' && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Limite de Crédito</span>
-                        <p className="text-sm font-black text-[#FFC107]">R$ {(viewingDetails.creditLimit || 0).toFixed(2)}</p>
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Limite de Crédito</span>
+                        <p className="text-sm font-black text-[#172554]">R$ {(viewingDetails.creditLimit || 0).toFixed(2)}</p>
                       </div>
                       <div className="space-y-1">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
                           {viewingDetails.type === 'PJ' ? 'Fundação' : 'Aniversário'}
                         </span>
-                        <p className="text-sm font-bold text-main-text">{viewingDetails.birthDate || 'N/A'}</p>
+                        <p className="text-sm font-bold text-gray-900">{viewingDetails.birthDate || 'N/A'}</p>
                       </div>
                     </div>
                   )}
@@ -1797,15 +1983,15 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <span className="text-[10px] font-black text-[#FFC107] uppercase tracking-widest">Endereço</span>
+                    <span className="text-sm font-black text-[#172554] uppercase tracking-widest">Endereço</span>
                     <div className="neumorphic-inset p-3 bg-main/20 rounded-xl space-y-2">
-                       <p className="text-xs text-main-text">
+                       <p className="text-xs text-gray-900">
                         {viewingDetails.address ? `${viewingDetails.address}, ${viewingDetails.number || 'S/N'}` : 'Endereço não informado'}
                        </p>
-                       <p className="text-[10px] text-muted-text uppercase font-black">
+                       <p className="text-sm text-gray-600 uppercase font-black">
                         {viewingDetails.neighborhood} {viewingDetails.complement && ` - ${viewingDetails.complement}`}
                        </p>
-                       <p className="text-[10px] text-muted-text uppercase font-black">
+                       <p className="text-sm text-gray-600 uppercase font-black">
                         {viewingDetails.city} - {viewingDetails.state} | CEP: {viewingDetails.zipCode}
                        </p>
                     </div>
@@ -1813,32 +1999,32 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
                   {viewingDetails.observations && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Observações</span>
-                      <p className="text-xs text-muted-text italic whitespace-pre-wrap">{viewingDetails.observations}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Observações</span>
+                      <p className="text-xs text-gray-600 italic whitespace-pre-wrap">{viewingDetails.observations}</p>
                     </div>
                   )}
 
                   {viewingDetails.category && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Categoria</span>
-                      <p className="text-sm font-bold text-main-text">{viewingDetails.category.toUpperCase()}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Categoria</span>
+                      <p className="text-sm font-bold text-gray-900">{viewingDetails.category.toUpperCase()}</p>
                     </div>
                   )}
                   {viewingDetails.costPrice !== undefined && subTab !== 'clientes' && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest text-red-500/60">Preço de Custo</span>
-                      <p className="text-sm font-bold text-main-text text-red-500/80">R$ {viewingDetails.costPrice.toFixed(2)}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest text-red-500/60">Preço de Custo</span>
+                      <p className="text-sm font-bold text-gray-900 text-red-500/80">R$ {viewingDetails.costPrice.toFixed(2)}</p>
                     </div>
                   )}
                   {viewingDetails.price !== undefined && subTab !== 'clientes' && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Preço de Venda</span>
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Preço de Venda</span>
                         <p className="text-sm font-black text-emerald-500">R$ {viewingDetails.price.toFixed(2)}</p>
                       </div>
                       <div className="space-y-1 text-right">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Lucro Estimado</span>
-                        <p className="text-sm font-black text-[#FFC107]">
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Lucro Estimado</span>
+                        <p className="text-sm font-black text-[#172554]">
                           {viewingDetails.costPrice ? (((viewingDetails.price - viewingDetails.costPrice) / viewingDetails.price) * 100).toFixed(1) : '0.0'}%
                         </p>
                       </div>
@@ -1847,19 +2033,19 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   {viewingDetails.stock !== undefined && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Estoque Atual</span>
-                        <p className="text-sm font-black text-main-text">{viewingDetails.stock} {viewingDetails.unit || 'UN'}</p>
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Estoque Atual</span>
+                        <p className="text-sm font-black text-gray-900">{viewingDetails.stock} {viewingDetails.unit || 'UN'}</p>
                       </div>
                       <div className="space-y-1 text-right">
-                        <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Estoque Mínimo</span>
+                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Estoque Mínimo</span>
                         <p className="text-sm font-black text-red-500/60">{viewingDetails.minStock || 0} {viewingDetails.unit || 'UN'}</p>
                       </div>
                     </div>
                   )}
                   {viewingDetails.additionalInfo && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-black text-muted-text uppercase tracking-widest">Informações Adicionais</span>
-                      <p className="text-sm text-main-text italic">{viewingDetails.additionalInfo}</p>
+                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Informações Adicionais</span>
+                      <p className="text-sm text-gray-900 italic">{viewingDetails.additionalInfo}</p>
                     </div>
                   )}
                 </div>
@@ -1868,7 +2054,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               <div className="flex justify-end pt-4">
                 <button 
                   onClick={() => setViewingDetails(null)}
-                  className="px-8 py-3 bg-card neumorphic-inset text-muted-text font-black text-[10px] tracking-widest uppercase hover:text-main-text active:scale-95 transition-all"
+                  className="px-8 py-3 bg-card neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 active:scale-95 transition-all"
                 >
                   Fechar Visualização
                 </button>
@@ -1878,18 +2064,18 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         )}
 
         {currentListLength === 0 && (
-          <div className="flex-1 flex flex-col items-center justify-center p-10 text-muted-text opacity-50 space-y-4">
+          <div className="flex-1 flex flex-col items-center justify-center p-10 text-gray-600 opacity-50 space-y-4">
             <Search size={48} />
             <p className="font-bold">Nenhum registro em "{subTab}" para "{search}"</p>
           </div>
         )}
 
-        <div className="mt-auto p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-[10px] text-muted-text font-black uppercase tracking-widest border-t border-white/5 bg-main/50 backdrop-blur-sm sticky bottom-0">
+        <div className="mt-auto p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-600 font-black uppercase tracking-widest border-t border-gray-200 bg-main/50 backdrop-blur-sm sticky bottom-0">
           <span>Mostrando {currentListLength} de {totalLength} registros</span>
           <div className="flex gap-2">
-            <button className="px-3 py-1 neumorphic-inset disabled:opacity-30 text-muted-text hover:text-[#FFC107] transition-colors">Anterior</button>
+            <button className="px-3 py-1 neumorphic-inset disabled:opacity-30 text-gray-600 hover:text-[#FFC107] transition-colors">Anterior</button>
             <button className="px-3 py-1 neumorphic-inset text-[#FFC107] bg-main shadow-inner">1</button>
-            <button className="px-3 py-1 neumorphic-inset text-muted-text hover:text-[#FFC107] transition-colors">Próximo</button>
+            <button className="px-3 py-1 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-colors">Próximo</button>
           </div>
         </div>
       </div>

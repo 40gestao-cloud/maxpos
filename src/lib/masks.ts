@@ -66,3 +66,9 @@ export const parseCurrencyToNumber = (value: string): number => {
   const rawValue = value.replace(/\D/g, '');
   return parseFloat(rawValue) / 100 || 0;
 };
+
+/** Formata um número como moeda BR: "R$ 1.234,56" */
+export const formatBRL = (n: number | null | undefined): string => {
+  const v = typeof n === 'number' && !isNaN(n) ? n : 0;
+  return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};

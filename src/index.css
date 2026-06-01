@@ -6,23 +6,27 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* ============================================================
+   Paleta única (estilo PDV Supermercado) — branco, amarelo,
+   azul-marinho, verde-dinheiro. Sem neumórfico.
+   ============================================================ */
 :root {
-  --bg-main: #121212;
-  --bg-card: #1a1a1a;
-  --shadow-dark: #0e0e0e;
-  --shadow-light: #262626;
-  --text-main: #e5e7eb;
-  --text-muted: #9ca3af;
-  --accent: #ffc107;
-}
+  --bg-main:        #f3f4f6;   /* cinza muito claro (fundo principal)   */
+  --bg-card:        #ffffff;   /* cards/superfícies                      */
+  --bg-soft:        #f9fafb;   /* inputs e áreas internas                */
+  --border:         #d1d5db;   /* borda padrão                           */
+  --border-strong:  #9ca3af;   /* borda para inputs/botões interativos   */
+  --text-main:      #111827;   /* texto principal                        */
+  --text-muted:     #6b7280;   /* texto secundário                       */
+  --accent:         #FFC107;   /* amarelo MaxPOS (header, destaques)     */
+  --accent-dark:    #B8860B;   /* dourado para bordas/sub-header amarelo */
+  --navy:           #172554;   /* azul-marinho (sub-headers/tabelas)     */
+  --money:          #15803d;   /* verde dinheiro (valores/positivos)     */
+  --danger:         #b91c1c;   /* vermelho (erros)                       */
 
-.light {
-  --bg-main: #f0f2f5;
-  --bg-card: #ffffff;
-  --shadow-dark: #d1d9e6;
-  --shadow-light: #ffffff;
-  --text-main: #1f2937;
-  --text-muted: #6b7280;
+  /* legado (mantidos para compat com componentes antigos) */
+  --shadow-dark:    transparent;
+  --shadow-light:   transparent;
 }
 
 @theme {
@@ -34,41 +38,58 @@ body {
   --color-muted-text: var(--text-muted);
 }
 
+/* ============================================================
+   Componentes legados (.neumorphic etc) redefinidos como FLAT.
+   Mantém o markup existente funcionando com o novo visual.
+   ============================================================ */
 @layer components {
   .neumorphic {
     background: var(--bg-card);
-    box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
-    border-radius: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
     color: var(--text-main);
   }
 
   .neumorphic-inset {
-    background: var(--bg-card);
-    box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
     border-radius: 0.5rem;
     color: var(--text-main);
   }
 
   .btn-neumorphic {
-    @apply transition-all active:scale-95 cursor-pointer flex items-center justify-center;
+    @apply transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center;
     background: var(--bg-card);
-    box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.5rem;
     color: var(--text-main);
   }
 
+  .btn-neumorphic:hover {
+    background: var(--bg-soft);
+  }
+
   .btn-neumorphic:active {
-    box-shadow: inset 2px 2px 5px var(--shadow-dark), inset -2px -2px 5px var(--shadow-light);
+    background: #e5e7eb;
   }
 
   .nav-item {
-    @apply flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all hover:text-accent;
-    color: var(--text-muted);
+    @apply flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all;
+    color: var(--text-main);
+    border: 1px solid transparent;
+  }
+
+  .nav-item:hover {
+    background: var(--bg-soft);
+    border-color: var(--border);
   }
 
   .nav-item.active {
-    @apply text-accent;
-    background: var(--bg-main);
-    box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+    background: var(--navy);
+    color: #ffffff;
+    border-left: 4px solid var(--accent);
+    padding-left: calc(0.75rem - 3px);
+    font-weight: 700;
   }
 }
 
@@ -76,8 +97,251 @@ body {
   @apply bg-main text-main-text antialiased;
 }
 
+/* ============================================================
+   Glass + Shimmer — efeitos premium
+   ============================================================ */
+@layer components {
+  /* Botão "vidro" amarelo — quase sólido, com sutil gradient pra dar profundidade */
+  .glass-yellow {
+    background: linear-gradient(135deg, #FFD24A 0%, #FFC107 55%, #E0A800 100%);
+    border: 1px solid #B8860B;
+    color: #000;
+    transition: all 150ms;
+  }
+  .glass-yellow:hover {
+    background: linear-gradient(135deg, #FFE07A 0%, #FFC925 55%, #C99403 100%);
+    border-color: #7a5808;
+  }
+
+  /* Botão "vidro" navy — quase sólido */
+  .glass-blue {
+    background: linear-gradient(135deg, #2a3f8c 0%, #172554 55%, #0b1238 100%);
+    border: 1px solid #0b1238;
+    color: #fff;
+    transition: all 150ms;
+  }
+  .glass-blue:hover {
+    background: linear-gradient(135deg, #3a4fa0 0%, #1f3270 55%, #0b1238 100%);
+    border-color: #000;
+  }
+
+  /* Botão "vidro" vermelho (lixeira) — quase sólido */
+  .glass-red {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 55%, #b91c1c 100%);
+    border: 1px solid #7f1d1d;
+    color: #fff;
+    transition: all 150ms;
+  }
+  .glass-red:hover {
+    background: linear-gradient(135deg, #f87171 0%, #ef4444 55%, #991b1b 100%);
+    border-color: #4c0a0a;
+  }
+
+  /* Shimmer — gradiente diagonal varrendo o elemento */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 35%,
+      rgba(255, 255, 255, 0.55) 50%,
+      transparent 65%
+    );
+    transform: translateX(-120%);
+    animation: shimmer-sweep 3s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+  /* Para shimmer mais discreto em botões grandes */
+  .shimmer-subtle::after {
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(255, 255, 255, 0.35) 50%,
+      transparent 60%
+    );
+    animation-duration: 4s;
+  }
+
+  @keyframes shimmer-sweep {
+    0% { transform: translateX(-120%); }
+    60%, 100% { transform: translateX(120%); }
+  }
+}
+
+/* ============================================================
+   SmartPOS helpers — visual limpo, sem sombras, fonte grande
+   ============================================================ */
+@layer components {
+  /* Card: superfície limpa, borda sutil. Sem sombras. */
+  .smart-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    color: var(--text-main);
+  }
+
+  /* Cabeçalho de página: faixa amarela como o PDV */
+  .page-header {
+    background: var(--accent);
+    border-bottom: 2px solid var(--accent-dark);
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #000;
+  }
+
+  /* Header de seção dentro de uma view (h2): navy + bold + grande */
+  .section-header {
+    color: var(--navy);
+    font-size: 1.5rem;       /* text-2xl */
+    line-height: 2rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  .section-subheader {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+
+  /* Stat card: número grande em navy, label pequeno em cinza */
+  .smart-stat-value {
+    color: var(--navy);
+    font-size: 2.25rem;      /* text-4xl */
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .smart-stat-label {
+    color: var(--text-muted);
+    font-size: 0.875rem;     /* text-sm */
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Botão primário: amarelo grande, texto preto */
+  .smart-btn-primary {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background: var(--accent);
+    color: #000;
+    border: 2px solid var(--accent-dark);
+    padding: 0.75rem 1.5rem;
+    font-weight: 800;
+    font-size: 1rem;         /* text-base */
+    border-radius: 0.5rem;
+    transition: all 150ms;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .smart-btn-primary::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(255, 255, 255, 0.45) 50%,
+      transparent 60%
+    );
+    transform: translateX(-120%);
+    animation: shimmer-sweep 4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .smart-btn-primary:hover { filter: brightness(0.95); }
+  .smart-btn-primary:active { transform: scale(0.98); }
+  .smart-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Botão secundário: branco com borda navy */
+  .smart-btn-secondary {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background: var(--bg-card);
+    color: var(--navy);
+    border: 2px solid var(--border-strong);
+    padding: 0.625rem 1.25rem;
+    font-weight: 700;
+    font-size: 0.95rem;
+    border-radius: 0.5rem;
+    transition: all 150ms;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .smart-btn-secondary::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 42%,
+      rgba(23, 37, 84, 0.10) 50%,
+      transparent 58%
+    );
+    transform: translateX(-120%);
+    animation: shimmer-sweep 5s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .smart-btn-secondary:hover { background: var(--bg-soft); border-color: var(--navy); }
+  .smart-btn-secondary:active { transform: scale(0.98); }
+
+  /* Botão de ação destrutiva */
+  .smart-btn-danger {
+    background: #fff;
+    color: #b91c1c;
+    border: 2px solid #fca5a5;
+    padding: 0.625rem 1.25rem;
+    font-weight: 700;
+    font-size: 0.95rem;
+    border-radius: 0.5rem;
+    transition: all 150ms;
+    cursor: pointer;
+  }
+  .smart-btn-danger:hover { background: #fee2e2; border-color: #b91c1c; }
+
+  /* Input padrão */
+  .smart-input {
+    width: 100%;
+    background: var(--bg-card);
+    border: 2px solid var(--border-strong);
+    padding: 0.625rem 0.875rem;
+    font-size: 1rem;
+    color: var(--text-main);
+    border-radius: 0.375rem;
+    outline: none;
+  }
+  .smart-input:focus { border-color: var(--navy); }
+  .smart-input::placeholder { color: #9ca3af; }
+}
+
+/* Scrollbars suaves no novo tema claro */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -85,10 +349,10 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #d1d5db;
   border-radius: 10px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #444;
+  background: #9ca3af;
 }

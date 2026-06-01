@@ -17,8 +17,12 @@ CREATE TABLE IF NOT EXISTS products (
   unit TEXT NOT NULL DEFAULT 'UN',
   ean13 TEXT,
   "controlStock" BOOLEAN NOT NULL DEFAULT true,
+  image TEXT,                              -- base64 data URL (max 120 KB)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migração idempotente: adiciona image em bancos antigos sem essa coluna
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT;
 
 -- ─── Clientes ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS clients (
@@ -295,4 +299,136 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 --   WHERE email = 'chairmanmaximus@gmail.com';
 -- UPDATE user_profiles SET role = 'ceo',      name = 'CEO Maximus'
 --   WHERE email = 'ceomaximus@gmail.com';
+-- ============================================================
+
+-- ============================================================
+-- PIX pendentes (integração MaxBank)
+-- ============================================================
+-- Schema espelhado do LogMax para que o MaxBank consulte
+-- ambos sem mudar a query. O MaxPOS insere com
+-- status='aguardando', o MaxBank lê o QR "MAX-PIX-<uuid>" e
+-- chama a RPC `confirmar_pix_pendente`. O PDV escuta via
+-- Supabase Realtime e fecha o modal automaticamente.
+-- ============================================================
+
+-- Migração: versões anteriores deste schema criaram a tabela
+-- com colunas em português (criado_em/pago_em). Se for o caso,
+-- recria do zero. PIX 'aguardando' são voláteis (perdidos no
+-- reload do PDV), então pode dropar sem perda relevante.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name   = 'pix_pendentes'
+      AND column_name  = 'criado_em'
+  ) THEN
+    DROP TABLE public.pix_pendentes CASCADE;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS pix_pendentes (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  valor        NUMERIC(15,2) NOT NULL CHECK (valor >= 0),
+  status       TEXT NOT NULL DEFAULT 'aguardando'
+               CHECK (status IN ('aguardando', 'pago', 'cancelado')),
+  cliente_id   TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  paid_at      TIMESTAMPTZ,
+  -- Extras MaxPOS (auditoria — MaxBank ignora)
+  pdv_origem   TEXT DEFAULT 'maxpos',
+  operador_id  UUID
+);
+
+CREATE INDEX IF NOT EXISTS pix_pendentes_status_idx
+  ON pix_pendentes (status, created_at DESC);
+
+-- Realtime (PDV escuta postgres_changes nessa linha)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND tablename = 'pix_pendentes'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.pix_pendentes;
+  END IF;
+END $$;
+
+-- Trigger: garante paid_at quando alguém marcar como pago
+-- direto (sem passar pela RPC)
+CREATE OR REPLACE FUNCTION pix_pendentes_set_paid_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status = 'pago' AND OLD.status <> 'pago' THEN
+    NEW.paid_at := NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_pix_pendentes_paid_at ON pix_pendentes;
+CREATE TRIGGER trg_pix_pendentes_paid_at
+  BEFORE UPDATE ON pix_pendentes
+  FOR EACH ROW EXECUTE FUNCTION pix_pendentes_set_paid_at();
+
+-- RLS — PDV autenticado tem acesso total; MaxBank usa anon key
+-- mas chama a RPC SECURITY DEFINER (que bypassa RLS).
+ALTER TABLE pix_pendentes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pix_pendentes_auth_all ON pix_pendentes;
+CREATE POLICY pix_pendentes_auth_all
+  ON pix_pendentes
+  FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- Anon (MaxBank) — só lookup de pendentes; update via RPC
+DROP POLICY IF EXISTS pix_pendentes_anon_select ON pix_pendentes;
+CREATE POLICY pix_pendentes_anon_select
+  ON pix_pendentes
+  FOR SELECT
+  TO anon
+  USING (status = 'aguardando');
+
+DROP POLICY IF EXISTS pix_pendentes_anon_update ON pix_pendentes;
+CREATE POLICY pix_pendentes_anon_update
+  ON pix_pendentes
+  FOR UPDATE
+  TO anon
+  USING (status = 'aguardando')
+  WITH CHECK (status = 'pago');
+
+-- RPC: confirma o PIX (transição aguardando → pago).
+-- SECURITY DEFINER bypassa RLS no contexto da função e
+-- garante a transição correta. Mesma assinatura usada pelo
+-- LogMax — MaxBank chama identicamente nos dois.
+CREATE OR REPLACE FUNCTION public.confirmar_pix_pendente(p_id UUID)
+RETURNS TABLE (id UUID, status TEXT, paid_at TIMESTAMPTZ)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN QUERY
+  UPDATE pix_pendentes p
+     SET status  = 'pago',
+         paid_at = NOW()
+   WHERE p.id = p_id
+     AND p.status = 'aguardando'
+  RETURNING p.id, p.status, p.paid_at;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pix pendente não encontrado ou já processado'
+      USING ERRCODE = 'P0002';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.confirmar_pix_pendente(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.confirmar_pix_pendente(UUID)
+  TO anon, authenticated;
 -- ============================================================

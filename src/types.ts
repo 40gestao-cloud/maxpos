@@ -37,6 +37,7 @@ export interface Product {
   unit: string;
   ean13?: string;
   controlStock?: boolean;
+  image?: string; // base64 data URL, máximo 120 KB
 }
 
 export interface Service {
