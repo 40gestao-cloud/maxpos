@@ -36,6 +36,9 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [pixAmount, setPixAmount] = useState(0);
   const [pixUuid, setPixUuid] = useState('');
   const [pixQrDataUrl, setPixQrDataUrl] = useState('');
+  const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [cashReceived, setCashReceived] = useState('');
+  const [cashChange, setCashChange] = useState(0);
   const [lastAdded, setLastAdded] = useState<CartItem | null>(null);
   const [classicCode, setClassicCode] = useState('');
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
@@ -126,7 +129,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = isScanning || showInstallments || showClientPicker || classicSearchOpen || pixModalOpen;
+      const modalOpen = isScanning || showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen;
       if (e.key === 'F2') {
         e.preventDefault();
         if (!modalOpen) codeInputRef.current?.focus();
@@ -150,11 +153,23 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         e.preventDefault();
         if (modalOpen) return;
         if (cart.length > 0) setCheckoutMode(true);
+      } else if (e.key === 'F9') {
+        e.preventDefault();
+        if (modalOpen) return;
+        if (cart.length === 0 && payments.length === 0) return;
+        if (!confirm('Cancelar venda atual? Todos os itens e pagamentos serão descartados.')) return;
+        setCart([]);
+        setPayments([]);
+        setLastAdded(null);
+        setPartialAmount('');
+        setClassicCode('');
+        setCheckoutMode(false);
+        setCashChange(0);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, isScanning, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, products, classicCode]);
+  }, [cart, isScanning, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments.length]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -195,7 +210,44 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   };
 
   const removePayment = (index: number) => {
-    setPayments(prev => prev.filter((_, i) => i !== index));
+    setPayments(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) setCashChange(0);
+      return next;
+    });
+  };
+
+  const cancelSale = () => {
+    if (cart.length === 0 && payments.length === 0) return;
+    if (!confirm('Cancelar venda atual? Todos os itens e pagamentos serão descartados.')) return;
+    setCart([]);
+    setPayments([]);
+    setLastAdded(null);
+    setPartialAmount('');
+    setClassicCode('');
+    setCheckoutMode(false);
+    setCashChange(0);
+  };
+
+  const handleCashClick = () => {
+    const wanted = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
+    const due = parseFloat(Math.min(wanted, remaining).toFixed(2));
+    if (due <= 0) return;
+    setCashReceived(maskCurrency(Math.round(due * 100)));
+    setCashModalOpen(true);
+  };
+
+  const confirmCashPayment = () => {
+    const wanted = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
+    const due = parseFloat(Math.min(wanted, remaining).toFixed(2));
+    const received = parseCurrencyToNumber(cashReceived);
+    if (received <= 0 || due <= 0) return;
+    const paidAmount = parseFloat(Math.min(received, due).toFixed(2));
+    const change = parseFloat(Math.max(received - due, 0).toFixed(2));
+    setPayments(prev => [...prev, { method: 'dinheiro', amount: paidAmount }]);
+    setCashChange(change);
+    setPartialAmount('');
+    setCashModalOpen(false);
   };
 
   const handleFiadoClick = () => {
@@ -342,6 +394,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setCheckoutMode(false);
       setLastAdded(null);
       setClassicCode('');
+      setCashChange(0);
     } catch (err: any) {
       alert('Erro ao salvar venda: ' + err.message);
     } finally {
@@ -403,15 +456,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
               {onExitToMenu && (
                 <button
                   onClick={onExitToMenu}
-                  className="shrink-0 px-5 py-2.5 rounded-lg flex items-center gap-2 font-black text-lg text-white backdrop-blur-md border border-white/40 transition hover:brightness-110"
-                  style={{
-                    background: 'rgba(23, 37, 84, 0.78)',
-                    boxShadow: '0 6px 14px rgba(23, 37, 84, 0.35), inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.2)',
-                    textShadow: '0 1px 2px rgba(0,0,0,0.4)',
-                  }}
+                  className="shrink-0 glass-blue px-5 py-2.5 rounded-lg flex items-center gap-2 font-bold uppercase tracking-wide text-base md:text-lg text-white border-2 transition-all"
+                  style={{ borderColor: '#FFC107' }}
                   title="Abrir menu / Sair do PDV"
                 >
-                  <Menu size={22} /> MENU
+                  <Menu size={20} /> MENU
                 </button>
               )}
               <span
@@ -570,6 +619,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   </button>
                   <div className="flex-1" />
                   <button
+                    onClick={cancelSale}
+                    disabled={cart.length === 0 && payments.length === 0}
+                    className="px-6 py-2.5 text-lg font-bold text-white transition disabled:opacity-30"
+                    style={{ background: RED }}
+                    title="Cancelar venda (F9)"
+                  >
+                    CANCELAR VENDA
+                  </button>
+                  <button
                     onClick={() => { if (cart.length > 0) setCheckoutMode(true); }}
                     disabled={cart.length === 0}
                     className="px-6 py-2.5 text-lg font-bold text-white transition disabled:opacity-30"
@@ -593,6 +651,8 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   <span><b>F4</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
                   <span><b>F8</b> / <b>F10</b> Fechar venda</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F9</b> Cancelar venda</span>
                   <span className="opacity-40">·</span>
                   <span><b>N*CÓDIGO</b> Quantidade (ex.: 3*789...)</span>
                 </div>
@@ -634,6 +694,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                             if (m.id === 'credito') handleCreditClick();
                             else if (m.id === 'fiado') handleFiadoClick();
                             else if (m.id === 'pix') handlePixClick();
+                            else if (m.id === 'dinheiro') handleCashClick();
                             else addPayment(m.id as any);
                           }}
                           disabled={remaining <= 0}
@@ -691,9 +752,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     <div className="text-4xl font-bold tabular-nums" style={{ color: remaining > 0.001 ? RED : MONEY }}>
                       R$ {fmt(Math.max(remaining, 0))}
                     </div>
-                    {remaining < -0.001 && (
-                      <div className="mt-3 text-sm text-gray-700">
-                        Troco: <span className="font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(Math.abs(remaining))}</span>
+                    {cashChange > 0.001 && (
+                      <div className="mt-4 p-3 border-2 rounded" style={{ background: '#dcfce7', borderColor: MONEY }}>
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700 mb-1">TROCO A DEVOLVER</div>
+                        <div className="text-3xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(cashChange)}</div>
                       </div>
                     )}
                   </div>
@@ -708,6 +770,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   style={{ borderColor: '#9ca3af' }}
                 >
                   VOLTAR
+                </button>
+                <button
+                  onClick={cancelSale}
+                  className="px-6 py-3 text-white font-bold hover:brightness-110"
+                  style={{ background: RED }}
+                  title="Cancelar venda (F9)"
+                >
+                  CANCELAR VENDA
                 </button>
                 <button
                   onClick={finalizeSale}
@@ -834,6 +904,75 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             </div>
           </div>
         )}
+
+        {/* Dinheiro — valor recebido + troco */}
+        {cashModalOpen && (() => {
+          const wanted = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
+          const due = parseFloat(Math.min(wanted, remaining).toFixed(2));
+          const received = parseCurrencyToNumber(cashReceived);
+          const change = Math.max(received - due, 0);
+          const short = Math.max(due - received, 0);
+          return (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40">
+              <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
+                <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
+                  <span className="font-black tracking-wide text-sm uppercase">Pagamento em Dinheiro</span>
+                  <button onClick={() => setCashModalOpen(false)} className="text-black hover:opacity-70">
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-sm text-gray-600 uppercase tracking-wider font-bold">Total Devido</span>
+                    <span className="text-2xl font-bold tabular-nums text-gray-900">R$ {fmt(due)}</span>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-2">VALOR RECEBIDO</label>
+                    <input
+                      autoFocus
+                      value={cashReceived}
+                      onChange={(e) => setCashReceived(maskCurrency(e.target.value))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); confirmCashPayment(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); setCashModalOpen(false); }
+                      }}
+                      className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                    />
+                  </div>
+                  <div className="p-4 border-2 rounded" style={{ background: change > 0.001 ? '#dcfce7' : '#f3f4f6', borderColor: change > 0.001 ? MONEY : '#d1d5db' }}>
+                    <div className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">TROCO</div>
+                    <div className="text-4xl font-bold tabular-nums" style={{ color: change > 0.001 ? MONEY : '#6b7280' }}>
+                      R$ {fmt(change)}
+                    </div>
+                  </div>
+                  {short > 0.001 && received > 0 && (
+                    <div className="text-sm font-bold" style={{ color: RED }}>
+                      Faltam R$ {fmt(short)} — registrado como pagamento parcial.
+                    </div>
+                  )}
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={() => setCashModalOpen(false)}
+                      className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                      style={{ borderColor: '#9ca3af' }}
+                    >
+                      CANCELAR
+                    </button>
+                    <button
+                      onClick={confirmCashPayment}
+                      disabled={received <= 0}
+                      className="flex-1 px-4 py-3 text-white font-bold disabled:opacity-30"
+                      style={{ background: MONEY }}
+                    >
+                      CONFIRMAR
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Parcelamento (crédito) — estilo clássico */}
         {showInstallments && (
