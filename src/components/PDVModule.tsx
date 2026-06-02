@@ -396,29 +396,59 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         >
           {/* Header */}
           <div
-            className="px-4 py-3 flex items-center justify-between text-white shrink-0 border-b-2 gap-3"
+            className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
             style={{ background: YELLOW, borderColor: YELLOW_DARK }}
           >
-            <div className="flex items-center gap-4 text-lg font-bold min-w-0 flex-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.35)' }}>
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               {onExitToMenu && (
                 <button
                   onClick={onExitToMenu}
-                  className="shrink-0 px-4 py-2 border-2 border-white/60 hover:bg-white/15 transition flex items-center gap-2 font-bold text-base text-white"
+                  className="shrink-0 px-5 py-2.5 rounded-lg flex items-center gap-2 font-black text-lg text-white backdrop-blur-md border border-white/40 transition hover:brightness-110"
+                  style={{
+                    background: 'rgba(23, 37, 84, 0.78)',
+                    boxShadow: '0 6px 14px rgba(23, 37, 84, 0.35), inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.2)',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+                  }}
                   title="Abrir menu / Sair do PDV"
                 >
-                  <Menu size={20} /> MENU
+                  <Menu size={22} /> MENU
                 </button>
               )}
-              <span className="text-2xl tracking-wide font-black shrink-0">MAXPOS</span>
-              <span className="opacity-60 shrink-0">|</span>
-              <span className="shrink-0">CAIXA 01</span>
-              <span className="opacity-60 hidden md:inline shrink-0">·</span>
-              <span className="hidden md:inline shrink-0 truncate">OP: {currentUser.name.toUpperCase()}</span>
-              <span className="opacity-60 hidden md:inline shrink-0">·</span>
-              <span className="hidden md:inline shrink-0">CUPOM: {cupomSeq}</span>
-              <span className="opacity-60 hidden lg:inline shrink-0">·</span>
-              <span className="hidden lg:inline shrink-0">{new Date().toLocaleString('pt-BR')}</span>
-              {checkoutMode && <span className="ml-2 px-3 py-1 bg-black text-[#FFC107] text-sm uppercase font-black tracking-widest shrink-0">Fechamento</span>}
+              <span
+                className="text-3xl tracking-wide font-black shrink-0"
+                style={{ color: NAVY_DARK, textShadow: '0 1px 0 rgba(255,255,255,0.35)' }}
+              >
+                MAXPOS
+              </span>
+              <span
+                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
+                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+              >
+                CAIXA 01
+              </span>
+              <span
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border truncate max-w-[260px]"
+                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+              >
+                OP: {currentUser.name.toUpperCase()}
+              </span>
+              <span
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
+                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+              >
+                CUPOM: {cupomSeq}
+              </span>
+              <span
+                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold tabular-nums backdrop-blur-sm border"
+                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+              >
+                {new Date().toLocaleString('pt-BR')}
+              </span>
+              {checkoutMode && (
+                <span className="ml-2 px-3 py-1.5 rounded-md bg-black text-[#FFC107] text-sm uppercase font-black tracking-widest shrink-0">
+                  Fechamento
+                </span>
+              )}
             </div>
           </div>
 
