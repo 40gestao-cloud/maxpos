@@ -4,13 +4,12 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Camera, Banknote, X, Menu, Trash2, Pencil, Split } from 'lucide-react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
-import BarcodeScannerModal from './BarcodeScannerModal';
 
 interface PDVModuleProps {
   currentUser: User;
@@ -23,7 +22,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [checkoutMode, setCheckoutMode] = useState(false);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [partialAmount, setPartialAmount] = useState('');
-  const [isScanning, setIsScanning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showInstallments, setShowInstallments] = useState(false);
@@ -46,8 +44,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
   const [classicSearchTerm, setClassicSearchTerm] = useState('');
   const [classicMsg, setClassicMsg] = useState<{ type: 'err'; text: string } | null>(null);
+  const [classicSuggestionIdx, setClassicSuggestionIdx] = useState(-1);
   const [cupomSeq] = useState(() => String(Date.now()).slice(-6));
   const codeInputRef = useRef<HTMLInputElement>(null);
+  const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -55,6 +55,13 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     const t = setTimeout(() => setClassicMsg(null), 3000);
     return () => clearTimeout(t);
   }, [classicMsg]);
+
+  // Ao entrar na tela de fechamento, foca direto no VALOR DESTA FORMA
+  useEffect(() => {
+    if (!checkoutMode) return;
+    const t = setTimeout(() => partialAmountRef.current?.focus(), 60);
+    return () => clearTimeout(t);
+  }, [checkoutMode]);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +108,20 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
+  // Sugestões para o campo CÓDIGO (busca por nome / EAN / REF enquanto digita)
+  const classicQuery = (() => {
+    const raw = classicCode.trim();
+    const star = raw.indexOf('*');
+    return star > 0 ? raw.slice(star + 1).trim() : raw;
+  })();
+  const classicSuggestions = (!checkoutMode && classicQuery.length >= 2)
+    ? products.filter(p =>
+        (p.name || '').toLowerCase().includes(classicQuery.toLowerCase()) ||
+        (p.ean13 || '').includes(classicQuery) ||
+        (p.ref || '').toLowerCase().includes(classicQuery.toLowerCase())
+      ).slice(0, 6)
+    : [];
+
   const handleClassicSubmit = () => {
     const raw = classicCode.trim();
     if (!raw) {
@@ -119,19 +140,42 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         code = cStr;
       }
     }
-    const product = products.find(p => p.ean13 === code || p.ref === code);
-    if (product) {
-      addToCart(product, qty);
-      setClassicMsg(null);
-    } else {
-      setClassicMsg({ type: 'err', text: `PRODUTO NAO ENCONTRADO: ${code}` });
+    // Sugestão selecionada via setas → usa essa
+    if (classicSuggestionIdx >= 0) {
+      const picked = classicSuggestions[classicSuggestionIdx];
+      if (picked) {
+        addToCart(picked, qty);
+        setClassicMsg(null);
+        setClassicCode('');
+        setClassicSuggestionIdx(-1);
+        return;
+      }
     }
+    // Match exato por EAN/REF (fluxo de scanner / código manual)
+    const exact = products.find(p => p.ean13 === code || p.ref === code);
+    if (exact) {
+      addToCart(exact, qty);
+      setClassicMsg(null);
+      setClassicCode('');
+      setClassicSuggestionIdx(-1);
+      return;
+    }
+    // Fallback: se houver sugestões por nome, usa a primeira
+    if (classicSuggestions.length > 0) {
+      addToCart(classicSuggestions[0], qty);
+      setClassicMsg(null);
+      setClassicCode('');
+      setClassicSuggestionIdx(-1);
+      return;
+    }
+    setClassicMsg({ type: 'err', text: `PRODUTO NAO ENCONTRADO: ${code}` });
     setClassicCode('');
+    setClassicSuggestionIdx(-1);
   };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = isScanning || showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen;
       if (e.key === 'F2') {
         e.preventDefault();
         if (!modalOpen) codeInputRef.current?.focus();
@@ -177,7 +221,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, isScanning, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments, checkoutMode, saving]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments, checkoutMode, saving]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -441,16 +485,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     }
   };
 
-  const handleScan = (decodedText: string) => {
-    setIsScanning(false);
-    const product = products.find(p => p.ean13 === decodedText || p.ref === decodedText);
-    if (product) {
-      addToCart(product);
-    } else {
-      alert(`Produto não encontrado com o código: ${decodedText}`);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 opacity-40">
@@ -632,30 +666,73 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 )}
                 <div className="flex items-center gap-3">
                   <span className="text-2xl font-bold text-gray-700 shrink-0">CÓDIGO:</span>
-                  <input
-                    ref={codeInputRef}
-                    value={classicCode}
-                    onChange={(e) => setClassicCode(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
-                    onBlur={() => {
-                      if (!isScanning && !showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
-                        setTimeout(() => codeInputRef.current?.focus(), 0);
-                      }
-                    }}
-                    autoFocus
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-72 bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
-                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
-                  />
-                  <button
-                    onClick={() => setIsScanning(true)}
-                    className="px-3 py-2 border-2 text-gray-700 hover:text-blue-700 transition flex items-center justify-center"
-                    style={{ borderColor: '#9ca3af' }}
-                    title="Escanear com a câmera"
-                  >
-                    <Camera size={20} />
-                  </button>
+                  <div className="relative">
+                    <input
+                      ref={codeInputRef}
+                      value={classicCode}
+                      onChange={(e) => { setClassicCode(e.target.value); setClassicSuggestionIdx(-1); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleClassicSubmit();
+                        } else if (e.key === 'ArrowDown' && classicSuggestions.length > 0) {
+                          e.preventDefault();
+                          setClassicSuggestionIdx(prev => Math.min(prev + 1, classicSuggestions.length - 1));
+                        } else if (e.key === 'ArrowUp' && classicSuggestions.length > 0) {
+                          e.preventDefault();
+                          setClassicSuggestionIdx(prev => Math.max(prev - 1, -1));
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setClassicCode('');
+                          setClassicSuggestionIdx(-1);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
+                          setTimeout(() => codeInputRef.current?.focus(), 0);
+                        }
+                      }}
+                      autoFocus
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="EAN / REF ou nome do produto"
+                      className="w-96 bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-1.5 focus:border-blue-700"
+                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                    />
+                    {classicSuggestions.length > 0 && (
+                      <div
+                        className="absolute left-0 bottom-full mb-1 bg-white border-2 shadow-2xl z-50 w-[640px] max-w-[90vw]"
+                        style={{ borderColor: NAVY_DARK }}
+                      >
+                        <div
+                          className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white"
+                          style={{ background: NAVY_DARK }}
+                        >
+                          {classicSuggestions.length} {classicSuggestions.length === 1 ? 'sugestão' : 'sugestões'} — ↑↓ navegar · Enter selecionar · Esc limpar
+                        </div>
+                        {classicSuggestions.map((p, idx) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              addToCart(p);
+                              setClassicCode('');
+                              setClassicSuggestionIdx(-1);
+                              setClassicMsg(null);
+                              codeInputRef.current?.focus();
+                            }}
+                            onMouseEnter={() => setClassicSuggestionIdx(idx)}
+                            className={`w-full grid grid-cols-[150px_1fr_120px] gap-3 text-left px-3 py-2 text-sm border-b border-gray-200 ${idx === classicSuggestionIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                          >
+                            <span className="tabular-nums text-gray-500 truncate">{p.ref || p.ean13 || '—'}</span>
+                            <span className="truncate font-semibold text-gray-900">{(p.name || '').toUpperCase()}</span>
+                            <span className="text-right font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.price)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="flex-1" />
                   <button
                     onClick={cancelSale}
@@ -742,12 +819,20 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     </div>
 
                     <div className="mb-4 max-w-md">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante)</span></label>
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante · Tab vai para as formas)</span></label>
                       <input
+                        ref={partialAmountRef}
                         value={partialAmount}
                         onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const first = document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]');
+                            first?.focus();
+                          }
+                        }}
                         placeholder={`Restante: ${maskCurrency(Math.round(Math.max(remaining, 0) * 100))}`}
-                        className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
+                        className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-2 focus:ring-blue-500/30"
                         style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                       />
                     </div>
@@ -801,6 +886,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
+                                    tabIndex={-1}
                                     onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
                                     className="p-1.5 rounded glass-blue shimmer"
                                     title="Editar valor"
@@ -808,6 +894,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                                     <Pencil size={12} className="relative z-[2]" />
                                   </button>
                                   <button
+                                    tabIndex={-1}
                                     onClick={() => removePayment(i)}
                                     className="p-1.5 rounded glass-red shimmer"
                                     title="Remover"
@@ -825,7 +912,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     {/* Espaço menor para subir os cards um pouco */}
                     <div className="h-4" />
 
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO</h3>
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar)</span></h3>
                     <div className="grid grid-cols-5 gap-2">
                       {[
                         { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign },
@@ -833,11 +920,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                         { id: 'credito', label: 'CRÉDITO', icon: CreditCard },
                         { id: 'debito', label: 'DÉBITO', icon: Banknote },
                         { id: 'fiado', label: 'FIADO', icon: Users },
-                      ].map((m) => {
+                      ].map((m, mIdx, arr) => {
                         const Icon = m.icon;
                         return (
                           <button
                             key={m.id}
+                            data-pay-method={m.id}
                             onClick={() => {
                               if (m.id === 'credito') handleCreditClick();
                               else if (m.id === 'fiado') handleFiadoClick();
@@ -845,8 +933,19 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               else if (m.id === 'dinheiro') handleCashClick();
                               else addPayment(m.id as any);
                             }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowRight') {
+                                e.preventDefault();
+                                const next = arr[(mIdx + 1) % arr.length];
+                                document.querySelector<HTMLButtonElement>(`[data-pay-method="${next.id}"]`)?.focus();
+                              } else if (e.key === 'ArrowLeft') {
+                                e.preventDefault();
+                                const prev = arr[(mIdx - 1 + arr.length) % arr.length];
+                                document.querySelector<HTMLButtonElement>(`[data-pay-method="${prev.id}"]`)?.focus();
+                              }
+                            }}
                             disabled={remaining <= 0}
-                            className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
+                            className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500/50 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
                             style={{ borderColor: '#9ca3af' }}
                           >
                             <Icon size={20} />
@@ -905,29 +1004,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     value={classicCode}
                     onChange={(e) => setClassicCode(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
-                    onBlur={() => {
-                      if (!isScanning && !showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
-                        setTimeout(() => codeInputRef.current?.focus(), 0);
-                      }
-                    }}
                     placeholder="EAN-13 ou ID do produto"
                     autoComplete="off"
                     spellCheck={false}
                     className="w-64 bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
                     style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                   />
-                  <button
-                    onClick={() => setIsScanning(true)}
-                    className="px-2.5 py-2 border-2 text-gray-700 hover:text-blue-700 transition flex items-center justify-center"
-                    style={{ borderColor: '#9ca3af' }}
-                    title="Escanear com a câmera"
-                  >
-                    <Camera size={18} />
-                  </button>
                   <div className="flex-1" />
                   <button
                     onClick={() => setCheckoutMode(false)}
-                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50"
+                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:border-blue-700"
                     style={{ borderColor: '#9ca3af' }}
                     title="Voltar para a leitura"
                   >
@@ -935,7 +1021,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   </button>
                   <button
                     onClick={cancelSale}
-                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110"
+                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-1"
                     style={{ background: RED }}
                     title="Cancelar venda (F9)"
                   >
@@ -944,7 +1030,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   <button
                     onClick={finalizeSale}
                     disabled={paid < total - 0.001 || saving}
-                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2"
+                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-300 focus-visible:ring-offset-1"
                     style={{ background: MONEY }}
                     title="Confirmar venda (F8/F10)"
                   >
@@ -980,11 +1066,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             </>
           )}
         </div>
-
-        {/* Camera scanner */}
-        {isScanning && (
-          <BarcodeScannerModal onScan={handleScan} onClose={() => setIsScanning(false)} />
-        )}
 
         {/* Busca por descrição (F4) */}
         {classicSearchOpen && (
