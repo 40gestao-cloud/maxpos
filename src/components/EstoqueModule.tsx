@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, X } from 'lucide-react';
+import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, X, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
@@ -218,10 +218,10 @@ export default function EstoqueModule() {
                       <div className="text-2xl font-black text-orange-700 tabular-nums">{move.qty}</div>
                       <button
                         onClick={() => dismissMove(move.key)}
-                        className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                        className="p-2 rounded glass-red shimmer"
                         title="Apagar movimentação"
                       >
-                        <X size={18} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
                     </div>
                   </div>

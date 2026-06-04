@@ -4,9 +4,10 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Client, User, UserRole } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
@@ -313,12 +314,27 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   const getAvailableRoles = (role?: UserRole): UserRole[] => {
     if (!role) return [];
-    if (role === 'chairman') return ['ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas'];
+    if (role === 'admin' || role === 'chairman') {
+      return ['admin', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas'];
+    }
     if (role === 'ceo') return ['gerente_logistica', 'gerente_vendas', 'gerente_financas'];
     if (role === 'gerente_logistica') return ['colaborador_logistica'];
     if (role === 'gerente_vendas') return ['colaborador_vendas', 'colaborador_atendimento'];
     if (role === 'gerente_financas') return ['colaborador_financas'];
     return [];
+  };
+
+  const ROLE_LABELS: Record<UserRole, string> = {
+    admin: 'Acesso Total',
+    chairman: 'Chairman',
+    ceo: 'CEO',
+    gerente_logistica: 'Gerente Logística',
+    gerente_vendas: 'Gerente Vendas',
+    gerente_financas: 'Gerente Finanças',
+    colaborador_logistica: 'Colaborador Logística',
+    colaborador_vendas: 'Colaborador Vendas',
+    colaborador_atendimento: 'Colaborador Atendimento',
+    colaborador_financas: 'Colaborador Finanças',
   };
 
   const availableRoles = getAvailableRoles(currentUser?.role);
@@ -334,6 +350,98 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
     (p.category?.toLowerCase() || '').includes(search.toLowerCase())
   );
+
+  const exportProductsPDF = () => {
+    if (filteredProducts.length === 0) {
+      alert('Nenhum produto para exportar.');
+      return;
+    }
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const now = new Date();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MAXPOS — Catálogo de Produtos', 14, 14);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Gerado em ${now.toLocaleString('pt-BR')}  •  ${filteredProducts.length} produto(s)`, 14, 20);
+
+    const rows = filteredProducts.map((p, i) => {
+      const margem = p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100) : 0;
+      return [
+        String(i + 1).padStart(3, '0'),
+        p.name || '—',
+        p.category || '—',
+        p.ean13 || '—',
+        formatBRL(p.costPrice || 0),
+        formatBRL(p.price || 0),
+        `${margem.toFixed(1)}%`,
+        p.controlStock === false ? 'Sem Controle' : `${p.stock || 0} ${p.unit || 'un'}`,
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 26,
+      head: [['#', 'Produto', 'Categoria', 'EAN-13', 'Custo', 'Venda', 'Margem', 'Estoque']],
+      body: rows,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [23, 37, 84], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { cellWidth: 12, halign: 'right' },
+        4: { halign: 'right' },
+        5: { halign: 'right' },
+        6: { halign: 'right' },
+        7: { halign: 'right' },
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    doc.save(`produtos-${now.toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const exportProductsExcel = () => {
+    if (filteredProducts.length === 0) {
+      alert('Nenhum produto para exportar.');
+      return;
+    }
+    const sep = ';';
+    const esc = (v: any) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      if (/[";\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = ['#', 'Nome', 'Categoria', 'EAN-13', 'Referência', 'Custo (R$)', 'Venda (R$)', 'Margem (%)', 'Estoque', 'Unidade', 'Controla Estoque'];
+    const lines = [header.map(esc).join(sep)];
+    filteredProducts.forEach((p, i) => {
+      const margem = p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100) : 0;
+      const row = [
+        String(i + 1).padStart(3, '0'),
+        p.name || '',
+        p.category || '',
+        p.ean13 || '',
+        p.ref || '',
+        (p.costPrice || 0).toFixed(2).replace('.', ','),
+        (p.price || 0).toFixed(2).replace('.', ','),
+        margem.toFixed(1).replace('.', ','),
+        p.controlStock === false ? '' : (p.stock || 0),
+        p.unit || 'un',
+        p.controlStock === false ? 'Não' : 'Sim',
+      ];
+      lines.push(row.map(esc).join(sep));
+    });
+    const bom = '﻿';
+    const csv = bom + lines.join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `produtos-${now.toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const filteredSuppliers = suppliers.filter(s =>
     (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -531,24 +639,26 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   </td>
                   <td className="p-6">
                     <span className="bg-gray-100 px-3 py-1 rounded text-sm font-black text-gray-600 uppercase tracking-widest">
-                      {u.role.replace('_', ' ')}
+                      {ROLE_LABELS[u.role] ?? u.role.replace('_', ' ')}
                     </span>
                   </td>
                   <td className="p-6 text-sm text-gray-600">{u.email}</td>
                   <td className="p-6 text-sm font-mono text-gray-600/60">{u.id}</td>
                   <td className="p-6">
-                    <div className="flex gap-2">
-                      <button 
+                    <div className="flex gap-1.5">
+                      <button
                         onClick={() => handleEdit(u, 'equipe')}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Editar"
                       >
-                        <Edit2 size={16} />
+                        <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-red shimmer"
+                        title="Excluir"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
                     </div>
                   </td>
@@ -635,7 +745,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                       </button>
                       <button
                         onClick={() => handleDelete(p.id, 'produto', p.name)}
-                        className="p-2 rounded glass-yellow shimmer"
+                        className="p-2 rounded glass-red shimmer"
                         title="Excluir"
                       >
                         <Trash2 size={16} className="relative z-[2]" />
@@ -689,22 +799,25 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     </div>
                   </td>
                   <td className="p-6">
-                    <div className="flex gap-2">
-                      <button 
+                    <div className="flex gap-1.5">
+                      <button
                         onClick={() => handleEdit(s, 'servico')}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Editar"
                       >
-                        <Edit2 size={16} />
+                        <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDelete(s.id, 'servico', s.name)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-red shimmer"
+                        title="Excluir"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleView(s)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        title="Detalhes"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -743,22 +856,25 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     <div className="text-xs text-gray-600/60">{s.email || 'Sem e-mail'}</div>
                   </td>
                   <td className="p-6">
-                    <div className="flex gap-2">
-                      <button 
+                    <div className="flex gap-1.5">
+                      <button
                         onClick={() => handleEdit(s, 'fornecedor')}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Editar"
                       >
-                        <Edit2 size={16} />
+                        <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-red shimmer"
+                        title="Excluir"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleView(s)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        title="Detalhes"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -804,22 +920,25 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     </span>
                   </td>
                   <td className="p-6">
-                    <div className="flex gap-2">
-                      <button 
+                    <div className="flex gap-1.5">
+                      <button
                         onClick={() => handleEdit(client, 'cliente')}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 rounded glass-blue shimmer"
+                        title="Editar"
                       >
-                        <Edit2 size={16} />
+                        <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDelete(client.id, 'cliente', client.name)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-red-500 transition-all active:scale-90"
+                        className="p-2 rounded glass-red shimmer"
+                        title="Excluir"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleView(client)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        title="Detalhes"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -868,7 +987,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           })}
         </div>
         
-        <div className="flex gap-4 w-full xl:w-auto">
+        <div className="flex gap-3 w-full xl:w-auto flex-wrap">
           <div className="flex-1 md:w-64 neumorphic-inset flex items-center px-4 py-2 gap-3">
             <Search size={18} className="text-gray-600" />
             <input
@@ -879,7 +998,29 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <button 
+          {subTab === 'produtos' && (
+            <>
+              <button
+                onClick={exportProductsPDF}
+                className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
+                style={{ borderColor: '#FFC107' }}
+                title="Exportar lista filtrada em PDF"
+              >
+                <FileText size={18} className="relative z-[2]" />
+                <span className="relative z-[2]">PDF</span>
+              </button>
+              <button
+                onClick={exportProductsExcel}
+                className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
+                style={{ borderColor: '#FFC107' }}
+                title="Exportar lista filtrada em CSV/Excel"
+              >
+                <FileSpreadsheet size={18} className="relative z-[2]" />
+                <span className="relative z-[2]">Excel</span>
+              </button>
+            </>
+          )}
+          <button
             onClick={() => {
               setEditingItem(null);
               if (subTab === 'equipe') setShowAddUser(true);
@@ -958,7 +1099,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 >
                   <option value="" className="bg-card text-gray-900">Selecione...</option>
                   {availableRoles.map(role => (
-                    <option key={role} value={role} className="bg-card text-gray-900">{role.replace('_', ' ').toUpperCase()}</option>
+                    <option key={role} value={role} className="bg-card text-gray-900">{(ROLE_LABELS[role] ?? role.replace('_', ' ')).toUpperCase()}</option>
                   ))}
                 </select>
               </div>

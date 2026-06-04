@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Camera, Banknote, X, Menu } from 'lucide-react';
+import { CreditCard, DollarSign, Wallet, Users, Camera, Banknote, X, Menu, Trash2, Pencil, Split } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client } from '../types';
 import { Storage } from '../lib/storage';
@@ -39,6 +39,8 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [cashModalOpen, setCashModalOpen] = useState(false);
   const [cashReceived, setCashReceived] = useState('');
   const [cashChange, setCashChange] = useState(0);
+  const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(null);
+  const [editingPaymentValue, setEditingPaymentValue] = useState('');
   const [lastAdded, setLastAdded] = useState<CartItem | null>(null);
   const [classicCode, setClassicCode] = useState('');
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
@@ -152,7 +154,13 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       } else if (e.key === 'F8' || e.key === 'F10') {
         e.preventDefault();
         if (modalOpen) return;
-        if (cart.length > 0) setCheckoutMode(true);
+        if (checkoutMode) {
+          const tot = cart.reduce((acc, it) => acc + it.price * it.quantity, 0);
+          const pd = payments.reduce((acc, p) => acc + p.amount, 0);
+          if (tot > 0 && pd >= tot - 0.001 && !saving) finalizeSale();
+        } else if (cart.length > 0) {
+          setCheckoutMode(true);
+        }
       } else if (e.key === 'F9') {
         e.preventDefault();
         if (modalOpen) return;
@@ -169,7 +177,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, isScanning, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments.length]);
+  }, [cart, isScanning, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments, checkoutMode, saving]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -215,6 +223,37 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       if (next.length === 0) setCashChange(0);
       return next;
     });
+    if (editingPaymentIdx === index) {
+      setEditingPaymentIdx(null);
+      setEditingPaymentValue('');
+    }
+  };
+
+  const startEditPayment = (index: number) => {
+    const p = payments[index];
+    if (!p) return;
+    setEditingPaymentIdx(index);
+    setEditingPaymentValue(maskCurrency(Math.round(p.amount * 100)));
+  };
+
+  const commitEditPayment = () => {
+    if (editingPaymentIdx === null) return;
+    const newAmount = parseCurrencyToNumber(editingPaymentValue);
+    if (newAmount <= 0) {
+      setEditingPaymentIdx(null);
+      setEditingPaymentValue('');
+      return;
+    }
+    const idx = editingPaymentIdx;
+    setPayments(prev => {
+      const otherPaid = prev.reduce((acc, p, i) => i === idx ? acc : acc + p.amount, 0);
+      const maxAllowed = parseFloat((total - otherPaid).toFixed(2));
+      const finalAmount = parseFloat(Math.min(newAmount, Math.max(maxAllowed, 0)).toFixed(2));
+      return prev.map((p, i) => i === idx ? { ...p, amount: finalAmount } : p);
+    });
+    setCashChange(0);
+    setEditingPaymentIdx(null);
+    setEditingPaymentValue('');
   };
 
   const cancelSale = () => {
@@ -599,7 +638,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     onChange={(e) => setClassicCode(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
                     onBlur={() => {
-                      if (!isScanning && !showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen) {
+                      if (!isScanning && !showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
                         setTimeout(() => codeInputRef.current?.focus(), 0);
                       }
                     }}
@@ -665,79 +704,161 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             <>
               <div className="flex-1 flex overflow-hidden min-h-0">
                 {/* Left: payment methods + values */}
-                <div className="flex-1 p-6 border-r border-gray-300 overflow-y-auto custom-scrollbar bg-white">
-                  <div className="mb-6 max-w-md">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-2">VALOR PARCIAL (OPCIONAL)</label>
-                    <input
-                      value={partialAmount}
-                      onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
-                      placeholder={`Default: ${maskCurrency(Math.round(remaining * 100))}`}
-                      className="w-full bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
-                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
-                    />
+                {/* Left column: MaxPOS logo no topo + valor parcial + cards menores embaixo */}
+                <div className="flex-1 flex flex-col border-r border-gray-300 bg-white min-w-0">
+                  {/* LOGO MaxPOS — ocupa o espaço onde os cards estavam antes */}
+                  <div
+                    className="flex flex-col items-center justify-center py-10 px-6 border-b border-gray-200"
+                    style={{ background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)' }}
+                  >
+                    <div
+                      className="text-7xl font-black tracking-tight leading-none"
+                      style={{
+                        color: NAVY_DARK,
+                        textShadow: '0 2px 0 rgba(255,255,255,0.6), 0 4px 14px rgba(23,37,84,0.15)',
+                        letterSpacing: '-0.04em',
+                      }}
+                    >
+                      MAX<span style={{ color: YELLOW_DARK }}>POS</span>
+                    </div>
+                    <div
+                      className="mt-2 px-4 py-1 text-xs font-black uppercase tracking-[0.4em] rounded-full"
+                      style={{ background: YELLOW, color: NAVY_DARK, border: `1px solid ${YELLOW_DARK}` }}
+                    >
+                      Fechamento de Venda
+                    </div>
                   </div>
 
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">FORMA DE PAGAMENTO</h3>
-                  <div className="grid grid-cols-3 gap-3 mb-8 max-w-2xl">
-                    {[
-                      { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign },
-                      { id: 'pix', label: 'PIX', icon: Wallet },
-                      { id: 'credito', label: 'CRÉDITO', icon: CreditCard },
-                      { id: 'debito', label: 'DÉBITO', icon: Banknote },
-                      { id: 'fiado', label: 'FIADO', icon: Users },
-                    ].map((m) => {
-                      const Icon = m.icon;
-                      return (
-                        <button
-                          key={m.id}
-                          onClick={() => {
-                            if (m.id === 'credito') handleCreditClick();
-                            else if (m.id === 'fiado') handleFiadoClick();
-                            else if (m.id === 'pix') handlePixClick();
-                            else if (m.id === 'dinheiro') handleCashClick();
-                            else addPayment(m.id as any);
-                          }}
-                          disabled={remaining <= 0}
-                          className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 transition py-5 flex flex-col items-center gap-2 disabled:opacity-30"
-                          style={{ borderColor: '#9ca3af' }}
+                  {/* Banner misto + Valor parcial + PAGAMENTOS LANÇADOS + cards (cards "lá embaixo") */}
+                  <div className="flex-1 flex flex-col px-6 pt-5 pb-4 overflow-y-auto custom-scrollbar min-h-0">
+                    <div
+                      className="mb-4 px-3 py-2 flex items-start gap-2 border-l-4 rounded-r"
+                      style={{ background: '#eff6ff', borderColor: NAVY_DARK }}
+                    >
+                      <Split size={16} style={{ color: NAVY_DARK }} className="mt-0.5 shrink-0" />
+                      <div className="text-xs leading-snug" style={{ color: NAVY_DARK }}>
+                        <b>Pagamento misto liberado.</b> Informe o valor parcial e escolha a forma — repita para combinar dinheiro, PIX, cartão e fiado.
+                      </div>
+                    </div>
+
+                    <div className="mb-4 max-w-md">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante)</span></label>
+                      <input
+                        value={partialAmount}
+                        onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
+                        placeholder={`Restante: ${maskCurrency(Math.round(Math.max(remaining, 0) * 100))}`}
+                        className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
+                        style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                      />
+                    </div>
+
+                    {/* Pagamentos Lançados — abaixo do VALOR DESTA FORMA */}
+                    <div className="mb-4 max-w-md border-2 rounded overflow-hidden" style={{ borderColor: NAVY_DARK }}>
+                      <div className="px-3 py-1.5 flex items-center justify-between" style={{ background: NAVY_DARK }}>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-white">Pagamentos Lançados</span>
+                        <span
+                          className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full"
+                          style={{ background: YELLOW, color: NAVY_DARK }}
                         >
-                          <Icon size={32} />
-                          <span className="text-base font-bold tracking-wide">{m.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">PAGAMENTOS LANÇADOS</h3>
-                  <div className="space-y-2 max-w-2xl">
-                    {payments.length === 0 ? (
-                      <div className="text-gray-400 text-sm py-3 italic">— nenhum pagamento lançado —</div>
-                    ) : (
-                      payments.map((p, i) => {
-                        const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado' };
-                        let label = labels[p.method] ?? p.method;
-                        if (p.method === 'credito' && p.installments && p.installments > 1) {
-                          label = `Crédito ${p.installments}x (R$ ${fmt(p.amount / p.installments)}/parc.)`;
-                        } else if (p.method === 'fiado' && p.clientName) {
-                          label = `Fiado — ${p.clientName}`;
-                        }
-                        return (
-                          <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-300 px-3 py-2">
-                            <span className="text-sm font-medium text-gray-900">{label}</span>
-                            <div className="flex items-center gap-3">
-                              <span className="text-base font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.amount)}</span>
-                              <button onClick={() => removePayment(i)} className="text-red-500 hover:text-red-700" title="Remover">
-                                <X size={16} />
-                              </button>
-                            </div>
+                          {payments.length} {payments.length === 1 ? 'forma' : 'formas'}
+                        </span>
+                      </div>
+                      <div className="p-2 space-y-1.5 bg-white max-h-56 overflow-y-auto custom-scrollbar">
+                        {payments.length === 0 ? (
+                          <div className="text-gray-400 text-xs py-3 text-center italic">
+                            — nenhum pagamento lançado —
                           </div>
+                        ) : (
+                          payments.map((p, i) => {
+                            const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado' };
+                            let label = labels[p.method] ?? p.method;
+                            if (p.method === 'credito' && p.installments && p.installments > 1) {
+                              label = `Crédito ${p.installments}x (R$ ${fmt(p.amount / p.installments)}/parc.)`;
+                            } else if (p.method === 'fiado' && p.clientName) {
+                              label = `Fiado — ${p.clientName}`;
+                            }
+                            const isEditing = editingPaymentIdx === i;
+                            return (
+                              <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-300 px-2.5 py-1.5 gap-2 rounded">
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[11px] font-bold text-gray-700 uppercase tracking-wide truncate">{label}</div>
+                                  {isEditing ? (
+                                    <input
+                                      autoFocus
+                                      value={editingPaymentValue}
+                                      onChange={(e) => setEditingPaymentValue(maskCurrency(e.target.value))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); commitEditPayment(); }
+                                        else if (e.key === 'Escape') { e.preventDefault(); setEditingPaymentIdx(null); setEditingPaymentValue(''); }
+                                      }}
+                                      onBlur={commitEditPayment}
+                                      className="w-full mt-0.5 bg-white border-2 text-sm font-bold text-gray-900 outline-none px-1.5 py-0.5 tabular-nums focus:border-blue-700"
+                                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                                    />
+                                  ) : (
+                                    <span className="text-base font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.amount)}</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
+                                    className="p-1.5 rounded glass-blue shimmer"
+                                    title="Editar valor"
+                                  >
+                                    <Pencil size={12} className="relative z-[2]" />
+                                  </button>
+                                  <button
+                                    onClick={() => removePayment(i)}
+                                    className="p-1.5 rounded glass-red shimmer"
+                                    title="Remover"
+                                  >
+                                    <Trash2 size={12} className="relative z-[2]" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Espaço menor para subir os cards um pouco */}
+                    <div className="h-4" />
+
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO</h3>
+                    <div className="grid grid-cols-5 gap-2">
+                      {[
+                        { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign },
+                        { id: 'pix', label: 'PIX', icon: Wallet },
+                        { id: 'credito', label: 'CRÉDITO', icon: CreditCard },
+                        { id: 'debito', label: 'DÉBITO', icon: Banknote },
+                        { id: 'fiado', label: 'FIADO', icon: Users },
+                      ].map((m) => {
+                        const Icon = m.icon;
+                        return (
+                          <button
+                            key={m.id}
+                            onClick={() => {
+                              if (m.id === 'credito') handleCreditClick();
+                              else if (m.id === 'fiado') handleFiadoClick();
+                              else if (m.id === 'pix') handlePixClick();
+                              else if (m.id === 'dinheiro') handleCashClick();
+                              else addPayment(m.id as any);
+                            }}
+                            disabled={remaining <= 0}
+                            className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
+                            style={{ borderColor: '#9ca3af' }}
+                          >
+                            <Icon size={20} />
+                            <span className="text-[11px] font-bold tracking-wide">{m.label}</span>
+                          </button>
                         );
-                      })
-                    )}
+                      })}
+                    </div>
                   </div>
                 </div>
 
-                {/* Right sidebar: totals */}
+                {/* Right sidebar: totais (preços e qtd) */}
                 <div className="w-[400px] shrink-0 flex flex-col bg-gray-50">
                   <div className="px-5 py-4 border-b border-gray-300">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">TOTAL DA VENDA</div>
@@ -762,36 +883,99 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 </div>
               </div>
 
-              {/* Bottom: confirm */}
-              <div className="px-6 py-3 border-t-2 shrink-0 bg-white flex items-center justify-between gap-4" style={{ borderColor: YELLOW_DARK }}>
-                <button
-                  onClick={() => setCheckoutMode(false)}
-                  className="px-6 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
-                  style={{ borderColor: '#9ca3af' }}
-                >
-                  VOLTAR
-                </button>
-                <button
-                  onClick={cancelSale}
-                  className="px-6 py-3 text-white font-bold hover:brightness-110"
-                  style={{ background: RED }}
-                  title="Cancelar venda (F9)"
-                >
-                  CANCELAR VENDA
-                </button>
-                <button
-                  onClick={finalizeSale}
-                  disabled={paid < total - 0.001 || saving}
-                  className="flex-1 px-6 py-3 text-xl font-bold text-white disabled:opacity-30 flex items-center justify-center gap-3"
-                  style={{ background: MONEY }}
-                >
-                  {saving ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      SALVANDO...
-                    </>
-                  ) : 'CONFIRMAR VENDA'}
-                </button>
+              {/* TOTAL bar — grande, como na tela de leitura */}
+              <div className="px-6 py-3 flex items-center justify-between border-t-2 shrink-0 bg-gray-100" style={{ borderColor: YELLOW_DARK }}>
+                <span className="text-2xl font-bold tracking-wide text-gray-700">TOTAL A PAGAR</span>
+                <span className="text-6xl font-bold tabular-nums leading-none" style={{ color: NAVY_DARK }}>
+                  R$ {fmt(total)}
+                </span>
+              </div>
+
+              {/* Linha de codigo + acoes (VOLTAR / CANCELAR / CONFIRMAR a direita, menores) */}
+              <div className="px-6 py-2 shrink-0 border-t border-gray-300 bg-white">
+                {classicMsg && classicMsg.type === 'err' && (
+                  <div className="mb-1.5 px-3 py-1 text-sm font-bold inline-block border" style={{ background: '#fee2e2', color: RED, borderColor: '#fca5a5' }}>
+                    {classicMsg.text}
+                  </div>
+                )}
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-bold text-gray-700 shrink-0">CÓDIGO:</span>
+                  <input
+                    ref={codeInputRef}
+                    value={classicCode}
+                    onChange={(e) => setClassicCode(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
+                    onBlur={() => {
+                      if (!isScanning && !showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
+                        setTimeout(() => codeInputRef.current?.focus(), 0);
+                      }
+                    }}
+                    placeholder="EAN-13 ou ID do produto"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-64 bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  <button
+                    onClick={() => setIsScanning(true)}
+                    className="px-2.5 py-2 border-2 text-gray-700 hover:text-blue-700 transition flex items-center justify-center"
+                    style={{ borderColor: '#9ca3af' }}
+                    title="Escanear com a câmera"
+                  >
+                    <Camera size={18} />
+                  </button>
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => setCheckoutMode(false)}
+                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                    title="Voltar para a leitura"
+                  >
+                    VOLTAR
+                  </button>
+                  <button
+                    onClick={cancelSale}
+                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110"
+                    style={{ background: RED }}
+                    title="Cancelar venda (F9)"
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={finalizeSale}
+                    disabled={paid < total - 0.001 || saving}
+                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2"
+                    style={{ background: MONEY }}
+                    title="Confirmar venda (F8/F10)"
+                  >
+                    {saving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        SALVANDO...
+                      </>
+                    ) : 'CONFIRMAR VENDA'}
+                  </button>
+                </div>
+              </div>
+
+              {/* F-keys rodape amarelo */}
+              <div
+                className="px-6 py-2 shrink-0 border-t-2"
+                style={{ background: YELLOW, borderColor: YELLOW_DARK }}
+              >
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-black tracking-wide">
+                  <span><b>F2</b> Foco no código</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F3</b> Cancelar último item</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F4</b> Buscar produto</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F8</b> / <b>F10</b> Confirmar venda</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F9</b> Cancelar venda</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>N*CÓDIGO</b> Quantidade (ex.: 3*789...)</span>
+                </div>
               </div>
             </>
           )}

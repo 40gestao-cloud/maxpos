@@ -540,8 +540,8 @@ export default function FinanceiroModule() {
                       <button onClick={() => handleToggleAccountStatus(a.id)} className={`p-2 rounded-lg transition-colors ${a.status === 'paid' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-gray-100 text-gray-600 hover:text-emerald-500'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
                         <CheckCircle2 size={14} />
                       </button>
-                      <button onClick={() => handleDeleteAccount(a.id)} className="p-2 rounded-lg bg-gray-100 text-gray-600 hover:text-red-500 transition-colors" title="Excluir Lançamento">
-                        <Trash2 size={14} />
+                      <button onClick={() => handleDeleteAccount(a.id)} className="p-2 rounded glass-red shimmer" title="Excluir Lançamento">
+                        <Trash2 size={14} className="relative z-[2]" />
                       </button>
                     </div>
                   </div>
@@ -597,10 +597,10 @@ export default function FinanceiroModule() {
                       )}
                       <button
                         onClick={() => dismissFlow(`sale-${s.id}`)}
-                        className="p-2 rounded-lg bg-gray-100 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        className="p-2 rounded glass-red shimmer"
                         title="Apagar da visualização"
                       >
-                        <X size={16} />
+                        <Trash2 size={16} className="relative z-[2]" />
                       </button>
                     </div>
                   </div>
