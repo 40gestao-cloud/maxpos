@@ -396,6 +396,99 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       margin: { left: 14, right: 14 },
     });
 
+    // ─── Paginas de etiquetas (EAN-13 + descricao) ──────────────
+    const productsWithEAN = filteredProducts.filter(p => isValidEAN13(p.ean13 || ''));
+    if (productsWithEAN.length > 0) {
+      const COLS = 3;
+      const ROWS_PER_PAGE = 8;
+      const PER_PAGE = COLS * ROWS_PER_PAGE;
+      const PAGE_W = 210; // A4 portrait
+      const MARGIN_X = 8;
+      const HEADER_H = 18;
+      const LABEL_W = (PAGE_W - MARGIN_X * 2) / COLS;
+      const LABEL_H = 33;
+
+      const drawLabelsHeader = (pageNum: number, totalPages: number) => {
+        doc.setFontSize(13);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(23, 37, 84);
+        doc.text('MAXPOS — Etiquetas de Produtos', MARGIN_X, 11);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(80);
+        doc.text(
+          `${productsWithEAN.length} etiqueta(s)  •  Pagina ${pageNum} de ${totalPages}  •  Gerado em ${now.toLocaleString('pt-BR')}`,
+          MARGIN_X,
+          15.5
+        );
+        doc.setTextColor(0);
+      };
+
+      const totalLabelPages = Math.ceil(productsWithEAN.length / PER_PAGE);
+
+      productsWithEAN.forEach((p, idx) => {
+        const indexOnPage = idx % PER_PAGE;
+        if (indexOnPage === 0) {
+          doc.addPage('a4', 'portrait');
+          drawLabelsHeader(Math.floor(idx / PER_PAGE) + 1, totalLabelPages);
+        }
+        const row = Math.floor(indexOnPage / COLS);
+        const col = indexOnPage % COLS;
+        const x = MARGIN_X + col * LABEL_W;
+        const y = HEADER_H + row * LABEL_H;
+
+        // Borda da etiqueta
+        doc.setDrawColor(200);
+        doc.setLineWidth(0.2);
+        doc.rect(x + 1, y + 1, LABEL_W - 2, LABEL_H - 2);
+
+        // Descricao (ate 2 linhas, centralizada)
+        const desc = (p.name || '—').toUpperCase();
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0);
+        const splitDesc: string[] = doc.splitTextToSize(desc, LABEL_W - 6) as string[];
+        const lines = splitDesc.slice(0, 2);
+        lines.forEach((line, i) => {
+          doc.text(line, x + LABEL_W / 2, y + 5.5 + i * 3.5, { align: 'center' });
+        });
+
+        // Categoria/Ref (pequena, abaixo da descricao)
+        if (p.category || p.ref) {
+          doc.setFontSize(5.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(120);
+          const meta = [p.category, p.ref ? `REF ${p.ref}` : null].filter(Boolean).join(' · ');
+          doc.text(meta, x + LABEL_W / 2, y + 13, { align: 'center' });
+          doc.setTextColor(0);
+        }
+
+        // Codigo de barras renderizado em canvas
+        try {
+          const canvas = document.createElement('canvas');
+          JsBarcode(canvas, p.ean13!, {
+            format: 'EAN13',
+            width: 2,
+            height: 50,
+            displayValue: true,
+            fontSize: 18,
+            margin: 2,
+            background: '#ffffff',
+            lineColor: '#000000',
+          });
+          const dataUrl = canvas.toDataURL('image/png');
+          const imgW = LABEL_W - 10;
+          const imgH = 16;
+          doc.addImage(dataUrl, 'PNG', x + 5, y + 15, imgW, imgH);
+        } catch {
+          doc.setFontSize(6);
+          doc.setTextColor(150, 0, 0);
+          doc.text('EAN invalido', x + LABEL_W / 2, y + 22, { align: 'center' });
+          doc.setTextColor(0);
+        }
+      });
+    }
+
     doc.save(`produtos-${now.toISOString().slice(0, 10)}.pdf`);
   };
 
