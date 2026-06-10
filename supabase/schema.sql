@@ -288,6 +288,127 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================
+-- RPC: finalização atômica da venda.
+-- Insere sale + sale_items + sale_payments, decrementa estoque
+-- e debita saldo fiado num único bloco transacional.
+-- Se qualquer passo falhar, PostgreSQL reverte tudo.
+-- Uso no client:
+--   supabase.rpc('finalize_sale_atomic', { p_payload: { ... } })
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.finalize_sale_atomic(p_payload JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sale_id   TEXT := p_payload->>'id';
+  v_item      JSONB;
+  v_payment   JSONB;
+BEGIN
+  -- 1. INSERT sale
+  INSERT INTO sales (id, date, total, "clientId", "vendedorId", status)
+  VALUES (
+    v_sale_id,
+    (p_payload->>'date')::TIMESTAMPTZ,
+    (p_payload->>'total')::NUMERIC,
+    p_payload->>'clientId',
+    p_payload->>'vendedorId',
+    COALESCE(p_payload->>'status', 'completed')
+  );
+
+  -- 2. INSERT sale_items + decremento de estoque
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
+    INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
+                            "costPrice", category, ref, unit, ean13,
+                            "controlStock", stock, "minStock")
+    VALUES (
+      v_sale_id,
+      v_item->>'id',
+      v_item->>'name',
+      (v_item->>'price')::NUMERIC,
+      (v_item->>'quantity')::INTEGER,
+      COALESCE((v_item->>'costPrice')::NUMERIC, 0),
+      COALESCE(v_item->>'category', ''),
+      COALESCE(v_item->>'ref', ''),
+      COALESCE(v_item->>'unit', 'UN'),
+      v_item->>'ean13',
+      COALESCE((v_item->>'controlStock')::BOOLEAN, true),
+      COALESCE((v_item->>'stock')::INTEGER, 0),
+      COALESCE((v_item->>'minStock')::INTEGER, 0)
+    );
+
+    IF COALESCE((v_item->>'controlStock')::BOOLEAN, true) THEN
+      UPDATE products
+         SET stock = GREATEST(0, stock - (v_item->>'quantity')::INTEGER)
+       WHERE id = v_item->>'id';
+    END IF;
+  END LOOP;
+
+  -- 3. INSERT sale_payments + débito fiado
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payload->'payments') LOOP
+    INSERT INTO sale_payments ("saleId", method, amount, installments, "clientId")
+    VALUES (
+      v_sale_id,
+      v_payment->>'method',
+      (v_payment->>'amount')::NUMERIC,
+      NULLIF(v_payment->>'installments', '')::INTEGER,
+      v_payment->>'clientId'
+    );
+
+    IF v_payment->>'method' = 'fiado' AND v_payment->>'clientId' IS NOT NULL THEN
+      UPDATE clients
+         SET balance = balance - (v_payment->>'amount')::NUMERIC
+       WHERE id = v_payment->>'clientId';
+    END IF;
+  END LOOP;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
+
+-- ============================================================
+-- RPC: factory_reset — apaga todos os dados operacionais.
+-- Preserva user_profiles (membros da equipe) e auth.users.
+-- Gate server-side: apenas role admin ou chairman pode executar.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.factory_reset()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_role TEXT;
+BEGIN
+  SELECT role INTO v_role FROM user_profiles WHERE id = auth.uid();
+  IF v_role IS NULL OR v_role NOT IN ('admin', 'chairman') THEN
+    RAISE EXCEPTION 'Permissão negada: apenas admin ou chairman pode executar factory reset.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Ordem respeita FKs (sale_items/sale_payments/credit_installments
+  -- têm ON DELETE CASCADE, mas excluímos explicitamente por clareza)
+  DELETE FROM credit_installments;
+  DELETE FROM sale_items;
+  DELETE FROM sale_payments;
+  DELETE FROM sales;
+  DELETE FROM pix_pendentes;
+  DELETE FROM event_fichas;
+  DELETE FROM appointments;
+  DELETE FROM accounts;
+  DELETE FROM services;
+  DELETE FROM suppliers;
+  DELETE FROM clients;
+  DELETE FROM products;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.factory_reset() FROM public;
+GRANT EXECUTE ON FUNCTION public.factory_reset() TO authenticated;
+
+-- ============================================================
 -- Usuários iniciais
 -- 1. Crie no painel Authentication > Users do Supabase:
 --    chairmanmaximus@gmail.com  (senha: 03315077)

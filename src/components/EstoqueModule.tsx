@@ -72,7 +72,7 @@ export default function EstoqueModule() {
     PDFReport.generateStockReport(criticalProducts);
   };
 
-  const totalValue = products.reduce((acc, p) => acc + (p.price || 0) * (p.stock || 0), 0);
+  const totalValue = products.reduce((acc, p) => acc + (p.costPrice || 0) * (p.stock || 0), 0);
   const totalItems = products.reduce((acc, p) => acc + (p.stock || 0), 0);
 
   const allMoves = sales

@@ -1,7 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Camera, Bell, CheckCircle2, Save } from 'lucide-react';
+import { Settings, Camera, Bell, CheckCircle2, Save, AlertTriangle, Trash2, X } from 'lucide-react';
 import { Storage } from '../lib/storage';
+import { supabase } from '../lib/supabase';
 import { User } from '../types';
+
+const DATA_CACHE_KEYS = [
+  'fiscal_emitted_nfce',
+  'estoque_dismissed_moves',
+  'relatorios_dismissed_top',
+  'financeiro_dismissed_flow',
+];
 
 interface ConfiguracoesProps {
   onUserUpdate: (user: User) => void;
@@ -20,6 +28,9 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     certificadoDigital: true,
     pedidos: true,
   });
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     Storage.getCurrentUser()
@@ -62,6 +73,29 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
 
   const toggleNotification = (key: keyof typeof notificationConfig) => {
     setNotificationConfig(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const canFactoryReset = user?.role === 'admin' || user?.role === 'chairman';
+
+  const handleFactoryReset = async () => {
+    if (resetConfirmText !== 'APAGAR') return;
+    setResetting(true);
+    try {
+      const { error } = await supabase.rpc('factory_reset');
+      if (error) throw error;
+      DATA_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
+      alert('Reset concluído. Todos os dados operacionais foram apagados. A página será recarregada.');
+      window.location.reload();
+    } catch (err: any) {
+      alert('Erro ao executar reset: ' + (err?.message || err));
+      setResetting(false);
+    }
+  };
+
+  const closeResetModal = () => {
+    if (resetting) return;
+    setResetModalOpen(false);
+    setResetConfirmText('');
   };
 
   const notificationItems = [
@@ -163,6 +197,101 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
           )}
         </button>
       </div>
+
+      {canFactoryReset && (
+        <div className="neumorphic p-8 space-y-4 border-l-4 border-red-600 mt-12">
+          <h3 className="text-sm font-black text-red-700 uppercase tracking-[0.2em] flex items-center gap-2">
+            <AlertTriangle size={16} /> Zona de Perigo
+          </h3>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="max-w-2xl">
+              <p className="text-sm font-bold text-gray-900 mb-1">Apagar todos os dados operacionais</p>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Remove <b>permanentemente</b> vendas, produtos, clientes, fornecedores, serviços, contas,
+                agendamentos, fichas e PIX pendentes. Os membros da equipe (login/perfis) <b>são preservados</b>.
+                Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <button
+              onClick={() => setResetModalOpen(true)}
+              className="shrink-0 bg-red-600 hover:bg-red-700 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 uppercase text-xs tracking-widest active:scale-95 transition-all"
+            >
+              <Trash2 size={16} /> Apagar Dados
+            </button>
+          </div>
+        </div>
+      )}
+
+      {resetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={closeResetModal}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-8 space-y-5 border-t-4 border-red-600" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-red-100 rounded-lg">
+                  <AlertTriangle className="text-red-600" size={22} />
+                </div>
+                <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Confirmar Reset Total</h3>
+              </div>
+              <button onClick={closeResetModal} disabled={resetting} className="text-gray-400 hover:text-gray-700 disabled:opacity-30">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-900 space-y-1">
+              <p className="font-bold">Esta ação apagará permanentemente:</p>
+              <ul className="text-xs list-disc list-inside space-y-0.5 ml-1">
+                <li>Todas as vendas, itens e pagamentos</li>
+                <li>Todos os produtos cadastrados</li>
+                <li>Todos os clientes e fornecedores</li>
+                <li>Todos os serviços, contas, agendamentos e fichas</li>
+                <li>Parcelas de crédito e PIX pendentes</li>
+              </ul>
+              <p className="font-bold pt-2">Membros da equipe e logins serão preservados.</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black text-gray-700 uppercase tracking-widest">
+                Para confirmar, digite <span className="text-red-600 font-mono">APAGAR</span> abaixo:
+              </label>
+              <input
+                type="text"
+                value={resetConfirmText}
+                onChange={e => setResetConfirmText(e.target.value)}
+                disabled={resetting}
+                autoFocus
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="APAGAR"
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-base font-mono font-bold tracking-widest text-center border-2 border-gray-300 focus:border-red-600"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={closeResetModal}
+                disabled={resetting}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-900 font-black px-4 py-3 rounded-xl uppercase text-xs tracking-widest active:scale-95 transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleFactoryReset}
+                disabled={resetting || resetConfirmText !== 'APAGAR'}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black px-4 py-3 rounded-xl flex items-center justify-center gap-2 uppercase text-xs tracking-widest active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                {resetting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    APAGANDO...
+                  </>
+                ) : (
+                  <><Trash2 size={14} /> Apagar Tudo</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -40,6 +40,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(null);
   const [editingPaymentValue, setEditingPaymentValue] = useState('');
   const [lastAdded, setLastAdded] = useState<CartItem | null>(null);
+  const [cardPickerOpen, setCardPickerOpen] = useState(false);
+  const [valePickerOpen, setValePickerOpen] = useState(false);
+  const [cardPickerIdx, setCardPickerIdx] = useState(0);
+  const [valePickerIdx, setValePickerIdx] = useState(0);
   const [classicCode, setClassicCode] = useState('');
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
   const [classicSearchTerm, setClassicSearchTerm] = useState('');
@@ -49,6 +53,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
+  const autoFinalizedRef = useRef(false);
 
   useEffect(() => {
     if (!classicMsg) return;
@@ -111,7 +116,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   // Sugestões para o campo CÓDIGO (busca por nome / EAN / REF enquanto digita)
   const classicQuery = (() => {
     const raw = classicCode.trim();
-    const star = raw.indexOf('*');
+    const star = raw.search(/[*xX]/);
     return star > 0 ? raw.slice(star + 1).trim() : raw;
   })();
   const classicSuggestions = (!checkoutMode && classicQuery.length >= 2)
@@ -125,12 +130,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const handleClassicSubmit = () => {
     const raw = classicCode.trim();
     if (!raw) {
-      if (cart.length > 0) setCheckoutMode(true);
+      if (cart.length > 0 && !checkoutMode) setCheckoutMode(true);
       return;
     }
     let qty = 1;
     let code = raw;
-    const star = raw.indexOf('*');
+    const star = raw.search(/[*xX]/);
     if (star > 0) {
       const qStr = raw.slice(0, star);
       const cStr = raw.slice(star + 1).trim();
@@ -176,38 +181,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen;
-      if (e.key === 'F2') {
-        e.preventDefault();
-        if (!modalOpen) codeInputRef.current?.focus();
-      } else if (e.key === 'F3') {
-        e.preventDefault();
-        if (modalOpen || cart.length === 0) return;
-        setCart(prev => {
-          const last = prev[prev.length - 1];
-          if (last.quantity > 1) {
-            return prev.map((it, idx) => idx === prev.length - 1 ? { ...it, quantity: it.quantity - 1 } : it);
-          }
-          return prev.slice(0, -1);
-        });
-        setLastAdded(null);
-      } else if (e.key === 'F4') {
-        e.preventDefault();
-        if (modalOpen) return;
-        setClassicSearchTerm('');
-        setClassicSearchOpen(true);
-      } else if (e.key === 'F8' || e.key === 'F10') {
-        e.preventDefault();
-        if (modalOpen) return;
-        if (checkoutMode) {
-          const tot = cart.reduce((acc, it) => acc + it.price * it.quantity, 0);
-          const pd = payments.reduce((acc, p) => acc + p.amount, 0);
-          if (tot > 0 && pd >= tot - 0.001 && !saving) finalizeSale();
-        } else if (cart.length > 0) {
-          setCheckoutMode(true);
-        }
-      } else if (e.key === 'F9') {
-        e.preventDefault();
-        if (modalOpen) return;
+      const pickerOpen = cardPickerOpen || valePickerOpen;
+      const target = e.target as HTMLElement | null;
+      const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
+
+      const cancelEntireSale = () => {
         if (cart.length === 0 && payments.length === 0) return;
         if (!confirm('Cancelar venda atual? Todos os itens e pagamentos serão descartados.')) return;
         setCart([]);
@@ -217,11 +195,83 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setClassicCode('');
         setCheckoutMode(false);
         setCashChange(0);
+      };
+
+      const removeLastItem = () => {
+        if (cart.length === 0) return;
+        setCart(prev => {
+          const last = prev[prev.length - 1];
+          if (last.quantity > 1) {
+            return prev.map((it, idx) => idx === prev.length - 1 ? { ...it, quantity: it.quantity - 1 } : it);
+          }
+          return prev.slice(0, -1);
+        });
+        setLastAdded(null);
+      };
+
+      // F9 — cancelar venda (qualquer tela, exceto se modal/picker)
+      if (e.key === 'F9') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        cancelEntireSale();
+        return;
+      }
+
+      // Esc — contextual
+      if (e.key === 'Escape') {
+        if (modalOpen || pickerOpen) return; // modais/pickers tratam seu próprio Esc
+        // Se input do código tem texto, deixa o onKeyDown do input limpar
+        if (isEditable && classicCode.length > 0) return;
+        e.preventDefault();
+        if (checkoutMode) {
+          setCheckoutMode(false);
+        } else {
+          cancelEntireSale();
+        }
+        return;
+      }
+
+      // Del / Delete — cancelar último item (fora de input)
+      if (e.key === 'Delete') {
+        if (modalOpen || pickerOpen || isEditable) return;
+        e.preventDefault();
+        removeLastItem();
+        return;
+      }
+
+      // F1 / F2 / F3 — só no checkout (formas de pagamento)
+      if (e.key === 'F1' || e.key === 'F2' || e.key === 'F3') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || !checkoutMode) return;
+        const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
+        const pd = payments.reduce((a, p) => a + p.amount, 0);
+        if (tot - pd <= 0.001) return;
+        if (e.key === 'F1') handleCashClick();
+        else if (e.key === 'F2') { setValePickerOpen(false); setCardPickerOpen(true); }
+        else if (e.key === 'F3') { setCardPickerOpen(false); setValePickerOpen(true); }
+        return;
+      }
+
+      // F4 / F5 — só na leitura (Subtotal → checkout)
+      if (e.key === 'F4' || e.key === 'F5') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (cart.length > 0) setCheckoutMode(true);
+        return;
+      }
+
+      // F8 / F10 — só na leitura (busca por nome)
+      if (e.key === 'F8' || e.key === 'F10') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        setClassicSearchTerm('');
+        setClassicSearchOpen(true);
+        return;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, products, classicCode, payments, checkoutMode, saving]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -333,7 +383,19 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setCashModalOpen(false);
   };
 
+  const handleValeClick = () => {
+    const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
+    if (amount <= 0) return;
+    const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
+    setPayments(prev => [...prev, { method: 'vale', amount: finalAmount }]);
+    setPartialAmount('');
+  };
+
   const handleFiadoClick = () => {
+    if (payments.some(p => p.method === 'fiado')) {
+      alert('Já existe um pagamento em fiado nesta venda. Remova-o antes de lançar outro.');
+      return;
+    }
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     setPendingFiadoAmount(parseFloat(Math.min(amount, remaining).toFixed(2)));
@@ -400,6 +462,24 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setPixModalOpen(false);
   };
 
+  // Auto-finaliza assim que os pagamentos cobrirem o total (fluxo supermercado)
+  useEffect(() => {
+    if (autoFinalizedRef.current) return;
+    if (!checkoutMode || saving) return;
+    if (cart.length === 0 || payments.length === 0) return;
+    const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
+    const pd = payments.reduce((a, p) => a + p.amount, 0);
+    if (tot > 0 && pd >= tot - 0.001) {
+      autoFinalizedRef.current = true;
+      finalizeSale();
+    }
+  }, [payments, cart, checkoutMode, saving]);
+
+  // Libera o auto-finalize quando uma nova venda começa
+  useEffect(() => {
+    if (cart.length === 0 && payments.length === 0) autoFinalizedRef.current = false;
+  }, [cart.length, payments.length]);
+
   // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
   useEffect(() => {
     if (!pixModalOpen || !pixUuid) return;
@@ -435,11 +515,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
   const finalizeSale = async () => {
     const fiadoPayment = payments.find(p => p.method === 'fiado');
-    const confirmMsg = fiadoPayment
-      ? `Confirmar venda de R$ ${total.toFixed(2)} com fiado para ${fiadoPayment.clientName}?`
-      : `Confirmar venda de R$ ${total.toFixed(2)}?`;
-    if (!confirm(confirmMsg)) return;
-
     setSaving(true);
     try {
       const newSale: Sale = {
@@ -453,25 +528,26 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         status: 'completed',
       };
 
-      await Storage.saveSale(newSale);
+      // Finalização atômica: insere sale + items + payments, decrementa
+      // estoque e debita fiado num único bloco transacional no Postgres.
+      const { error: rpcErr } = await supabase.rpc('finalize_sale_atomic', {
+        p_payload: {
+          id: newSale.id,
+          date: newSale.date,
+          total: newSale.total,
+          clientId: newSale.clientId ?? null,
+          vendedorId: newSale.vendedorId,
+          status: newSale.status,
+          items: newSale.items,
+          payments: newSale.payments,
+        },
+      });
+      if (rpcErr) throw rpcErr;
 
-      // Decrementa estoque atomicamente via RPC (sem race condition)
-      const stockUpdates = cart
-        .filter(item => item.controlStock !== false)
-        .map(item =>
-          supabase.rpc('decrement_stock', { p_id: item.id, p_qty: item.quantity })
-        );
-
-      // Debita saldo do cliente fiado atomicamente via RPC
-      const fiadoUpdates = payments
-        .filter(p => p.method === 'fiado' && p.clientId)
-        .map(p =>
-          supabase.rpc('debit_client_balance', { p_id: p.clientId!, p_amount: p.amount })
-        );
-
-      await Promise.all([...stockUpdates, ...fiadoUpdates]);
-
-      alert('Venda Finalizada com Sucesso!');
+      const changeMsg = cashChange > 0.001
+        ? `\nTroco: R$ ${cashChange.toFixed(2).replace('.', ',')}`
+        : '';
+      alert(`Venda Finalizada com Sucesso!${changeMsg}`);
       setCart([]);
       setPayments([]);
       setCheckoutMode(false);
@@ -479,6 +555,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setClassicCode('');
       setCashChange(0);
     } catch (err: any) {
+      autoFinalizedRef.current = false;
       alert('Erro ao salvar venda: ' + err.message);
     } finally {
       setSaving(false);
@@ -760,17 +837,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 style={{ background: YELLOW, borderColor: YELLOW_DARK }}
               >
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-black tracking-wide">
-                  <span><b>F2</b> Foco no código</span>
+                  <span><b>F4</b> / <b>F5</b> Subtotal (fechar)</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F3</b> Cancelar último item</span>
+                  <span><b>F8</b> / <b>F10</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F4</b> Buscar produto</span>
+                  <span><b>Del</b> Cancelar último item</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F8</b> / <b>F10</b> Fechar venda</span>
+                  <span><b>F9</b> / <b>Esc</b> Cancelar venda</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F9</b> Cancelar venda</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>N*CÓDIGO</b> Quantidade (ex.: 3*789...)</span>
+                  <span><b>N*EAN</b> ou <b>N×EAN</b> Quantidade</span>
                 </div>
               </div>
             </>
@@ -855,7 +930,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                           </div>
                         ) : (
                           payments.map((p, i) => {
-                            const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado' };
+                            const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale-Alimentação' };
                             let label = labels[p.method] ?? p.method;
                             if (p.method === 'credito' && p.installments && p.installments > 1) {
                               label = `Crédito ${p.installments}x (R$ ${fmt(p.amount / p.installments)}/parc.)`;
@@ -912,13 +987,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     {/* Espaço menor para subir os cards um pouco */}
                     <div className="h-4" />
 
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar)</span></h3>
-                    <div className="grid grid-cols-5 gap-2">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale)</span></h3>
+                    <div className="relative grid grid-cols-3 sm:grid-cols-6 gap-2">
                       {[
-                        { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign },
-                        { id: 'pix', label: 'PIX', icon: Wallet },
-                        { id: 'credito', label: 'CRÉDITO', icon: CreditCard },
-                        { id: 'debito', label: 'DÉBITO', icon: Banknote },
+                        { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign, hint: 'F1' },
+                        { id: 'credito', label: 'CRÉDITO', icon: CreditCard, hint: 'F2' },
+                        { id: 'debito', label: 'DÉBITO', icon: Banknote, hint: 'F2' },
+                        { id: 'pix', label: 'PIX', icon: Wallet, hint: 'F3' },
+                        { id: 'vale', label: 'VALE', icon: Wallet, hint: 'F3' },
                         { id: 'fiado', label: 'FIADO', icon: Users },
                       ].map((m, mIdx, arr) => {
                         const Icon = m.icon;
@@ -931,6 +1007,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               else if (m.id === 'fiado') handleFiadoClick();
                               else if (m.id === 'pix') handlePixClick();
                               else if (m.id === 'dinheiro') handleCashClick();
+                              else if (m.id === 'vale') handleValeClick();
                               else addPayment(m.id as any);
                             }}
                             onKeyDown={(e) => {
@@ -945,14 +1022,103 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               }
                             }}
                             disabled={remaining <= 0}
-                            className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500/50 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
+                            className="relative border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500/50 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
                             style={{ borderColor: '#9ca3af' }}
                           >
+                            {m.hint && (
+                              <span className="absolute top-0.5 right-1 text-[9px] font-black text-gray-400 tracking-wider">{m.hint}</span>
+                            )}
                             <Icon size={20} />
                             <span className="text-[11px] font-bold tracking-wide">{m.label}</span>
                           </button>
                         );
                       })}
+
+                      {/* Picker flutuante F2 — Cartão (Crédito / Débito) */}
+                      {cardPickerOpen && (
+                        <div
+                          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
+                          style={{ borderColor: NAVY_DARK }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') { e.preventDefault(); setCardPickerOpen(false); }
+                            else if (e.key === 'ArrowDown') { e.preventDefault(); setCardPickerIdx(i => (i + 1) % 2); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setCardPickerIdx(i => (i - 1 + 2) % 2); }
+                            else if (e.key === 'Enter') {
+                              e.preventDefault();
+                              setCardPickerOpen(false);
+                              if (cardPickerIdx === 0) handleCreditClick();
+                              else addPayment('debito');
+                              setCardPickerIdx(0);
+                            }
+                          }}
+                          tabIndex={-1}
+                          ref={(el) => { if (el && cardPickerOpen) el.focus(); }}
+                        >
+                          <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
+                            F2 · Cartão — ↑↓ navegar · Enter selecionar · Esc fechar
+                          </div>
+                          {['CRÉDITO', 'DÉBITO'].map((label, idx) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onMouseEnter={() => setCardPickerIdx(idx)}
+                              onClick={() => {
+                                setCardPickerOpen(false);
+                                if (idx === 0) handleCreditClick();
+                                else addPayment('debito');
+                                setCardPickerIdx(0);
+                              }}
+                              className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === cardPickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                            >
+                              {idx === 0 ? <CreditCard size={18} /> : <Banknote size={18} />}
+                              <span className="font-bold text-gray-900">{label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Picker flutuante F3 — PIX / Vale-Alimentação */}
+                      {valePickerOpen && (
+                        <div
+                          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
+                          style={{ borderColor: NAVY_DARK }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') { e.preventDefault(); setValePickerOpen(false); }
+                            else if (e.key === 'ArrowDown') { e.preventDefault(); setValePickerIdx(i => (i + 1) % 2); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setValePickerIdx(i => (i - 1 + 2) % 2); }
+                            else if (e.key === 'Enter') {
+                              e.preventDefault();
+                              setValePickerOpen(false);
+                              if (valePickerIdx === 0) handlePixClick();
+                              else handleValeClick();
+                              setValePickerIdx(0);
+                            }
+                          }}
+                          tabIndex={-1}
+                          ref={(el) => { if (el && valePickerOpen) el.focus(); }}
+                        >
+                          <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
+                            F3 · PIX/Vale — ↑↓ navegar · Enter selecionar · Esc fechar
+                          </div>
+                          {['PIX', 'VALE-ALIMENTAÇÃO'].map((label, idx) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onMouseEnter={() => setValePickerIdx(idx)}
+                              onClick={() => {
+                                setValePickerOpen(false);
+                                if (idx === 0) handlePixClick();
+                                else handleValeClick();
+                                setValePickerIdx(0);
+                              }}
+                              className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                            >
+                              <Wallet size={18} />
+                              <span className="font-bold text-gray-900">{label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1032,7 +1198,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     disabled={paid < total - 0.001 || saving}
                     className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-300 focus-visible:ring-offset-1"
                     style={{ background: MONEY }}
-                    title="Confirmar venda (F8/F10)"
+                    title="Confirmar venda manualmente (finaliza automaticamente ao pagar o total)"
                   >
                     {saving ? (
                       <>
@@ -1050,17 +1216,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 style={{ background: YELLOW, borderColor: YELLOW_DARK }}
               >
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-black tracking-wide">
-                  <span><b>F2</b> Foco no código</span>
+                  <span><b>F1</b> Dinheiro</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F3</b> Cancelar último item</span>
+                  <span><b>F2</b> Cartão</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F4</b> Buscar produto</span>
+                  <span><b>F3</b> PIX / Vale</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F8</b> / <b>F10</b> Confirmar venda</span>
+                  <span><b>Esc</b> Voltar</span>
                   <span className="opacity-40">·</span>
                   <span><b>F9</b> Cancelar venda</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>N*CÓDIGO</b> Quantidade (ex.: 3*789...)</span>
                 </div>
               </div>
             </>

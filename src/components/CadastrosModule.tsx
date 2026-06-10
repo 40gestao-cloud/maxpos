@@ -1066,7 +1066,16 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             return (
               <button
                 key={t}
-                onClick={() => { setSubTab(t); setShowAddUser(false); }}
+                onClick={() => {
+                  setSubTab(t);
+                  setShowAddUser(false);
+                  setShowAddProduct(false);
+                  setShowAddClient(false);
+                  setShowAddService(false);
+                  setShowAddSupplier(false);
+                  setEditingItem(null);
+                  setFormData({});
+                }}
                 className={`relative overflow-hidden isolate glass-blue shimmer px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide transition-all text-white border-2 ${
                   isActive ? 'ring-2 ring-offset-2 ring-[#FFC107]' : 'opacity-80 hover:opacity-100'
                 }`}
@@ -1116,6 +1125,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           <button
             onClick={() => {
               setEditingItem(null);
+              setFormData({});
               if (subTab === 'equipe') setShowAddUser(true);
               if (subTab === 'clientes') {
                 setFormData({ type: 'PF' });

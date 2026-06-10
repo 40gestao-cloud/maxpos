@@ -91,7 +91,7 @@ export interface CartItem extends Product {
 }
 
 export interface Payment {
-  method: 'dinheiro' | 'pix' | 'credito' | 'debito' | 'fiado';
+  method: 'dinheiro' | 'pix' | 'credito' | 'debito' | 'fiado' | 'vale';
   amount: number;
   installments?: number;  // crédito parcelado
   clientId?: string;      // fiado: cliente vinculado
