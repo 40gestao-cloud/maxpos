@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split } from 'lucide-react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client } from '../types';
 import { Storage } from '../lib/storage';
@@ -44,12 +44,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [valePickerOpen, setValePickerOpen] = useState(false);
   const [cardPickerIdx, setCardPickerIdx] = useState(0);
   const [valePickerIdx, setValePickerIdx] = useState(0);
+  const [installmentsIdx, setInstallmentsIdx] = useState(0);
   const [classicCode, setClassicCode] = useState('');
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
   const [classicSearchTerm, setClassicSearchTerm] = useState('');
   const [classicMsg, setClassicMsg] = useState<{ type: 'err'; text: string } | null>(null);
   const [classicSuggestionIdx, setClassicSuggestionIdx] = useState(-1);
   const [cupomSeq] = useState(() => String(Date.now()).slice(-6));
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [changeModal, setChangeModal] = useState<{ amount: number } | null>(null);
+  const [thankYouOpen, setThankYouOpen] = useState(false);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
@@ -180,7 +184,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
@@ -271,7 +275,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -298,10 +302,17 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setPartialAmount('');
   };
 
+  // Trava defensiva: impede que dois modais/formas sejam acionados ao mesmo tempo
+  // (ex.: parcelamento aberto + Tab para PIX + Enter)
+  const isAnyPaymentModalOpen = () =>
+    showInstallments || pixModalOpen || cashModalOpen || showClientPicker || cardPickerOpen || valePickerOpen;
+
   const handleCreditClick = () => {
+    if (isAnyPaymentModalOpen()) return;
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     setPendingCreditAmount(parseFloat(Math.min(amount, remaining).toFixed(2)));
+    setInstallmentsIdx(0);
     setShowInstallments(true);
   };
 
@@ -363,6 +374,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   };
 
   const handleCashClick = () => {
+    if (isAnyPaymentModalOpen()) return;
     const wanted = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     const due = parseFloat(Math.min(wanted, remaining).toFixed(2));
     if (due <= 0) return;
@@ -384,6 +396,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   };
 
   const handleValeClick = () => {
+    if (isAnyPaymentModalOpen()) return;
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
@@ -392,6 +405,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   };
 
   const handleFiadoClick = () => {
+    if (isAnyPaymentModalOpen()) return;
     if (payments.some(p => p.method === 'fiado')) {
       alert('Já existe um pagamento em fiado nesta venda. Remova-o antes de lançar outro.');
       return;
@@ -404,6 +418,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   };
 
   const handlePixClick = async () => {
+    if (isAnyPaymentModalOpen()) return;
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
@@ -544,16 +559,20 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       });
       if (rpcErr) throw rpcErr;
 
-      const changeMsg = cashChange > 0.001
-        ? `\nTroco: R$ ${cashChange.toFixed(2).replace('.', ',')}`
-        : '';
-      alert(`Venda Finalizada com Sucesso!${changeMsg}`);
+      const trocoFinal = cashChange;
       setCart([]);
       setPayments([]);
       setCheckoutMode(false);
       setLastAdded(null);
       setClassicCode('');
       setCashChange(0);
+      if (trocoFinal > 0.001) {
+        // Tela grande dedicada de troco (padrão supermercado) — depois abre agradecimento
+        setChangeModal({ amount: trocoFinal });
+      } else {
+        // Sem troco: vai direto para tela de agradecimento
+        setThankYouOpen(true);
+      }
     } catch (err: any) {
       autoFinalizedRef.current = false;
       alert('Erro ao salvar venda: ' + err.message);
@@ -649,6 +668,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 </span>
               )}
             </div>
+            <button
+              onClick={() => setHelpOpen(true)}
+              className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-black text-xl border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              style={{ background: NAVY_DARK, color: YELLOW, borderColor: NAVY_DARK }}
+              title="Ajuda — fluxo de atendimento"
+              aria-label="Abrir ajuda"
+            >
+              <HelpCircle size={22} />
+            </button>
           </div>
 
           {/* ============ TELA DE LEITURA ============ */}
@@ -836,8 +864,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 className="px-6 py-2 shrink-0 border-t-2"
                 style={{ background: YELLOW, borderColor: YELLOW_DARK }}
               >
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-black tracking-wide">
-                  <span><b>F4</b> / <b>F5</b> Subtotal (fechar)</span>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-black tracking-wide">
+                  <span
+                    className="px-2 py-0.5 rounded text-white font-bold"
+                    style={{ background: NAVY_DARK }}
+                    title="Padrão supermercado: Enter no campo vazio = Subtotal / Fechar venda"
+                  >
+                    Enter (campo vazio) = SUBTOTAL
+                  </span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F4</b> / <b>F5</b> Subtotal</span>
                   <span className="opacity-40">·</span>
                   <span><b>F8</b> / <b>F10</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
@@ -902,6 +938,8 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
+                            // Padrão supermercado (Bematech/Linx): Enter NUNCA assume forma de pagamento.
+                            // Sempre foca o primeiro botão (DINHEIRO) — operador escolhe explicitamente F1/F2/F3.
                             const first = document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]');
                             first?.focus();
                           }
@@ -1040,15 +1078,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                           className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
                           style={{ borderColor: NAVY_DARK }}
                           onKeyDown={(e) => {
-                            if (e.key === 'Escape') { e.preventDefault(); setCardPickerOpen(false); }
-                            else if (e.key === 'ArrowDown') { e.preventDefault(); setCardPickerIdx(i => (i + 1) % 2); }
-                            else if (e.key === 'ArrowUp') { e.preventDefault(); setCardPickerIdx(i => (i - 1 + 2) % 2); }
+                            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCardPickerOpen(false); }
+                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i + 1) % 2); }
+                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i - 1 + 2) % 2); }
                             else if (e.key === 'Enter') {
-                              e.preventDefault();
+                              e.preventDefault(); e.stopPropagation();
+                              const idx = cardPickerIdx;
                               setCardPickerOpen(false);
-                              if (cardPickerIdx === 0) handleCreditClick();
-                              else addPayment('debito');
                               setCardPickerIdx(0);
+                              // Aguardar fechamento antes de disparar (evita disputa com isAnyPaymentModalOpen)
+                              setTimeout(() => { if (idx === 0) handleCreditClick(); else addPayment('debito'); }, 0);
                             }
                           }}
                           tabIndex={-1}
@@ -1083,15 +1122,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                           className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
                           style={{ borderColor: NAVY_DARK }}
                           onKeyDown={(e) => {
-                            if (e.key === 'Escape') { e.preventDefault(); setValePickerOpen(false); }
-                            else if (e.key === 'ArrowDown') { e.preventDefault(); setValePickerIdx(i => (i + 1) % 2); }
-                            else if (e.key === 'ArrowUp') { e.preventDefault(); setValePickerIdx(i => (i - 1 + 2) % 2); }
+                            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValePickerOpen(false); }
+                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 2); }
+                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 2) % 2); }
                             else if (e.key === 'Enter') {
-                              e.preventDefault();
+                              e.preventDefault(); e.stopPropagation();
+                              const idx = valePickerIdx;
                               setValePickerOpen(false);
-                              if (valePickerIdx === 0) handlePixClick();
-                              else handleValeClick();
                               setValePickerIdx(0);
+                              setTimeout(() => { if (idx === 0) handlePixClick(); else handleValeClick(); }, 0);
                             }
                           }}
                           tabIndex={-1}
@@ -1215,7 +1254,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 className="px-6 py-2 shrink-0 border-t-2"
                 style={{ background: YELLOW, borderColor: YELLOW_DARK }}
               >
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-black tracking-wide">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-black tracking-wide">
+                  <span
+                    className="px-2 py-0.5 rounded text-white font-bold"
+                    style={{ background: MONEY }}
+                    title="Padrão supermercado: escolha sempre a forma de pagamento explicitamente"
+                  >
+                    Escolha a forma: F1/F2/F3
+                  </span>
+                  <span className="opacity-40">·</span>
                   <span><b>F1</b> Dinheiro</span>
                   <span className="opacity-40">·</span>
                   <span><b>F2</b> Cartão</span>
@@ -1230,6 +1277,354 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             </>
           )}
         </div>
+
+        {/* Troco — tela grande dedicada (padrão supermercado) */}
+        {changeModal && (
+          <div
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.75)' }}
+            onClick={() => { setChangeModal(null); setThankYouOpen(true); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
+                e.preventDefault();
+                setChangeModal(null);
+                setThankYouOpen(true);
+              }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && changeModal) el.focus(); }}
+          >
+            <div
+              className="w-full max-w-2xl bg-white border-4 shadow-2xl"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                className="px-6 py-4 text-center text-white"
+                style={{ background: MONEY }}
+              >
+                <div className="text-xs font-black uppercase tracking-[0.4em] opacity-90">Venda finalizada</div>
+                <div className="text-3xl font-black uppercase tracking-wider mt-1">
+                  Devolver troco ao cliente
+                </div>
+              </div>
+              <div className="px-8 py-10 flex flex-col items-center" style={{ background: '#f0fdf4' }}>
+                <div className="text-base font-bold uppercase tracking-[0.3em] text-gray-600 mb-3">
+                  Troco
+                </div>
+                <div
+                  className="text-[9rem] font-black tabular-nums leading-none"
+                  style={{ color: MONEY, textShadow: '0 4px 0 rgba(21,128,61,0.15)' }}
+                >
+                  R$ {changeModal.amount.toFixed(2).replace('.', ',')}
+                </div>
+                <div className="mt-6 text-sm text-gray-700 font-bold uppercase tracking-wider">
+                  Pressione <kbd className="px-2 py-0.5 rounded border-2 mx-1" style={{ background: 'white', borderColor: MONEY, fontFamily: 'Consolas, monospace' }}>Enter</kbd> para continuar
+                </div>
+              </div>
+              <div className="px-6 py-3 flex justify-end" style={{ background: MONEY }}>
+                <button
+                  onClick={() => { setChangeModal(null); setThankYouOpen(true); }}
+                  className="px-8 py-3 bg-white text-base font-black uppercase tracking-wider rounded"
+                  style={{ color: MONEY }}
+                  autoFocus
+                >
+                  TROCO DEVOLVIDO (Enter)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Agradecimento — tela final do supermercado SuperMax (só fecha com ENTER) */}
+        {thankYouOpen && (
+          <div
+            className="fixed inset-0 z-[310] flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.98)' }}
+            onKeyDown={(e) => {
+              // Apenas ENTER fecha — clique, Esc, Espaço e qualquer outra tecla são ignorados
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                setThankYouOpen(false);
+                setTimeout(() => codeInputRef.current?.focus(), 50);
+              } else {
+                // Bloqueia totalmente o teclado pra não vazar pro PDV atrás
+                e.stopPropagation();
+              }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && thankYouOpen) el.focus(); }}
+          >
+            <div
+              className="flex flex-col items-center justify-center text-center px-8 py-6 max-h-screen w-full"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+            >
+              <img
+                src="/icon-supermax.png"
+                alt="SuperMax"
+                className="object-contain drop-shadow-2xl"
+                style={{ maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
+                draggable={false}
+              />
+              <div
+                className="mt-4 text-3xl md:text-4xl lg:text-5xl font-black tracking-wide shrink-0"
+                style={{ color: NAVY_DARK }}
+              >
+                Agradecemos a sua preferência
+              </div>
+              <div
+                className="mt-5 px-6 py-3 rounded-full text-sm md:text-base font-black uppercase tracking-[0.3em] animate-pulse shrink-0"
+                style={{ background: YELLOW, color: NAVY_DARK, border: `2px solid ${YELLOW_DARK}` }}
+              >
+                Pressione ENTER para continuar
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Ajuda — fluxo de atendimento */}
+        {helpOpen && (
+          <div
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60"
+            onClick={(e) => { if (e.target === e.currentTarget) setHelpOpen(false); }}
+            onKeyDown={(e) => { if (e.key === 'Escape') setHelpOpen(false); }}
+            tabIndex={-1}
+            ref={(el) => { if (el && helpOpen) el.focus(); }}
+          >
+            <div
+              className="w-full max-w-3xl max-h-[92vh] flex flex-col bg-white border-2 shadow-2xl"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}
+            >
+              {/* Header */}
+              <div
+                className="px-5 py-3 flex items-center justify-between shrink-0 border-b-2"
+                style={{ background: YELLOW, borderColor: YELLOW_DARK }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center"
+                    style={{ background: NAVY_DARK, color: YELLOW }}
+                  >
+                    <HelpCircle size={22} />
+                  </div>
+                  <div>
+                    <div className="font-black tracking-wide text-base uppercase" style={{ color: NAVY_DARK }}>
+                      Fluxo de atendimento — venda rápida
+                    </div>
+                    <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: NAVY_DARK, opacity: 0.7 }}>
+                      Padrão supermercado · Compatível com Bematech / Linx
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setHelpOpen(false)}
+                  className="text-sm font-bold px-3 py-1.5 border-2 border-black/40 hover:bg-black/10 rounded"
+                  title="Fechar (Esc)"
+                >
+                  FECHAR (Esc)
+                </button>
+              </div>
+
+              {/* Conteúdo */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
+                {/* Fluxo rápido em 3 passos */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="border-2 rounded p-3 bg-white" style={{ borderColor: NAVY_DARK }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-sm font-black"
+                        style={{ background: YELLOW, color: NAVY_DARK, border: `2px solid ${YELLOW_DARK}` }}
+                      >1</span>
+                      <ScanBarcode size={18} style={{ color: NAVY_DARK }} />
+                      <span className="text-xs font-black uppercase tracking-wider" style={{ color: NAVY_DARK }}>
+                        Ler produtos
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-700 leading-relaxed">
+                      Use o leitor de código de barras ou digite o <b>EAN/REF</b> no campo <b>CÓDIGO</b> e pressione <b>Enter</b>.
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-2">
+                      💡 Pode digitar o <b>nome do produto</b> e selecionar com ↑↓ + Enter.
+                    </p>
+                  </div>
+
+                  <div className="border-2 rounded p-3 bg-white" style={{ borderColor: NAVY_DARK }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-sm font-black"
+                        style={{ background: YELLOW, color: NAVY_DARK, border: `2px solid ${YELLOW_DARK}` }}
+                      >2</span>
+                      <Receipt size={18} style={{ color: NAVY_DARK }} />
+                      <span className="text-xs font-black uppercase tracking-wider" style={{ color: NAVY_DARK }}>
+                        Fechar venda
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-700 leading-relaxed">
+                      Após o último item, pressione <b>Enter</b> no campo <b>CÓDIGO</b> vazio (ou <b>F4/F5</b>).
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-2">
+                      💡 Botão <b>FECHAR VENDA</b> verde também serve.
+                    </p>
+                  </div>
+
+                  <div className="border-2 rounded p-3 bg-white" style={{ borderColor: NAVY_DARK }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-sm font-black"
+                        style={{ background: YELLOW, color: NAVY_DARK, border: `2px solid ${YELLOW_DARK}` }}
+                      >3</span>
+                      <DollarSign size={18} style={{ color: NAVY_DARK }} />
+                      <span className="text-xs font-black uppercase tracking-wider" style={{ color: NAVY_DARK }}>
+                        Receber
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-700 leading-relaxed">
+                      Escolha a forma com <b>F1/F2/F3</b>. Quando o <b>RECEBIDO = TOTAL</b>, a venda <b>finaliza sozinha</b>.
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-2">
+                      💡 Pagamento misto: digite o valor parcial primeiro.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Fluxo padrão Bematech — dinheiro à vista */}
+                <div
+                  className="border-2 rounded p-4"
+                  style={{ borderColor: MONEY, background: '#dcfce7' }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-base font-black uppercase tracking-wider" style={{ color: MONEY }}>
+                      ⚡ Fluxo padrão — dinheiro à vista
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-gray-800">
+                    <span className="px-3 py-1.5 bg-white border-2 rounded" style={{ borderColor: MONEY }}>Leu produtos</span>
+                    <span className="text-lg" style={{ color: MONEY }}>→</span>
+                    <span className="px-3 py-1.5 bg-white border-2 rounded" style={{ borderColor: MONEY }}>Enter</span>
+                    <span className="text-lg" style={{ color: MONEY }}>→</span>
+                    <span className="px-3 py-1.5 bg-white border-2 rounded" style={{ borderColor: MONEY }}>F1</span>
+                    <span className="text-lg" style={{ color: MONEY }}>→</span>
+                    <span className="px-3 py-1.5 bg-white border-2 rounded" style={{ borderColor: MONEY }}>(valor recebido)</span>
+                    <span className="text-lg" style={{ color: MONEY }}>→</span>
+                    <span className="px-3 py-1.5 bg-white border-2 rounded" style={{ borderColor: MONEY }}>Enter</span>
+                    <span className="text-lg" style={{ color: MONEY }}>=</span>
+                    <span className="px-3 py-1.5 text-white rounded font-black" style={{ background: MONEY }}>TROCO + VENDA OK</span>
+                  </div>
+                  <p className="text-[11px] text-gray-700 mt-2 leading-relaxed">
+                    1) <b>Enter</b> no campo CÓDIGO vazio abre o fechamento. 2) <b>F1</b> abre o modal Dinheiro com o valor exato já preenchido (e selecionado). 3) Se o cliente deu o valor exato, basta <b>Enter</b>. Se deu mais (ex: R$ 100), digite por cima — o sistema calcula o troco e mostra em tela grande.
+                  </p>
+                </div>
+
+                {/* Formas de pagamento */}
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: NAVY_DARK }}>
+                    Atalhos das formas de pagamento (na tela de fechamento)
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
+                      <kbd className="px-2.5 py-1 font-black text-sm rounded border-2" style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK, fontFamily: 'Consolas, monospace' }}>F1</kbd>
+                      <DollarSign size={16} style={{ color: MONEY }} />
+                      <span className="text-sm text-gray-800"><b>Dinheiro</b> — abre modal com troco</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
+                      <kbd className="px-2.5 py-1 font-black text-sm rounded border-2" style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK, fontFamily: 'Consolas, monospace' }}>F2</kbd>
+                      <CreditCard size={16} style={{ color: NAVY_DARK }} />
+                      <span className="text-sm text-gray-800"><b>Cartão</b> — Crédito (parcela) ou Débito</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
+                      <kbd className="px-2.5 py-1 font-black text-sm rounded border-2" style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK, fontFamily: 'Consolas, monospace' }}>F3</kbd>
+                      <Wallet size={16} style={{ color: NAVY_DARK }} />
+                      <span className="text-sm text-gray-800"><b>PIX</b> (MaxBank) ou <b>Vale-Alimentação</b></span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
+                      <Users size={16} style={{ color: NAVY_DARK }} />
+                      <span className="text-sm text-gray-800"><b>Fiado</b> — clique no botão, escolha o cliente</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Outros atalhos */}
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: NAVY_DARK }}>
+                    <Keyboard size={14} className="inline mb-0.5 mr-1" />
+                    Outros atalhos importantes
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>N*EAN</kbd>
+                      <span className="text-gray-800">Quantidade — ex: <b>3*789...</b> ou <b>3x789...</b></span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F4 / F5</kbd>
+                      <span className="text-gray-800">Subtotal — abrir fechamento</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F8 / F10</kbd>
+                      <span className="text-gray-800">Buscar produto por nome</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Del</kbd>
+                      <span className="text-gray-800">Cancelar último item lido</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F9</kbd>
+                      <span className="text-gray-800">Cancelar a venda inteira</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Esc</kbd>
+                      <span className="text-gray-800">Voltar da tela de fechamento</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Tab / ← →</kbd>
+                      <span className="text-gray-800">Navegar entre formas de pagamento</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>↑ ↓</kbd>
+                      <span className="text-gray-800">Navegar sugestões / parcelas</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pagamento misto */}
+                <div
+                  className="border-2 rounded p-3"
+                  style={{ borderColor: NAVY_DARK, background: '#eff6ff' }}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Split size={16} style={{ color: NAVY_DARK }} />
+                    <span className="text-sm font-black uppercase tracking-wider" style={{ color: NAVY_DARK }}>
+                      Pagamento misto (várias formas)
+                    </span>
+                  </div>
+                  <ol className="text-xs text-gray-800 leading-relaxed list-decimal list-inside space-y-0.5">
+                    <li>Digite o <b>VALOR DESTA FORMA</b> (ex: <span className="font-mono">50,00</span>).</li>
+                    <li>Escolha a forma (F1/F2/F3 ou clique).</li>
+                    <li>O <b>RESTANTE</b> aparece — repita o passo 1 para a próxima forma.</li>
+                    <li>Quando o restante chegar a zero, a venda finaliza automaticamente.</li>
+                  </ol>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div
+                className="px-5 py-2.5 shrink-0 border-t-2 flex items-center justify-between"
+                style={{ background: YELLOW, borderColor: YELLOW_DARK }}
+              >
+                <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: NAVY_DARK }}>
+                  Para reabrir esta ajuda, clique no <b>?</b> no topo
+                </span>
+                <button
+                  onClick={() => setHelpOpen(false)}
+                  className="px-5 py-2 text-white text-sm font-bold rounded"
+                  style={{ background: NAVY_DARK }}
+                >
+                  ENTENDI
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Busca por descrição (F4) */}
         {classicSearchOpen && (
@@ -1359,8 +1754,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-2">VALOR RECEBIDO</label>
                     <input
                       autoFocus
+                      ref={(el) => { if (el) setTimeout(() => el.select(), 0); }}
                       value={cashReceived}
                       onChange={(e) => setCashReceived(maskCurrency(e.target.value))}
+                      onFocus={(e) => e.currentTarget.select()}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') { e.preventDefault(); confirmCashPayment(); }
                         else if (e.key === 'Escape') { e.preventDefault(); setCashModalOpen(false); }
@@ -1403,32 +1800,82 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           );
         })()}
 
-        {/* Parcelamento (crédito) — estilo clássico */}
+        {/* Parcelamento (crédito) — estilo clássico, com foco preso e teclado completo */}
         {showInstallments && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40">
-            <div className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowInstallments(false); }}
+            onKeyDown={(e) => {
+              // Trap completo: nenhum evento de teclado pode vazar para os botões atrás.
+              if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setShowInstallments(false); return; }
+              if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                confirmInstallments(installmentsIdx + 1);
+                return;
+              }
+              if (e.key === 'Tab') {
+                e.preventDefault(); e.stopPropagation();
+                setInstallmentsIdx(i => e.shiftKey ? (i - 1 + 12) % 12 : (i + 1) % 12);
+                return;
+              }
+              if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setInstallmentsIdx(i => (i + 1) % 12); return; }
+              if (e.key === 'ArrowLeft')  { e.preventDefault(); e.stopPropagation(); setInstallmentsIdx(i => (i - 1 + 12) % 12); return; }
+              if (e.key === 'ArrowDown')  { e.preventDefault(); e.stopPropagation(); setInstallmentsIdx(i => Math.min(i + 3, 11)); return; }
+              if (e.key === 'ArrowUp')    { e.preventDefault(); e.stopPropagation(); setInstallmentsIdx(i => Math.max(i - 3, 0)); return; }
+              if (/^[1-9]$/.test(e.key))  { e.preventDefault(); e.stopPropagation(); confirmInstallments(parseInt(e.key, 10)); return; }
+              // Bloqueia qualquer outra tecla de chegar nos elementos atrás
+              if (e.key.length === 1 || e.key === 'F1' || e.key === 'F2' || e.key === 'F3') {
+                e.stopPropagation();
+              }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && showInstallments) el.focus(); }}
+          >
+            <div
+              className="bg-white border-2 max-w-sm w-full shadow-2xl"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
-                <span className="font-black tracking-wide text-sm uppercase">Parcelamento</span>
-                <button onClick={() => setShowInstallments(false)} className="text-black hover:opacity-70">
+                <span className="font-black tracking-wide text-sm uppercase">Parcelamento — Cartão de Crédito</span>
+                <button
+                  onClick={() => setShowInstallments(false)}
+                  className="text-black hover:opacity-70"
+                  tabIndex={-1}
+                  title="Fechar (Esc)"
+                >
                   <X size={18} />
                 </button>
               </div>
-              <div className="p-4 space-y-4">
+              <div className="p-4 space-y-3">
                 <p className="text-sm text-gray-600">
                   Total a parcelar: <span className="font-bold text-gray-900 tabular-nums">R$ {fmt(pendingCreditAmount)}</span>
                 </p>
                 <div className="grid grid-cols-3 gap-2">
-                  {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
-                    <button
-                      key={n}
-                      onClick={() => confirmInstallments(n)}
-                      className="border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 py-2 flex flex-col items-center transition"
-                      style={{ borderColor: '#9ca3af' }}
-                    >
-                      <span className="text-base font-bold">{n}x</span>
-                      <span className="text-[10px] text-gray-500 tabular-nums">R$ {fmt(pendingCreditAmount / n)}</span>
-                    </button>
-                  ))}
+                  {[1,2,3,4,5,6,7,8,9,10,11,12].map((n, idx) => {
+                    const isSelected = idx === installmentsIdx;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        tabIndex={-1}
+                        onMouseEnter={() => setInstallmentsIdx(idx)}
+                        onClick={() => confirmInstallments(n)}
+                        className={`border-2 py-2 flex flex-col items-center transition ${
+                          isSelected
+                            ? 'bg-yellow-100 text-blue-700'
+                            : 'bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700'
+                        }`}
+                        style={{ borderColor: isSelected ? NAVY_DARK : '#9ca3af' }}
+                      >
+                        <span className="text-base font-bold">{n}x</span>
+                        <span className="text-[10px] text-gray-500 tabular-nums">R$ {fmt(pendingCreditAmount / n)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[10px] text-gray-600 text-center pt-1 border-t border-gray-200 mt-2 leading-relaxed">
+                  <b>↑↓ ← →</b> ou <b>Tab</b> navegar · <b>1-9</b> selecionar direto · <b>Enter</b> confirmar · <b>Esc</b> fechar
                 </div>
               </div>
             </div>
