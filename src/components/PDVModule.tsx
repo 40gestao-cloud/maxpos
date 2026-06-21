@@ -1043,11 +1043,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               else addPayment(m.id as any);
                             }}
                             onKeyDown={(e) => {
-                              if (e.key === 'ArrowRight') {
+                              if (e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
                                 e.preventDefault();
                                 const next = arr[(mIdx + 1) % arr.length];
                                 document.querySelector<HTMLButtonElement>(`[data-pay-method="${next.id}"]`)?.focus();
-                              } else if (e.key === 'ArrowLeft') {
+                              } else if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
                                 e.preventDefault();
                                 const prev = arr[(mIdx - 1 + arr.length) % arr.length];
                                 document.querySelector<HTMLButtonElement>(`[data-pay-method="${prev.id}"]`)?.focus();
