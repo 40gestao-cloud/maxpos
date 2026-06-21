@@ -409,17 +409,24 @@ REVOKE ALL ON FUNCTION public.factory_reset() FROM public;
 GRANT EXECUTE ON FUNCTION public.factory_reset() TO authenticated;
 
 -- ============================================================
--- Usuários iniciais
--- 1. Crie no painel Authentication > Users do Supabase:
---    chairmanmaximus@gmail.com  (senha: 03315077)
---    ceomaximus@gmail.com       (senha: lolic0778)
--- 2. O trigger acima cria os perfis automaticamente como
---    'colaborador_vendas'. Ajuste o role manualmente:
+-- Usuários iniciais (faça depois de rodar este script)
 --
--- UPDATE user_profiles SET role = 'chairman', name = 'Chairman Maximus'
---   WHERE email = 'chairmanmaximus@gmail.com';
--- UPDATE user_profiles SET role = 'ceo',      name = 'CEO Maximus'
---   WHERE email = 'ceomaximus@gmail.com';
+-- 1. No painel do Supabase, vá em Authentication > Users e
+--    clique em "Add user" para criar pelo menos um usuário
+--    administrador com o e-mail e senha de sua escolha.
+--
+-- 2. O trigger `handle_new_user` (definido acima) cria o perfil
+--    automaticamente com role 'colaborador_vendas'. Para liberar
+--    as telas administrativas, promova o role manualmente no
+--    SQL Editor — substitua o e-mail pelo do seu admin:
+--
+-- UPDATE user_profiles
+--    SET role = 'chairman',
+--        name = 'Nome do Administrador'
+--  WHERE email = 'admin@seudominio.com';
+--
+--    Roles disponíveis: 'chairman', 'ceo', 'admin',
+--    'colaborador_vendas' (entre outros usados pelo app).
 -- ============================================================
 
 -- ============================================================
