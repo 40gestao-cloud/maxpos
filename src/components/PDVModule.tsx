@@ -57,7 +57,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
-  const autoFinalizedRef = useRef(false);
 
   useEffect(() => {
     if (!classicMsg) return;
@@ -272,6 +271,20 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setClassicSearchOpen(true);
         return;
       }
+
+      // ENTER — confirma venda no checkout quando totalmente pago
+      // (padrão Bematech/Linx: operador confere e aperta ENTER pra fechar)
+      if (e.key === 'Enter') {
+        if (!checkoutMode || modalOpen || pickerOpen || saving) return;
+        if (isEditable) return; // inputs cuidam do próprio ENTER
+        const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
+        const pd = payments.reduce((a, p) => a + p.amount, 0);
+        if (tot > 0 && pd >= tot - 0.001) {
+          e.preventDefault();
+          finalizeSale();
+        }
+        return;
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -477,24 +490,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setPixModalOpen(false);
   };
 
-  // Auto-finaliza assim que os pagamentos cobrirem o total (fluxo supermercado)
-  useEffect(() => {
-    if (autoFinalizedRef.current) return;
-    if (!checkoutMode || saving) return;
-    if (cart.length === 0 || payments.length === 0) return;
-    const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
-    const pd = payments.reduce((a, p) => a + p.amount, 0);
-    if (tot > 0 && pd >= tot - 0.001) {
-      autoFinalizedRef.current = true;
-      finalizeSale();
-    }
-  }, [payments, cart, checkoutMode, saving]);
-
-  // Libera o auto-finalize quando uma nova venda começa
-  useEffect(() => {
-    if (cart.length === 0 && payments.length === 0) autoFinalizedRef.current = false;
-  }, [cart.length, payments.length]);
-
   // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
   useEffect(() => {
     if (!pixModalOpen || !pixUuid) return;
@@ -574,7 +569,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setThankYouOpen(true);
       }
     } catch (err: any) {
-      autoFinalizedRef.current = false;
       alert('Erro ao salvar venda: ' + err.message);
     } finally {
       setSaving(false);
@@ -1208,7 +1202,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     ref={codeInputRef}
                     value={classicCode}
                     onChange={(e) => setClassicCode(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      e.preventDefault();
+                      // Código vazio + venda totalmente paga → confirma venda
+                      if (classicCode.trim() === '' && paid >= total - 0.001 && total > 0 && !saving) {
+                        finalizeSale();
+                      } else {
+                        handleClassicSubmit();
+                      }
+                    }}
                     placeholder="EAN-13 ou ID do produto"
                     autoComplete="off"
                     spellCheck={false}
