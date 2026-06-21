@@ -793,7 +793,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                         }
                       }}
                       onBlur={() => {
-                        if (!showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && editingPaymentIdx === null) {
+                        if (!showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && !helpOpen && !thankYouOpen && changeModal === null && editingPaymentIdx === null) {
                           setTimeout(() => codeInputRef.current?.focus(), 0);
                         }
                       }}
