@@ -54,6 +54,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const [helpOpen, setHelpOpen] = useState(false);
   const [changeModal, setChangeModal] = useState<{ amount: number } | null>(null);
   const [thankYouOpen, setThankYouOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel?: string;
+    variant: 'danger' | 'success';
+    onConfirm: () => void;
+  } | null>(null);
+  // 0 = botão CANCELAR · 1 = botão CONFIRMAR (default — para Enter já confirmar)
+  const [confirmFocusIdx, setConfirmFocusIdx] = useState<0 | 1>(1);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
@@ -181,23 +191,44 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setClassicSuggestionIdx(-1);
   };
 
+  // Abre o modal de confirmacao customizado (substitui window.confirm)
+  const askConfirm = (opts: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel?: string;
+    variant: 'danger' | 'success';
+    onConfirm: () => void;
+  }) => {
+    setConfirmDialog(opts);
+    setConfirmFocusIdx(1);
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
 
       const cancelEntireSale = () => {
         if (cart.length === 0 && payments.length === 0) return;
-        if (!confirm('Cancelar venda atual? Todos os itens e pagamentos serão descartados.')) return;
-        setCart([]);
-        setPayments([]);
-        setLastAdded(null);
-        setPartialAmount('');
-        setClassicCode('');
-        setCheckoutMode(false);
-        setCashChange(0);
+        askConfirm({
+          title: 'CANCELAR VENDA',
+          message: 'Cancelar venda atual? Todos os itens e pagamentos serão descartados.',
+          confirmLabel: 'CANCELAR VENDA',
+          cancelLabel: 'VOLTAR',
+          variant: 'danger',
+          onConfirm: () => {
+            setCart([]);
+            setPayments([]);
+            setLastAdded(null);
+            setPartialAmount('');
+            setClassicCode('');
+            setCheckoutMode(false);
+            setCashChange(0);
+          },
+        });
       };
 
       const removeLastItem = () => {
@@ -281,14 +312,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         const pd = payments.reduce((a, p) => a + p.amount, 0);
         if (tot > 0 && pd >= tot - 0.001) {
           e.preventDefault();
-          finalizeSale();
+          requestFinalizeSale();
         }
         return;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -376,14 +407,22 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
   const cancelSale = () => {
     if (cart.length === 0 && payments.length === 0) return;
-    if (!confirm('Cancelar venda atual? Todos os itens e pagamentos serão descartados.')) return;
-    setCart([]);
-    setPayments([]);
-    setLastAdded(null);
-    setPartialAmount('');
-    setClassicCode('');
-    setCheckoutMode(false);
-    setCashChange(0);
+    askConfirm({
+      title: 'CANCELAR VENDA',
+      message: 'Cancelar venda atual? Todos os itens e pagamentos serão descartados.',
+      confirmLabel: 'CANCELAR VENDA',
+      cancelLabel: 'VOLTAR',
+      variant: 'danger',
+      onConfirm: () => {
+        setCart([]);
+        setPayments([]);
+        setLastAdded(null);
+        setPartialAmount('');
+        setClassicCode('');
+        setCheckoutMode(false);
+        setCashChange(0);
+      },
+    });
   };
 
   const handleCashClick = () => {
@@ -521,6 +560,20 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     }]);
     setPartialAmount('');
     setShowClientPicker(false);
+  };
+
+  // Pede confirmacao antes de finalizar a venda (mesmo padrao do CANCELAR)
+  const requestFinalizeSale = () => {
+    if (saving) return;
+    if (paid < total - 0.001 || total <= 0) return;
+    askConfirm({
+      title: 'CONFIRMAR VENDA',
+      message: `Total R$ ${total.toFixed(2).replace('.', ',')} — recebido R$ ${paid.toFixed(2).replace('.', ',')}. Confirmar finalizacao da venda?`,
+      confirmLabel: 'CONFIRMAR VENDA',
+      cancelLabel: 'VOLTAR',
+      variant: 'success',
+      onConfirm: () => { finalizeSale(); },
+    });
   };
 
   const finalizeSale = async () => {
@@ -1054,7 +1107,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               }
                             }}
                             disabled={remaining <= 0}
-                            className="relative border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500/50 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
+                            className="relative border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
                             style={{ borderColor: '#9ca3af' }}
                           >
                             {m.hint && (
@@ -1207,7 +1260,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                       e.preventDefault();
                       // Código vazio + venda totalmente paga → confirma venda
                       if (classicCode.trim() === '' && paid >= total - 0.001 && total > 0 && !saving) {
-                        finalizeSale();
+                        requestFinalizeSale();
                       } else {
                         handleClassicSubmit();
                       }
@@ -1221,7 +1274,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   <div className="flex-1" />
                   <button
                     onClick={() => setCheckoutMode(false)}
-                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:border-blue-700"
+                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                     style={{ borderColor: '#9ca3af' }}
                     title="Voltar para a leitura"
                   >
@@ -1229,16 +1282,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   </button>
                   <button
                     onClick={cancelSale}
-                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-1"
+                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-red-400"
                     style={{ background: RED }}
                     title="Cancelar venda (F9)"
                   >
                     CANCELAR
                   </button>
                   <button
-                    onClick={finalizeSale}
+                    onClick={requestFinalizeSale}
                     disabled={paid < total - 0.001 || saving}
-                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-300 focus-visible:ring-offset-1"
+                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-400"
                     style={{ background: MONEY }}
                     title="Confirmar venda manualmente (finaliza automaticamente ao pagar o total)"
                   >
@@ -1928,6 +1981,111 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   {clients.filter(c => c.status === 'active' && (c.name || '').toLowerCase().includes(clientSearch.toLowerCase())).length === 0 && (
                     <p className="text-center text-xs text-gray-400 py-4">Nenhum cliente ativo encontrado</p>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de confirmacao customizado — substitui window.confirm */}
+        {confirmDialog && (
+          <div
+            className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/60"
+            onClick={(e) => { if (e.target === e.currentTarget) setConfirmDialog(null); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault(); e.stopPropagation();
+                setConfirmDialog(null);
+                return;
+              }
+              if (e.key === 'Tab') {
+                e.preventDefault(); e.stopPropagation();
+                setConfirmFocusIdx(i => (i === 0 ? 1 : 0));
+                return;
+              }
+              if (e.key === 'ArrowLeft')  { e.preventDefault(); e.stopPropagation(); setConfirmFocusIdx(0); return; }
+              if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setConfirmFocusIdx(1); return; }
+              if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                const cb = confirmDialog.onConfirm;
+                if (confirmFocusIdx === 1) {
+                  setConfirmDialog(null);
+                  cb();
+                } else {
+                  setConfirmDialog(null);
+                }
+                return;
+              }
+              // bloqueia outras teclas para nao vazarem para o handler global
+              if (e.key.length === 1 || /^F\d+$/.test(e.key)) {
+                e.stopPropagation();
+              }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && confirmDialog) el.focus(); }}
+          >
+            <div
+              className="bg-white border-2 max-w-md w-full shadow-2xl"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: confirmDialog.variant === 'danger' ? RED : MONEY }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                className="px-4 py-2.5 flex items-center justify-between"
+                style={{
+                  background: confirmDialog.variant === 'danger' ? RED : MONEY,
+                  color: '#fff',
+                }}
+              >
+                <span className="font-black tracking-wide text-sm uppercase">{confirmDialog.title}</span>
+                <button
+                  onClick={() => setConfirmDialog(null)}
+                  className="text-white hover:opacity-70"
+                  tabIndex={-1}
+                  title="Fechar (Esc)"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-5 space-y-5">
+                <p className="text-base text-gray-800 leading-relaxed">{confirmDialog.message}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseEnter={() => setConfirmFocusIdx(0)}
+                    onClick={() => setConfirmDialog(null)}
+                    className={`py-3 text-sm font-black uppercase tracking-wide border-2 transition ${
+                      confirmFocusIdx === 0
+                        ? 'bg-gray-800 text-white border-gray-900 ring-4 ring-offset-2 ring-gray-500 shadow-lg scale-[1.02]'
+                        : 'bg-white text-gray-700 border-gray-400 hover:bg-gray-100'
+                    }`}
+                  >
+                    {confirmDialog.cancelLabel || 'CANCELAR'}
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseEnter={() => setConfirmFocusIdx(1)}
+                    onClick={() => {
+                      const cb = confirmDialog.onConfirm;
+                      setConfirmDialog(null);
+                      cb();
+                    }}
+                    className={`py-3 text-sm font-black uppercase tracking-wide border-2 transition text-white ${
+                      confirmFocusIdx === 1
+                        ? `ring-4 ring-offset-2 shadow-lg scale-[1.02] ${confirmDialog.variant === 'danger' ? 'ring-red-400' : 'ring-green-400'}`
+                        : 'opacity-90 hover:opacity-100'
+                    }`}
+                    style={{
+                      background: confirmDialog.variant === 'danger' ? RED : MONEY,
+                      borderColor: confirmDialog.variant === 'danger' ? '#7f1d1d' : '#14532d',
+                    }}
+                  >
+                    {confirmDialog.confirmLabel}
+                  </button>
+                </div>
+                <div className="text-[11px] text-gray-500 text-center pt-2 border-t border-gray-200 leading-relaxed">
+                  <b>Tab</b> alternar · <b>Enter</b> {confirmFocusIdx === 1 ? 'confirma' : 'volta'} · <b>Esc</b> volta
                 </div>
               </div>
             </div>
