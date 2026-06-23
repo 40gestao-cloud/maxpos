@@ -512,6 +512,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     if (digits === '') {
       setCpfNota('');
       setCpfModalOpen(false);
+      focusAfterExtraConfirm();
       return;
     }
     // Sistema é simulação — só exigimos o tamanho (11 = CPF, 14 = CNPJ),
@@ -526,6 +527,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     }
     setCpfNota(digits);
     setCpfModalOpen(false);
+    focusAfterExtraConfirm();
   };
 
   // ─── Desconto: handlers ──────────────────────────────────
@@ -584,12 +586,34 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       }
       setSaleDiscount(desc);
     }
+    const wasTotalScope = discountModal.scope === 'total';
     setDiscountModal(null);
+    // Desconto SEMPRE vem antes do pagamento. No checkout, depois de aplicar,
+    // foca o primeiro botão de forma de pagamento (DINHEIRO) — o operador segue
+    // pra escolher a forma e pagar.
+    if (wasTotalScope && checkoutMode) {
+      setTimeout(() => {
+        document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]')?.focus();
+      }, 50);
+    }
   };
 
   const clearTotalDiscount = () => setSaleDiscount(0);
   const clearItemDiscount = (id: string) =>
     setCart(prev => prev.map(c => c.id === id ? { ...c, discount: 0 } : c));
+
+  // Após confirmar Desconto/CPF/Cliente, manda o foco para CONFIRMAR VENDA.
+  // Se ele estiver desabilitado (venda ainda não paga), foca o input VALOR DESTA FORMA.
+  const focusAfterExtraConfirm = () => {
+    setTimeout(() => {
+      const btn = document.querySelector<HTMLButtonElement>('[data-action="confirm-sale"]');
+      if (btn && !btn.disabled) {
+        btn.focus();
+      } else {
+        partialAmountRef.current?.focus();
+      }
+    }, 50);
+  };
 
   // ─── Reimpressão do último cupom ─────────────────────────
   const openReprintModal = async () => {
@@ -1032,6 +1056,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     if (clientPickerMode === 'link') {
       setLinkedClient(client);
       setShowClientPicker(false);
+      focusAfterExtraConfirm();
       return;
     }
     // modo 'fiado'
@@ -1954,6 +1979,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     CANCELAR
                   </button>
                   <button
+                    data-action="confirm-sale"
                     onClick={requestFinalizeSale}
                     disabled={paid < total - 0.001 || saving}
                     className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-400"
