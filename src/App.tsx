@@ -7,11 +7,12 @@ import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
   DollarSign, Shield, BarChart3,
-  LayoutDashboard, UserCircle, Globe, Settings
+  LayoutDashboard, UserCircle, Globe, Settings, Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Modules
+import InicioModule from './components/InicioModule';
 import PDVModule from './components/PDVModule';
 import CadastrosModule from './components/CadastrosModule';
 import EstoqueModule from './components/EstoqueModule';
@@ -27,10 +28,10 @@ import { supabase } from './lib/supabase';
 import { Storage } from './lib/storage';
 import { User } from './types';
 
-type Tab = 'pdv' | 'cadastros' | 'estoque' | 'financeiro' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
+type Tab = 'inicio' | 'pdv' | 'cadastros' | 'estoque' | 'financeiro' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('pdv');
+  const [activeTab, setActiveTab] = useState<Tab>('inicio');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,6 +69,7 @@ export default function App() {
   };
 
   const menuItems = [
+    { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'admin'] },
     { id: 'pdv', icon: ShoppingCart, label: 'PDV / Caixa', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
     { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'admin'] },
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'admin'] },
@@ -212,6 +214,7 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className={activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'min-h-full'}
             >
+              {activeTab === 'inicio' && <InicioModule currentUser={user} />}
               {activeTab === 'pdv' && <PDVModule currentUser={user} onExitToMenu={() => setIsSidebarOpen(true)} />}
               {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}
               {activeTab === 'estoque' && <EstoqueModule />}

@@ -126,8 +126,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
-  // ─── Cancelar item específico ───
-  const [cancelItemId, setCancelItemId] = useState<string | null>(null);
   // Cliente vinculado em qualquer venda (não só fiado). Sobrescrito pelo fiado se houver.
   const [linkedClient, setLinkedClient] = useState<Client | null>(null);
   // Modo do clientPicker: 'fiado' (caminho antigo) ou 'link' (vincular avulso)
@@ -216,11 +214,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   }, []);
 
   const addToCart = (product: Product, qty: number = 1) => {
+    // Arredonda em 3 casas para conter erro de ponto flutuante em qtd de balança
+    // (ex.: 0,1 + 0,2 = 0.30000000000000004 → 0.300).
+    const safeQty = parseFloat(qty.toFixed(3));
     let stockOK = true;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       const currentQty = existing ? existing.quantity : 0;
-      const newQty = currentQty + qty;
+      const newQty = parseFloat((currentQty + safeQty).toFixed(3));
       if (product.controlStock !== false && product.stock < newQty) {
         showAlert({
           title: 'Estoque Insuficiente',
@@ -235,10 +236,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           item.id === product.id ? { ...item, quantity: newQty } : item
         );
       }
-      return [...prev, { ...product, quantity: qty }];
+      return [...prev, { ...product, quantity: safeQty }];
     });
     if (stockOK) {
-      setLastAdded({ ...product, quantity: qty });
+      setLastAdded({ ...product, quantity: safeQty });
       playBeep('scan');
     }
   };
@@ -735,21 +736,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     return () => window.removeEventListener('keydown', handler);
   }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale]);
 
-  const updateCartQty = (id: string, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.id !== id) return item;
-      const newQty = item.quantity + delta;
-      if (newQty <= 0) return item;
-      if (item.controlStock !== false && newQty > item.stock) {
-        showAlert({
-          title: 'Estoque Insuficiente',
-          message: `Disponível: ${item.stock}.`,
-          variant: 'warning',
-        });
-        return item;
-      }
-      return { ...item, quantity: newQty };
-    }));
+  // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
+  // removidos); demais unidades exibem inteiro quando possível.
+  const fmtQty = (q: number, unit?: string): string => {
+    const u = (unit || '').toUpperCase();
+    if (u === 'KG' || u === 'G') {
+      return q.toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
+    }
+    return Number.isInteger(q) ? String(q) : q.toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
   };
 
   // Subtotal = soma de (preço × qtd − desconto do item).
@@ -1088,25 +1082,22 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     }
   };
 
-  // Cancelar item específico: ao setar cancelItemId, abre o card de confirmação
-  useEffect(() => {
-    if (!cancelItemId) return;
-    const it = cart.find(c => c.id === cancelItemId);
-    if (!it) { setCancelItemId(null); return; }
+  // Abre o card de confirmação para cancelar um item específico do carrinho.
+  const requestCancelItem = (id: string) => {
+    const it = cart.find(c => c.id === id);
+    if (!it) return;
     askConfirm({
       title: 'CANCELAR ITEM',
-      message: `Remover "${(it.name || '').toUpperCase()}" (${it.quantity} × R$ ${it.price.toFixed(2).replace('.', ',')}) do carrinho?`,
+      message: `Remover "${(it.name || '').toUpperCase()}" (${fmtQty(it.quantity, it.unit)} × R$ ${it.price.toFixed(2).replace('.', ',')}) do carrinho?`,
       confirmLabel: 'CANCELAR ITEM',
       cancelLabel: 'VOLTAR',
       variant: 'danger',
       onConfirm: () => {
-        setCart(prev => prev.filter(c => c.id !== cancelItemId));
-        if (lastAdded?.id === cancelItemId) setLastAdded(null);
-        setCancelItemId(null);
+        setCart(prev => prev.filter(c => c.id !== id));
+        if (lastAdded?.id === id) setLastAdded(null);
       },
     });
-    return () => { setCancelItemId(null); };
-  }, [cancelItemId]);
+  };
 
   // PIX auto-finalize: quando o MaxBank confirma o pagamento, se a venda estiver
   // totalmente paga, finaliza sozinha (sem o card de confirmação manual).
@@ -1297,11 +1288,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                               </span>
                             )}
                           </div>
-                          <div className="text-right">{item.quantity}</div>
+                          <div className="text-right">{fmtQty(item.quantity, item.unit)}{item.unit && (item.unit.toUpperCase() === 'KG' || item.unit.toUpperCase() === 'G') ? ` ${item.unit.toLowerCase()}` : ''}</div>
                           <div className="text-right">{fmt(item.price)}</div>
                           <div className="text-right font-bold">{fmt(liquido)}</div>
                           <button
-                            onClick={() => setCancelItemId(item.id)}
+                            onClick={() => requestCancelItem(item.id)}
                             tabIndex={-1}
                             className="w-7 h-7 flex items-center justify-center text-white rounded hover:brightness-110 self-center justify-self-end"
                             style={{ background: RED }}
@@ -1330,7 +1321,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                           REF: {lastAdded.ref || '—'} · EAN: {lastAdded.ean13 || '—'}
                         </div>
                         <div className="text-base text-gray-600 tabular-nums">
-                          {lastAdded.quantity} × R$ {fmt(lastAdded.price)}
+                          {fmtQty(lastAdded.quantity, lastAdded.unit)} {(lastAdded.unit || '').toLowerCase() || ''} × R$ {fmt(lastAdded.price)}
                         </div>
                         <div className="text-6xl font-bold tabular-nums mt-1" style={{ color: MONEY }}>
                           R$ {fmt(lastAdded.price * lastAdded.quantity)}
@@ -1399,9 +1390,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                         }
                       }}
                       onBlur={() => {
-                        if (!showInstallments && !showClientPicker && !classicSearchOpen && !pixModalOpen && !cashModalOpen && !helpOpen && !thankYouOpen && changeModal === null && editingPaymentIdx === null) {
-                          setTimeout(() => codeInputRef.current?.focus(), 0);
-                        }
+                        // Só refoca se o foco realmente se perdeu (foi pro body).
+                        // Se o usuário foi pra outro input/button (modal, picker, etc.), respeita.
+                        setTimeout(() => {
+                          const ae = document.activeElement;
+                          if (!ae || ae === document.body) codeInputRef.current?.focus();
+                        }, 0);
                       }}
                       autoFocus
                       autoComplete="off"
@@ -2597,15 +2591,23 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           >
             <div className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
-                <span className="font-black tracking-wide text-sm uppercase">Cliente Fiado</span>
+                <span className="font-black tracking-wide text-sm uppercase">
+                  {clientPickerMode === 'fiado' ? 'Cliente Fiado' : 'Vincular Cliente à Venda'}
+                </span>
                 <button onClick={() => setShowClientPicker(false)} className="text-black hover:opacity-70" tabIndex={-1}>
                   <X size={18} />
                 </button>
               </div>
               <div className="p-4 space-y-3">
-                <p className="text-sm text-gray-600">
-                  Valor: <span className="font-bold text-gray-900 tabular-nums">R$ {fmt(pendingFiadoAmount)}</span>
-                </p>
+                {clientPickerMode === 'fiado' ? (
+                  <p className="text-sm text-gray-600">
+                    Valor a lançar no fiado: <span className="font-bold text-gray-900 tabular-nums">R$ {fmt(pendingFiadoAmount)}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    Escolha o cliente para vincular a esta venda (programa de fidelidade, histórico de compras).
+                  </p>
+                )}
                 <input
                   autoFocus
                   value={clientSearch}
@@ -3233,7 +3235,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                           <div key={i} className="mb-1.5">
                             <div className="truncate font-bold">{String(i + 1).padStart(3, '0')} {(it.name || '').toUpperCase()}</div>
                             <div className="flex justify-between">
-                              <span>{it.quantity} {(it.unit || 'UN').toUpperCase()} × {it.price.toFixed(2).replace('.', ',')}</span>
+                              <span>{fmtQty(it.quantity, it.unit)} {(it.unit || 'UN').toUpperCase()} × {it.price.toFixed(2).replace('.', ',')}</span>
                               <span>{liquido.toFixed(2).replace('.', ',')}</span>
                             </div>
                             {(it.discount ?? 0) > 0 && (
