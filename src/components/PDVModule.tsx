@@ -3,13 +3,44 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt } from 'lucide-react';
+import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock } from 'lucide-react';
 import QRCode from 'qrcode';
-import { Product, CartItem, Payment, Sale, User, Client } from '../types';
+import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj, isValidCpfCnpj } from '../lib/masks';
+
+// Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
+// Selector cobre input/button/select/textarea/links + qualquer [tabindex] >= 0,
+// ignorando elementos desabilitados ou com tabindex="-1".
+const FOCUSABLE_SELECTOR =
+  'input:not([disabled]):not([tabindex="-1"]),button:not([disabled]):not([tabindex="-1"]),select:not([disabled]):not([tabindex="-1"]),textarea:not([disabled]):not([tabindex="-1"]),a[href]:not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])';
+
+function trapTab(e: ReactKeyboardEvent, container: HTMLElement | null) {
+  if (e.key !== 'Tab' || !container) return;
+  const focusables = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter(el => el.offsetParent !== null || el === document.activeElement);
+  if (focusables.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  const insideModal = !!active && container.contains(active);
+  if (e.shiftKey) {
+    if (!insideModal || active === first) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else {
+    if (!insideModal || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
 
 interface PDVModuleProps {
   currentUser: User;
@@ -64,9 +95,72 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   } | null>(null);
   // 0 = botão CANCELAR · 1 = botão CONFIRMAR (default — para Enter já confirmar)
   const [confirmFocusIdx, setConfirmFocusIdx] = useState<0 | 1>(1);
+  const [alertDialog, setAlertDialog] = useState<{
+    title: string;
+    message: string;
+    variant: 'warning' | 'error' | 'info';
+  } | null>(null);
+  // Sinaliza que o PIX foi confirmado pelo MaxBank — efeito reativo finaliza a venda sozinho
+  const [pixAutoFinalize, setPixAutoFinalize] = useState(false);
+  // ─── Caixa (sessão do operador) ───
+  const [cashSession, setCashSession] = useState<CashSession | null>(null);
+  const [cashSessionLoaded, setCashSessionLoaded] = useState(false);
+  const [openCashModal, setOpenCashModal] = useState(false);
+  const [openCashFundo, setOpenCashFundo] = useState('');
+  const [sangriaModal, setSangriaModal] = useState(false);
+  const [supModal, setSupModal] = useState(false);
+  const [movValor, setMovValor] = useState('');
+  const [movMotivo, setMovMotivo] = useState('');
+  const [closeCashModal, setCloseCashModal] = useState(false);
+  const [closeCashContado, setCloseCashContado] = useState('');
+  const [closeCashObs, setCloseCashObs] = useState('');
+  const [closeCashExpected, setCloseCashExpected] = useState({ fundo: 0, vendas: 0, suprimentos: 0, sangrias: 0, total: 0 });
+  // ─── Desconto + CPF na nota ───
+  const [saleDiscount, setSaleDiscount] = useState(0);    // desconto comercial no total (R$)
+  const [cpfNota, setCpfNota] = useState('');             // só dígitos
+  const [discountModal, setDiscountModal] = useState<null | { scope: 'item' | 'total'; itemId?: string }>(null);
+  const [discountInput, setDiscountInput] = useState('');
+  const [discountKind, setDiscountKind] = useState<'reais' | 'percent'>('reais');
+  const [cpfModalOpen, setCpfModalOpen] = useState(false);
+  const [cpfInput, setCpfInput] = useState('');
+  // ─── Consulta de preço (F7) ───
+  const [priceQueryOpen, setPriceQueryOpen] = useState(false);
+  const [priceQueryTerm, setPriceQueryTerm] = useState('');
+  // ─── Cancelar item específico ───
+  const [cancelItemId, setCancelItemId] = useState<string | null>(null);
+  // Cliente vinculado em qualquer venda (não só fiado). Sobrescrito pelo fiado se houver.
+  const [linkedClient, setLinkedClient] = useState<Client | null>(null);
+  // Modo do clientPicker: 'fiado' (caminho antigo) ou 'link' (vincular avulso)
+  const [clientPickerMode, setClientPickerMode] = useState<'fiado' | 'link'>('fiado');
+  // Reimpressão do último cupom
+  const [reprintSale, setReprintSale] = useState<Sale | null>(null);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
+  // Beeps do PDV — pré-carregados como elementos Audio (HTMLAudioElement reaproveita o buffer)
+  const beepScanRef = useRef<HTMLAudioElement | null>(null);
+  const beepFinalizeRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const scan = new Audio('/sounds/kaching.mp3');
+    scan.preload = 'auto';
+    scan.volume = 0.8;
+    beepScanRef.current = scan;
+    const finalize = new Audio('/sounds/freesound_community-store-scanner-beep-90395.mp3');
+    finalize.preload = 'auto';
+    finalize.volume = 0.9;
+    beepFinalizeRef.current = finalize;
+  }, []);
+
+  const playBeep = (which: 'scan' | 'finalize') => {
+    const a = which === 'scan' ? beepScanRef.current : beepFinalizeRef.current;
+    if (!a) return;
+    try {
+      a.currentTime = 0;
+      const p = a.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch { /* autoplay/policy — silencia */ }
+  };
 
   useEffect(() => {
     if (!classicMsg) return;
@@ -80,6 +174,26 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     const t = setTimeout(() => partialAmountRef.current?.focus(), 60);
     return () => clearTimeout(t);
   }, [checkoutMode]);
+
+  // Carrega sessão de caixa aberta do operador ao entrar no PDV
+  useEffect(() => {
+    let active = true;
+    Storage.getOpenSession(currentUser.id)
+      .then(s => {
+        if (!active) return;
+        setCashSession(s);
+        if (!s) {
+          setOpenCashFundo(maskCurrency(0));
+          setOpenCashModal(true);
+        }
+      })
+      .catch(err => {
+        if (!active) return;
+        showAlert({ title: 'Erro ao carregar caixa', message: err?.message ?? String(err), variant: 'error' });
+      })
+      .finally(() => { if (active) setCashSessionLoaded(true); });
+    return () => { active = false; };
+  }, [currentUser.id]);
 
   useEffect(() => {
     let active = true;
@@ -108,7 +222,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       const currentQty = existing ? existing.quantity : 0;
       const newQty = currentQty + qty;
       if (product.controlStock !== false && product.stock < newQty) {
-        alert(`Estoque insuficiente para "${product.name}". Disponível: ${product.stock}`);
+        showAlert({
+          title: 'Estoque Insuficiente',
+          message: `"${product.name}" — disponível: ${product.stock}.`,
+          variant: 'warning',
+        });
         stockOK = false;
         return prev;
       }
@@ -119,7 +237,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       }
       return [...prev, { ...product, quantity: qty }];
     });
-    if (stockOK) setLastAdded({ ...product, quantity: qty });
+    if (stockOK) {
+      setLastAdded({ ...product, quantity: qty });
+      playBeep('scan');
+    }
   };
 
   const removeFromCart = (id: string) => {
@@ -150,11 +271,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     let code = raw;
     const star = raw.search(/[*xX]/);
     if (star > 0) {
-      const qStr = raw.slice(0, star);
+      const qStr = raw.slice(0, star).replace(',', '.');
       const cStr = raw.slice(star + 1).trim();
-      const parsed = parseInt(qStr, 10);
+      // Aceita decimal (peso) — ex.: 0.350*EAN ou 1,5*EAN
+      const parsed = parseFloat(qStr);
       if (!isNaN(parsed) && parsed > 0 && cStr) {
-        qty = parsed;
+        qty = parseFloat(parsed.toFixed(3));
         code = cStr;
       }
     }
@@ -177,6 +299,28 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setClassicCode('');
       setClassicSuggestionIdx(-1);
       return;
+    }
+    // EAN-13 de balança: prefixo "2" + 6 dígitos do código + 5 dígitos (peso em g ou valor em centavos) + 1 dígito verificador.
+    // Casamos pelo prefixo de 7 chars do EAN cadastrado. Unidade KG/G → 5 dígitos = gramas; outros → 5 dígitos = preço em centavos.
+    if (/^2\d{12}$/.test(code)) {
+      const prefix = code.slice(0, 7);
+      const scaleProduct = products.find(p => (p.ean13 || '').slice(0, 7) === prefix);
+      const embedded = parseInt(code.slice(7, 12), 10);
+      if (scaleProduct && !isNaN(embedded) && embedded > 0) {
+        const unit = (scaleProduct.unit || '').toUpperCase();
+        let scaleQty = qty;
+        if (unit === 'KG' || unit === 'G') {
+          scaleQty = parseFloat((embedded / 1000).toFixed(3)); // gramas → kg
+        } else if (scaleProduct.price > 0) {
+          const valor = embedded / 100; // centavos → reais
+          scaleQty = parseFloat((valor / scaleProduct.price).toFixed(3));
+        }
+        addToCart(scaleProduct, scaleQty);
+        setClassicMsg(null);
+        setClassicCode('');
+        setClassicSuggestionIdx(-1);
+        return;
+      }
     }
     // Fallback: se houver sugestões por nome, usa a primeira
     if (classicSuggestions.length > 0) {
@@ -204,9 +348,245 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setConfirmFocusIdx(1);
   };
 
+  // Card de aviso/erro (substitui alert() nativo do navegador)
+  const showAlert = (opts: { title: string; message: string; variant?: 'warning' | 'error' | 'info' }) => {
+    setAlertDialog({ title: opts.title, message: opts.message, variant: opts.variant ?? 'warning' });
+  };
+
+  // ─── Caixa: handlers ─────────────────────────────────────
+  const confirmOpenCashSession = async () => {
+    const fundo = parseCurrencyToNumber(openCashFundo);
+    if (fundo < 0) {
+      showAlert({ title: 'Fundo inválido', message: 'O fundo de troco não pode ser negativo.', variant: 'warning' });
+      return;
+    }
+    try {
+      const s = await Storage.openCashSession(currentUser.id, fundo);
+      setCashSession(s);
+      setOpenCashModal(false);
+      setOpenCashFundo('');
+    } catch (err: any) {
+      showAlert({
+        title: 'Erro ao abrir caixa',
+        message: err?.message ?? String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  const openSangriaModal = () => {
+    if (!cashSession) return;
+    setMovValor(maskCurrency(0));
+    setMovMotivo('');
+    setSangriaModal(true);
+  };
+
+  const openSuprimentoModal = () => {
+    if (!cashSession) return;
+    setMovValor(maskCurrency(0));
+    setMovMotivo('');
+    setSupModal(true);
+  };
+
+  const confirmCashMovement = async (tipo: 'sangria' | 'suprimento') => {
+    if (!cashSession) return;
+    const valor = parseCurrencyToNumber(movValor);
+    if (valor <= 0) {
+      showAlert({ title: 'Valor inválido', message: 'Informe um valor maior que zero.', variant: 'warning' });
+      return;
+    }
+    const motivo = movMotivo.trim();
+    if (!motivo) {
+      showAlert({ title: 'Motivo obrigatório', message: 'Descreva o motivo da movimentação para o fechamento do caixa.', variant: 'warning' });
+      return;
+    }
+    try {
+      await Storage.addCashMovement(cashSession.id, currentUser.id, tipo, valor, motivo);
+      setSangriaModal(false);
+      setSupModal(false);
+      setMovValor('');
+      setMovMotivo('');
+    } catch (err: any) {
+      showAlert({
+        title: 'Erro ao gravar movimento',
+        message: err?.message ?? String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  const startCloseCash = async () => {
+    if (!cashSession) return;
+    if (cart.length > 0 || payments.length > 0) {
+      showAlert({
+        title: 'Venda em andamento',
+        message: 'Finalize ou cancele a venda atual antes de fechar o caixa.',
+        variant: 'warning',
+      });
+      return;
+    }
+    try {
+      const [movs, vendasDinheiro] = await Promise.all([
+        Storage.getMovementsBySession(cashSession.id),
+        Storage.getCashSalesTotal(cashSession.id),
+      ]);
+      const suprimentos = movs.filter(m => m.tipo === 'suprimento').reduce((a, m) => a + m.valor, 0);
+      const sangrias = movs.filter(m => m.tipo === 'sangria').reduce((a, m) => a + m.valor, 0);
+      const expectedTotal = cashSession.fundoTroco + vendasDinheiro + suprimentos - sangrias;
+      setCloseCashExpected({
+        fundo: cashSession.fundoTroco,
+        vendas: vendasDinheiro,
+        suprimentos,
+        sangrias,
+        total: parseFloat(expectedTotal.toFixed(2)),
+      });
+      setCloseCashContado(maskCurrency(Math.round(expectedTotal * 100)));
+      setCloseCashObs('');
+      setCloseCashModal(true);
+    } catch (err: any) {
+      showAlert({
+        title: 'Erro ao calcular fechamento',
+        message: err?.message ?? String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  const confirmCloseCash = async () => {
+    if (!cashSession) return;
+    const contado = parseCurrencyToNumber(closeCashContado);
+    if (contado < 0) {
+      showAlert({ title: 'Valor inválido', message: 'O dinheiro contado não pode ser negativo.', variant: 'warning' });
+      return;
+    }
+    try {
+      await Storage.closeCashSession(cashSession.id, contado, closeCashObs.trim() || undefined);
+      setCashSession(null);
+      setCloseCashModal(false);
+      setCloseCashContado('');
+      setCloseCashObs('');
+      // Após fechar, abre o modal de abertura para o próximo turno
+      setOpenCashFundo(maskCurrency(0));
+      setOpenCashModal(true);
+    } catch (err: any) {
+      showAlert({
+        title: 'Erro ao fechar caixa',
+        message: err?.message ?? String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  // ─── CPF na nota: handlers ───────────────────────────────
+  const openCpfModal = () => {
+    setCpfInput(cpfNota ? maskCpfCnpj(cpfNota) : '');
+    setCpfModalOpen(true);
+  };
+
+  const confirmCpf = () => {
+    const digits = cpfInput.replace(/\D/g, '');
+    if (digits === '') {
+      setCpfNota('');
+      setCpfModalOpen(false);
+      return;
+    }
+    if (!isValidCpfCnpj(digits)) {
+      showAlert({
+        title: 'CPF/CNPJ inválido',
+        message: 'Digite um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.',
+        variant: 'warning',
+      });
+      return;
+    }
+    setCpfNota(digits);
+    setCpfModalOpen(false);
+  };
+
+  // ─── Desconto: handlers ──────────────────────────────────
+  const openItemDiscountModal = () => {
+    if (cart.length === 0) {
+      showAlert({ title: 'Carrinho vazio', message: 'Adicione um item antes de aplicar desconto.', variant: 'warning' });
+      return;
+    }
+    const last = cart[cart.length - 1];
+    setDiscountModal({ scope: 'item', itemId: last.id });
+    setDiscountInput(maskCurrency(0));
+    setDiscountKind('reais');
+  };
+
+  const openTotalDiscountModal = () => {
+    if (subtotal <= 0) return;
+    setDiscountModal({ scope: 'total' });
+    setDiscountInput(maskCurrency(0));
+    setDiscountKind('reais');
+  };
+
+  const confirmDiscount = () => {
+    if (!discountModal) return;
+    const raw = parseCurrencyToNumber(discountInput);
+    if (raw < 0) {
+      showAlert({ title: 'Valor inválido', message: 'Desconto não pode ser negativo.', variant: 'warning' });
+      return;
+    }
+    if (discountModal.scope === 'item' && discountModal.itemId) {
+      const it = cart.find(c => c.id === discountModal.itemId);
+      if (!it) { setDiscountModal(null); return; }
+      const bruto = it.price * it.quantity;
+      const desc = discountKind === 'percent' ? parseFloat((bruto * (raw / 100)).toFixed(2)) : raw;
+      if (desc > bruto) {
+        showAlert({ title: 'Desconto maior que o item', message: `Máximo permitido: R$ ${bruto.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
+        return;
+      }
+      setCart(prev => prev.map(c => c.id === it.id ? { ...c, discount: desc } : c));
+    } else if (discountModal.scope === 'total') {
+      const desc = discountKind === 'percent' ? parseFloat((subtotal * (raw / 100)).toFixed(2)) : raw;
+      if (desc > subtotal) {
+        showAlert({ title: 'Desconto maior que o subtotal', message: `Máximo permitido: R$ ${subtotal.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
+        return;
+      }
+      // Se já há pagamentos lançados, recalcular pode deixar pago > novo total — bloqueia
+      if (paid > 0) {
+        const newTotal = parseFloat((subtotal - desc).toFixed(2));
+        if (paid > newTotal + 0.001) {
+          showAlert({
+            title: 'Pagamentos já cobrem o novo total',
+            message: 'Remova ou edite os pagamentos lançados antes de aplicar esse desconto.',
+            variant: 'warning',
+          });
+          return;
+        }
+      }
+      setSaleDiscount(desc);
+    }
+    setDiscountModal(null);
+  };
+
+  const clearTotalDiscount = () => setSaleDiscount(0);
+  const clearItemDiscount = (id: string) =>
+    setCart(prev => prev.map(c => c.id === id ? { ...c, discount: 0 } : c));
+
+  // ─── Reimpressão do último cupom ─────────────────────────
+  const openReprintModal = async () => {
+    try {
+      const last = await Storage.getLastSaleForReprint(currentUser.id, cashSession?.id ?? null);
+      if (!last) {
+        showAlert({ title: 'Sem venda anterior', message: 'Nenhuma venda concluída por este operador para reimprimir.', variant: 'info' });
+        return;
+      }
+      setReprintSale(last);
+    } catch (err: any) {
+      showAlert({ title: 'Erro ao carregar venda', message: err?.message ?? String(err), variant: 'error' });
+    }
+  };
+
+  const printReprint = () => {
+    // Imprime apenas o conteúdo do modal — CSS print-only nas classes Tailwind print:*
+    window.print();
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
@@ -227,6 +607,9 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             setClassicCode('');
             setCheckoutMode(false);
             setCashChange(0);
+            setSaleDiscount(0);
+            setCpfNota('');
+            setLinkedClient(null);
           },
         });
       };
@@ -303,6 +686,37 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         return;
       }
 
+      // F11 — Suprimento · F12 — Sangria (só na leitura, com caixa aberto)
+      if (e.key === 'F11' || e.key === 'F12') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (!cashSession) {
+          showAlert({ title: 'Caixa fechado', message: 'Abra o caixa antes de movimentar dinheiro.', variant: 'warning' });
+          return;
+        }
+        if (e.key === 'F11') openSuprimentoModal();
+        else openSangriaModal();
+        return;
+      }
+
+      // F6 — Desconto (item na leitura, total no checkout)
+      if (e.key === 'F6') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        if (checkoutMode) openTotalDiscountModal();
+        else openItemDiscountModal();
+        return;
+      }
+
+      // F7 — Consulta de preço (qualquer tela)
+      if (e.key === 'F7') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        setPriceQueryTerm('');
+        setPriceQueryOpen(true);
+        return;
+      }
+
       // ENTER — confirma venda no checkout quando totalmente pago
       // (padrão Bematech/Linx: operador confere e aperta ENTER pra fechar)
       if (e.key === 'Enter') {
@@ -319,7 +733,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale]);
 
   const updateCartQty = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
@@ -327,14 +741,21 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       const newQty = item.quantity + delta;
       if (newQty <= 0) return item;
       if (item.controlStock !== false && newQty > item.stock) {
-        alert(`Estoque insuficiente. Disponível: ${item.stock}`);
+        showAlert({
+          title: 'Estoque Insuficiente',
+          message: `Disponível: ${item.stock}.`,
+          variant: 'warning',
+        });
         return item;
       }
       return { ...item, quantity: newQty };
     }));
   };
 
-  const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+  // Subtotal = soma de (preço × qtd − desconto do item).
+  // Total = subtotal − desconto comercial no total.
+  const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity - (item.discount ?? 0), 0);
+  const total = Math.max(0, parseFloat((subtotal - saleDiscount).toFixed(2)));
   const paid = payments.reduce((acc, p) => acc + p.amount, 0);
   const remaining = total - paid;
 
@@ -421,6 +842,9 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setClassicCode('');
         setCheckoutMode(false);
         setCashChange(0);
+        setSaleDiscount(0);
+        setCpfNota('');
+        setLinkedClient(null);
       },
     });
   };
@@ -459,13 +883,25 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const handleFiadoClick = () => {
     if (isAnyPaymentModalOpen()) return;
     if (payments.some(p => p.method === 'fiado')) {
-      alert('Já existe um pagamento em fiado nesta venda. Remova-o antes de lançar outro.');
+      showAlert({
+        title: 'Fiado já lançado',
+        message: 'Já existe um pagamento em fiado nesta venda. Remova-o antes de lançar outro.',
+        variant: 'warning',
+      });
       return;
     }
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     setPendingFiadoAmount(parseFloat(Math.min(amount, remaining).toFixed(2)));
     setClientSearch('');
+    setClientPickerMode('fiado');
+    setShowClientPicker(true);
+  };
+
+  // Vincula um cliente à venda atual sem ser fiado (programa de fidelidade etc.)
+  const openLinkClientPicker = () => {
+    setClientSearch('');
+    setClientPickerMode('link');
     setShowClientPicker(true);
   };
 
@@ -492,7 +928,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setPixQrDataUrl(dataUrl);
       setPixModalOpen(true);
     } catch (err: any) {
-      alert('Erro ao gerar QR PIX: ' + (err?.message || err));
+      showAlert({
+        title: 'Erro ao gerar PIX',
+        message: err?.message ? String(err.message) : String(err),
+        variant: 'error',
+      });
     }
   };
 
@@ -544,6 +984,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
             setPartialAmount('');
             setPixModalOpen(false);
+            setPixAutoFinalize(true);
           }
         }
       )
@@ -552,6 +993,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   }, [pixModalOpen, pixUuid, pixAmount]);
 
   const confirmFiadoClient = (client: Client) => {
+    if (clientPickerMode === 'link') {
+      setLinkedClient(client);
+      setShowClientPicker(false);
+      return;
+    }
+    // modo 'fiado'
     setPayments(prev => [...prev, {
       method: 'fiado',
       amount: pendingFiadoAmount,
@@ -586,9 +1033,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         items: cart,
         total,
         payments,
-        clientId: fiadoPayment?.clientId,
+        clientId: fiadoPayment?.clientId ?? linkedClient?.id,
         vendedorId: currentUser.id,
         status: 'completed',
+        discount: saleDiscount,
+        cpfCnpjNota: cpfNota || undefined,
       };
 
       // Finalização atômica: insere sale + items + payments, decrementa
@@ -601,11 +1050,15 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           clientId: newSale.clientId ?? null,
           vendedorId: newSale.vendedorId,
           status: newSale.status,
+          sessionId: cashSession?.id ?? null,
+          discount: saleDiscount,
+          cpfCnpjNota: cpfNota || null,
           items: newSale.items,
           payments: newSale.payments,
         },
       });
       if (rpcErr) throw rpcErr;
+      playBeep('finalize');
 
       const trocoFinal = cashChange;
       setCart([]);
@@ -614,6 +1067,9 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setLastAdded(null);
       setClassicCode('');
       setCashChange(0);
+      setSaleDiscount(0);
+      setCpfNota('');
+      setLinkedClient(null);
       if (trocoFinal > 0.001) {
         // Tela grande dedicada de troco (padrão supermercado) — depois abre agradecimento
         setChangeModal({ amount: trocoFinal });
@@ -622,11 +1078,50 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setThankYouOpen(true);
       }
     } catch (err: any) {
-      alert('Erro ao salvar venda: ' + err.message);
+      showAlert({
+        title: 'Erro ao salvar venda',
+        message: err?.message ? String(err.message) : 'Falha desconhecida ao gravar a venda.',
+        variant: 'error',
+      });
     } finally {
       setSaving(false);
     }
   };
+
+  // Cancelar item específico: ao setar cancelItemId, abre o card de confirmação
+  useEffect(() => {
+    if (!cancelItemId) return;
+    const it = cart.find(c => c.id === cancelItemId);
+    if (!it) { setCancelItemId(null); return; }
+    askConfirm({
+      title: 'CANCELAR ITEM',
+      message: `Remover "${(it.name || '').toUpperCase()}" (${it.quantity} × R$ ${it.price.toFixed(2).replace('.', ',')}) do carrinho?`,
+      confirmLabel: 'CANCELAR ITEM',
+      cancelLabel: 'VOLTAR',
+      variant: 'danger',
+      onConfirm: () => {
+        setCart(prev => prev.filter(c => c.id !== cancelItemId));
+        if (lastAdded?.id === cancelItemId) setLastAdded(null);
+        setCancelItemId(null);
+      },
+    });
+    return () => { setCancelItemId(null); };
+  }, [cancelItemId]);
+
+  // PIX auto-finalize: quando o MaxBank confirma o pagamento, se a venda estiver
+  // totalmente paga, finaliza sozinha (sem o card de confirmação manual).
+  useEffect(() => {
+    if (!pixAutoFinalize) return;
+    if (saving) return;
+    if (total <= 0) { setPixAutoFinalize(false); return; }
+    if (paid >= total - 0.001) {
+      setPixAutoFinalize(false);
+      finalizeSale();
+    } else {
+      // Pagamento parcial via PIX — não finaliza, só limpa o flag para liberar o fluxo manual
+      setPixAutoFinalize(false);
+    }
+  }, [pixAutoFinalize, paid, total, saving]);
 
   if (loading) {
     return (
@@ -714,7 +1209,36 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   Fechamento
                 </span>
               )}
+              {cashSession && (
+                <span
+                  className="hidden md:inline-flex shrink-0 px-2.5 py-1.5 rounded-md text-xs font-black uppercase tracking-wider border-2 items-center gap-1"
+                  style={{ background: '#15803d', color: 'white', borderColor: '#14532d' }}
+                  title={`Caixa aberto às ${new Date(cashSession.aberturaAt).toLocaleTimeString('pt-BR')} · Fundo R$ ${cashSession.fundoTroco.toFixed(2).replace('.', ',')}`}
+                >
+                  CAIXA ABERTO
+                </span>
+              )}
             </div>
+            {!checkoutMode && cart.length === 0 && payments.length === 0 && (
+              <button
+                onClick={openReprintModal}
+                className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
+                style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
+                title="Reimprimir o último cupom desta sessão"
+              >
+                <Receipt size={14} /> REIMPRIMIR
+              </button>
+            )}
+            {cashSession && !checkoutMode && cart.length === 0 && payments.length === 0 && (
+              <button
+                onClick={startCloseCash}
+                className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
+                style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
+                title="Fechar caixa (encerrar turno)"
+              >
+                <Lock size={14} /> FECHAR CAIXA
+              </button>
+            )}
             <button
               onClick={() => setHelpOpen(true)}
               className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-black text-xl border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
@@ -733,7 +1257,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                 {/* Items table */}
                 <div className="flex-1 flex flex-col min-w-0 border-r border-gray-300">
                   <div
-                    className="grid grid-cols-[70px_160px_1fr_80px_130px_150px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
+                    className="grid grid-cols-[70px_160px_1fr_80px_130px_150px_40px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
                     style={{ background: NAVY_DARK }}
                   >
                     <div>ITEM</div>
@@ -742,23 +1266,52 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     <div className="text-right">QTD</div>
                     <div className="text-right">UNIT R$</div>
                     <div className="text-right">TOTAL R$</div>
+                    <div></div>
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
-                    {cart.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className={`grid grid-cols-[70px_160px_1fr_80px_130px_150px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b border-gray-200 ${
-                          idx === cart.length - 1 ? 'bg-yellow-50' : ''
-                        }`}
-                      >
-                        <div className="text-gray-500">{String(idx + 1).padStart(3, '0')}</div>
-                        <div className="text-gray-500 truncate">{item.ean13 || item.ref || '—'}</div>
-                        <div className="truncate font-semibold">{(item.name || '').toUpperCase()}</div>
-                        <div className="text-right">{item.quantity}</div>
-                        <div className="text-right">{fmt(item.price)}</div>
-                        <div className="text-right font-bold">{fmt(item.price * item.quantity)}</div>
-                      </div>
-                    ))}
+                    {cart.map((item, idx) => {
+                      const bruto = item.price * item.quantity;
+                      const desc = item.discount ?? 0;
+                      const liquido = bruto - desc;
+                      return (
+                        <div
+                          key={item.id}
+                          className={`grid grid-cols-[70px_160px_1fr_80px_130px_150px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b border-gray-200 ${
+                            idx === cart.length - 1 ? 'bg-yellow-50' : ''
+                          }`}
+                        >
+                          <div className="text-gray-500">{String(idx + 1).padStart(3, '0')}</div>
+                          <div className="text-gray-500 truncate">{item.ean13 || item.ref || '—'}</div>
+                          <div className="truncate font-semibold">
+                            {(item.name || '').toUpperCase()}
+                            {desc > 0 && (
+                              <span className="ml-2 text-[11px] font-bold tracking-wider align-middle inline-flex items-center gap-1" style={{ color: RED }}>
+                                · DESC −R$ {fmt(desc)}
+                                <button
+                                  onClick={() => clearItemDiscount(item.id)}
+                                  tabIndex={-1}
+                                  className="px-1 border rounded hover:bg-red-100"
+                                  style={{ borderColor: RED }}
+                                  title="Remover desconto"
+                                >×</button>
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right">{item.quantity}</div>
+                          <div className="text-right">{fmt(item.price)}</div>
+                          <div className="text-right font-bold">{fmt(liquido)}</div>
+                          <button
+                            onClick={() => setCancelItemId(item.id)}
+                            tabIndex={-1}
+                            className="w-7 h-7 flex items-center justify-center text-white rounded hover:brightness-110 self-center justify-self-end"
+                            style={{ background: RED }}
+                            title="Cancelar este item"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -795,8 +1348,14 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">SUBTOTAL</span>
-                      <span className="tabular-nums font-bold text-gray-900">R$ {fmt(total)}</span>
+                      <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
                     </div>
+                    {(subtotal - total) > 0.001 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">DESCONTO</span>
+                        <span className="tabular-nums font-bold" style={{ color: RED }}>− R$ {fmt(subtotal - total)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -928,7 +1487,13 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   <span className="opacity-40">·</span>
                   <span><b>F9</b> / <b>Esc</b> Cancelar venda</span>
                   <span className="opacity-40">·</span>
-                  <span><b>N*EAN</b> ou <b>N×EAN</b> Quantidade</span>
+                  <span><b>N*EAN</b> ou <b>N×EAN</b> Qtd (decimal aceito: <b>0,350*EAN</b>)</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F6</b> Desconto</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F7</b> Consulta preço</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F11</b> Suprimento · <b>F12</b> Sangria</span>
                 </div>
               </div>
             </>
@@ -1211,6 +1776,31 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
                 {/* Right sidebar: totais (preços e qtd) */}
                 <div className="w-[400px] shrink-0 flex flex-col bg-gray-50">
+                  {(subtotal - total) > 0.001 && (
+                    <div className="px-5 py-3 border-b border-gray-300 bg-yellow-50">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-gray-600">SUBTOTAL</span>
+                        <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
+                      </div>
+                      <div className="flex justify-between items-baseline text-sm">
+                        <span className="text-gray-600">DESCONTO</span>
+                        <span className="tabular-nums font-bold flex items-center gap-2" style={{ color: RED }}>
+                          − R$ {fmt(subtotal - total)}
+                          {saleDiscount > 0 && (
+                            <button
+                              onClick={clearTotalDiscount}
+                              tabIndex={-1}
+                              title="Remover desconto do total"
+                              className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-red-100"
+                              style={{ borderColor: RED }}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <div className="px-5 py-4 border-b border-gray-300">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">TOTAL DA VENDA</div>
                     <div className="text-5xl font-bold tabular-nums text-gray-900">R$ {fmt(total)}</div>
@@ -1230,6 +1820,42 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                         <div className="text-3xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(cashChange)}</div>
                       </div>
                     )}
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <button
+                        onClick={openTotalDiscountModal}
+                        disabled={subtotal <= 0}
+                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50"
+                        style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
+                        title="Desconto no total (F6)"
+                      >
+                        F6 DESCONTO
+                      </button>
+                      <button
+                        onClick={openCpfModal}
+                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50"
+                        style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                        title="CPF / CNPJ na nota"
+                      >
+                        {cpfNota ? 'CPF: ' + maskCpfCnpj(cpfNota) : '+ CPF NA NOTA'}
+                      </button>
+                      <button
+                        onClick={openLinkClientPicker}
+                        className="col-span-2 py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 flex items-center justify-center gap-2"
+                        style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                        title="Vincular cliente à venda"
+                      >
+                        <Users size={12} />
+                        {linkedClient ? `CLIENTE: ${linkedClient.name.toUpperCase()}` : '+ VINCULAR CLIENTE'}
+                        {linkedClient && (
+                          <span
+                            tabIndex={-1}
+                            onClick={(e) => { e.stopPropagation(); setLinkedClient(null); }}
+                            className="ml-1 text-xs px-1 border rounded hover:bg-red-100"
+                            style={{ borderColor: RED, color: RED }}
+                          >×</span>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1444,9 +2070,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           <div
             className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60"
             onClick={(e) => { if (e.target === e.currentTarget) setHelpOpen(false); }}
-            onKeyDown={(e) => { if (e.key === 'Escape') setHelpOpen(false); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setHelpOpen(false); }
+            }}
             tabIndex={-1}
-            ref={(el) => { if (el && helpOpen) el.focus(); }}
+            ref={(el) => { if (el && helpOpen && !el.contains(document.activeElement)) el.focus(); }}
           >
             <div
               className="w-full max-w-3xl max-h-[92vh] flex flex-col bg-white border-2 shadow-2xl"
@@ -1684,7 +2313,13 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
         {/* Busca por descrição (F4) */}
         {classicSearchOpen && (
-          <div className="fixed inset-0 z-[200] flex items-start justify-center p-6 bg-black/40">
+          <div
+            className="fixed inset-0 z-[200] flex items-start justify-center p-6 bg-black/40"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setClassicSearchOpen(false); }
+            }}
+          >
             <div
               className="w-full max-w-4xl mt-12 bg-white border-2 shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}
@@ -1731,11 +2366,19 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
         {/* PIX QR — clássico */}
         {pixModalOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50">
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+            tabIndex={-1}
+            ref={(el) => { if (el && pixModalOpen && !el.contains(document.activeElement)) el.focus(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPixPayment(); }
+            }}
+          >
             <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                 <span className="font-black tracking-wide text-sm uppercase">PIX · MaxBank</span>
-                <button onClick={cancelPixPayment} className="hover:opacity-70">
+                <button onClick={cancelPixPayment} className="hover:opacity-70" tabIndex={-1}>
                   <X size={20} />
                 </button>
               </div>
@@ -1793,11 +2436,17 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
           const change = Math.max(received - due, 0);
           const short = Math.max(due - received, 0);
           return (
-            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40">
+            <div
+              className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCashModalOpen(false); }
+              }}
+            >
               <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
                 <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                   <span className="font-black tracking-wide text-sm uppercase">Pagamento em Dinheiro</span>
-                  <button onClick={() => setCashModalOpen(false)} className="text-black hover:opacity-70">
+                  <button onClick={() => setCashModalOpen(false)} className="text-black hover:opacity-70" tabIndex={-1}>
                     <X size={18} />
                   </button>
                 </div>
@@ -1810,7 +2459,6 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-2">VALOR RECEBIDO</label>
                     <input
                       autoFocus
-                      ref={(el) => { if (el) setTimeout(() => el.select(), 0); }}
                       value={cashReceived}
                       onChange={(e) => setCashReceived(maskCurrency(e.target.value))}
                       onFocus={(e) => e.currentTarget.select()}
@@ -1940,11 +2588,17 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
 
         {/* Cliente fiado — estilo clássico */}
         {showClientPicker && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40">
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setShowClientPicker(false); }
+            }}
+          >
             <div className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                 <span className="font-black tracking-wide text-sm uppercase">Cliente Fiado</span>
-                <button onClick={() => setShowClientPicker(false)} className="text-black hover:opacity-70">
+                <button onClick={() => setShowClientPicker(false)} className="text-black hover:opacity-70" tabIndex={-1}>
                   <X size={18} />
                 </button>
               </div>
@@ -2091,6 +2745,678 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             </div>
           </div>
         )}
+
+        {/* ─── Abertura de Caixa ─── */}
+        {openCashModal && (
+          <div
+            className="fixed inset-0 z-[350] flex items-center justify-center p-4 bg-black/70"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmOpenCashSession(); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && openCashModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-4 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div className="px-5 py-3 text-white" style={{ background: NAVY_DARK }}>
+                <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Início de turno</div>
+                <div className="text-2xl font-black tracking-wide mt-0.5">ABERTURA DE CAIXA</div>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-gray-700">
+                  Operador: <b>{currentUser.name.toUpperCase()}</b>
+                </p>
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  Informe o <b>fundo de troco</b> que está entrando no caixa agora. No fechamento o sistema soma vendas em dinheiro, suprimentos e desconta sangrias para conferir com a contagem física.
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">FUNDO DE TROCO (R$)</label>
+                  <input
+                    autoFocus
+                    value={openCashFundo}
+                    onChange={(e) => setOpenCashFundo(maskCurrency(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <button
+                  onClick={confirmOpenCashSession}
+                  className="w-full py-3 text-white text-base font-black uppercase tracking-wide ring-4 ring-offset-2 ring-green-300"
+                  style={{ background: MONEY }}
+                >
+                  ABRIR CAIXA (Enter)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Sangria ─── */}
+        {sangriaModal && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSangriaModal(false); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && sangriaModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: RED }}>
+              <div className="px-4 py-2.5 flex items-center gap-2 text-white" style={{ background: RED }}>
+                <ArrowUpCircle size={18} />
+                <span className="font-black tracking-wide text-sm uppercase">Sangria — saída de dinheiro</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-xs text-gray-600">
+                  Retirar dinheiro do caixa (passa do limite, leva pro cofre, paga fornecedor à vista, etc.).
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR (R$)</label>
+                  <input
+                    autoFocus
+                    value={movValor}
+                    onChange={(e) => setMovValor(maskCurrency(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">MOTIVO</label>
+                  <input
+                    value={movMotivo}
+                    onChange={(e) => setMovMotivo(e.target.value)}
+                    placeholder="Ex.: levado ao cofre, pagamento fornecedor X"
+                    className="w-full bg-white border-2 text-sm text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af' }}
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setSangriaModal(false)}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={() => confirmCashMovement('sangria')}
+                    className="flex-1 px-4 py-3 text-white font-bold"
+                    style={{ background: RED }}
+                  >
+                    REGISTRAR SANGRIA
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Suprimento ─── */}
+        {supModal && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSupModal(false); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && supModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}>
+              <div className="px-4 py-2.5 flex items-center gap-2 text-white" style={{ background: MONEY }}>
+                <ArrowDownCircle size={18} />
+                <span className="font-black tracking-wide text-sm uppercase">Suprimento — entrada de dinheiro</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-xs text-gray-600">
+                  Adicionar dinheiro ao caixa (reforço de troco, recebimento avulso, etc.).
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR (R$)</label>
+                  <input
+                    autoFocus
+                    value={movValor}
+                    onChange={(e) => setMovValor(maskCurrency(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">MOTIVO</label>
+                  <input
+                    value={movMotivo}
+                    onChange={(e) => setMovMotivo(e.target.value)}
+                    placeholder="Ex.: reforço de troco, recebimento avulso"
+                    className="w-full bg-white border-2 text-sm text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af' }}
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setSupModal(false)}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={() => confirmCashMovement('suprimento')}
+                    className="flex-1 px-4 py-3 text-white font-bold"
+                    style={{ background: MONEY }}
+                  >
+                    REGISTRAR SUPRIMENTO
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Fechamento de Caixa ─── */}
+        {closeCashModal && (() => {
+          const contado = parseCurrencyToNumber(closeCashContado);
+          const diff = parseFloat((contado - closeCashExpected.total).toFixed(2));
+          return (
+            <div
+              className="fixed inset-0 z-[350] flex items-center justify-center p-4 bg-black/70"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCloseCashModal(false); }
+                else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && closeCashModal && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div className="bg-white border-4 max-w-lg w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+                <div className="px-5 py-3 text-white" style={{ background: NAVY_DARK }}>
+                  <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Fim de turno</div>
+                  <div className="text-2xl font-black tracking-wide mt-0.5">FECHAMENTO DE CAIXA</div>
+                </div>
+                <div className="p-5 space-y-3">
+                  <div className="border-2 border-gray-300 rounded">
+                    <div className="grid grid-cols-2 px-3 py-1.5 text-sm border-b border-gray-200">
+                      <span className="text-gray-600">Fundo de troco</span>
+                      <span className="text-right tabular-nums font-bold">R$ {fmt(closeCashExpected.fundo)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 px-3 py-1.5 text-sm border-b border-gray-200">
+                      <span className="text-gray-600">+ Vendas em dinheiro</span>
+                      <span className="text-right tabular-nums font-bold" style={{ color: MONEY }}>R$ {fmt(closeCashExpected.vendas)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 px-3 py-1.5 text-sm border-b border-gray-200">
+                      <span className="text-gray-600">+ Suprimentos</span>
+                      <span className="text-right tabular-nums font-bold" style={{ color: MONEY }}>R$ {fmt(closeCashExpected.suprimentos)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 px-3 py-1.5 text-sm border-b border-gray-200">
+                      <span className="text-gray-600">− Sangrias</span>
+                      <span className="text-right tabular-nums font-bold" style={{ color: RED }}>R$ {fmt(closeCashExpected.sangrias)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 px-3 py-2 text-base bg-gray-50">
+                      <span className="font-black uppercase tracking-wide">Esperado em caixa</span>
+                      <span className="text-right tabular-nums font-black">R$ {fmt(closeCashExpected.total)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">DINHEIRO CONTADO (R$)</label>
+                    <input
+                      autoFocus
+                      value={closeCashContado}
+                      onChange={(e) => setCloseCashContado(maskCurrency(e.target.value))}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                    />
+                  </div>
+                  <div
+                    className="px-3 py-2 border-2 rounded text-sm font-bold flex justify-between items-baseline"
+                    style={{
+                      borderColor: Math.abs(diff) < 0.005 ? MONEY : RED,
+                      background: Math.abs(diff) < 0.005 ? '#dcfce7' : '#fee2e2',
+                      color: Math.abs(diff) < 0.005 ? MONEY : RED,
+                    }}
+                  >
+                    <span>{Math.abs(diff) < 0.005 ? 'BATEU' : (diff > 0 ? 'SOBRA' : 'FALTA')}</span>
+                    <span className="tabular-nums">R$ {fmt(Math.abs(diff))}</span>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">OBSERVAÇÃO (opcional)</label>
+                    <input
+                      value={closeCashObs}
+                      onChange={(e) => setCloseCashObs(e.target.value)}
+                      placeholder="Ex.: troco devolvido a maior, conferido pela gerente"
+                      className="w-full bg-white border-2 text-sm text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                      style={{ borderColor: '#9ca3af' }}
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={() => setCloseCashModal(false)}
+                      className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                      style={{ borderColor: '#9ca3af' }}
+                    >
+                      CANCELAR
+                    </button>
+                    <button
+                      onClick={confirmCloseCash}
+                      className="flex-1 px-4 py-3 text-white font-bold"
+                      style={{ background: NAVY_DARK }}
+                    >
+                      FECHAR CAIXA
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ─── CPF/CNPJ na nota ─── */}
+        {cpfModalOpen && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCpfModalOpen(false); }
+              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmCpf(); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && cpfModalOpen && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div className="px-4 py-2.5 text-white" style={{ background: NAVY_DARK }}>
+                <span className="font-black tracking-wide text-sm uppercase">CPF / CNPJ na nota</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-xs text-gray-600">
+                  Informe CPF (11 dígitos) ou CNPJ (14 dígitos). Deixe vazio e confirme para remover.
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">DOCUMENTO</label>
+                  <input
+                    autoFocus
+                    value={cpfInput}
+                    onChange={(e) => setCpfInput(maskCpfCnpj(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    placeholder="000.000.000-00"
+                    className="w-full bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setCpfModalOpen(false)}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={confirmCpf}
+                    className="flex-1 px-4 py-3 text-white font-bold"
+                    style={{ background: NAVY_DARK }}
+                  >
+                    CONFIRMAR
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Desconto (item ou total) ─── */}
+        {discountModal && (() => {
+          const isItem = discountModal.scope === 'item';
+          const it = isItem && discountModal.itemId ? cart.find(c => c.id === discountModal.itemId) : null;
+          const base = isItem ? (it ? it.price * it.quantity : 0) : subtotal;
+          const raw = parseCurrencyToNumber(discountInput);
+          const calc = discountKind === 'percent' ? parseFloat((base * (raw / 100)).toFixed(2)) : raw;
+          const newSubtotal = Math.max(0, base - calc);
+          return (
+            <div
+              className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setDiscountModal(null); }
+                else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmDiscount(); }
+                else if (e.key === '%') { e.preventDefault(); e.stopPropagation(); setDiscountKind('percent'); }
+                else if (e.key === '$') { e.preventDefault(); e.stopPropagation(); setDiscountKind('reais'); }
+                else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && discountModal && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#b8860b' }}>
+                <div className="px-4 py-2.5 text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
+                  <span className="font-black tracking-wide text-sm uppercase">
+                    Desconto — {isItem ? `Item: ${(it?.name ?? '').toUpperCase()}` : 'Total da venda'}
+                  </span>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">{isItem ? 'Valor do item' : 'Subtotal'}</span>
+                    <span className="font-bold tabular-nums">R$ {fmt(base)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDiscountKind('reais')}
+                      className={`py-2 text-sm font-black uppercase tracking-wider border-2 transition ${
+                        discountKind === 'reais'
+                          ? 'text-white border-gray-900 shadow-lg'
+                          : 'bg-white text-gray-700 border-gray-400 hover:bg-gray-100'
+                      }`}
+                      style={discountKind === 'reais' ? { background: NAVY_DARK } : undefined}
+                    >
+                      R$ (Reais)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDiscountKind('percent')}
+                      className={`py-2 text-sm font-black uppercase tracking-wider border-2 transition ${
+                        discountKind === 'percent'
+                          ? 'text-white border-gray-900 shadow-lg'
+                          : 'bg-white text-gray-700 border-gray-400 hover:bg-gray-100'
+                      }`}
+                      style={discountKind === 'percent' ? { background: NAVY_DARK } : undefined}
+                    >
+                      % (Percentual)
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">
+                      {discountKind === 'percent' ? 'PERCENTUAL (0–100)' : 'VALOR (R$)'}
+                    </label>
+                    <input
+                      autoFocus
+                      value={discountInput}
+                      onChange={(e) => setDiscountInput(maskCurrency(e.target.value))}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                    />
+                  </div>
+                  <div className="border-2 border-gray-300 rounded">
+                    <div className="grid grid-cols-2 px-3 py-1.5 text-sm border-b border-gray-200">
+                      <span className="text-gray-600">Desconto</span>
+                      <span className="text-right tabular-nums font-bold" style={{ color: RED }}>− R$ {fmt(calc)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 px-3 py-2 text-base bg-gray-50">
+                      <span className="font-black uppercase tracking-wide">{isItem ? 'Novo total do item' : 'Novo total da venda'}</span>
+                      <span className="text-right tabular-nums font-black" style={{ color: MONEY }}>R$ {fmt(newSubtotal)}</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={() => setDiscountModal(null)}
+                      className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                      style={{ borderColor: '#9ca3af' }}
+                    >
+                      CANCELAR
+                    </button>
+                    <button
+                      onClick={confirmDiscount}
+                      disabled={calc <= 0 || calc > base + 0.001}
+                      className="flex-1 px-4 py-3 text-white font-bold disabled:opacity-30"
+                      style={{ background: NAVY_DARK }}
+                    >
+                      APLICAR DESCONTO
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ─── Reimpressão do último cupom ─── */}
+        {reprintSale && (() => {
+          const s = reprintSale;
+          const itemsSubtotal = s.items.reduce((a, it) => a + it.price * it.quantity - (it.discount ?? 0), 0);
+          return (
+            <>
+              <style>{`@media print {
+                body * { visibility: hidden !important; }
+                #pdv-reprint-receipt, #pdv-reprint-receipt * { visibility: visible !important; }
+                #pdv-reprint-receipt {
+                  position: fixed !important;
+                  inset: 0 !important;
+                  background: white !important;
+                  padding: 16px !important;
+                  font-family: 'Consolas', 'Courier New', monospace !important;
+                  font-size: 12px !important;
+                  color: black !important;
+                  z-index: 99999 !important;
+                  max-width: 320px !important;
+                }
+                .no-print { display: none !important; }
+              }`}</style>
+              <div
+                className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 no-print"
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setReprintSale(null); }
+                  else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+                }}
+                tabIndex={-1}
+                ref={(el) => { if (el && reprintSale && !el.contains(document.activeElement)) el.focus(); }}
+              >
+                <div className="bg-white border-2 max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl" style={{ borderColor: NAVY_DARK }}>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-white no-print" style={{ background: NAVY_DARK }}>
+                    <span className="font-black tracking-wide text-sm uppercase">Reimpressão · Última venda</span>
+                    <button onClick={() => setReprintSale(null)} tabIndex={-1} className="hover:opacity-70">
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <div id="pdv-reprint-receipt" className="flex-1 overflow-y-auto custom-scrollbar p-4" style={{ fontFamily: 'Consolas, "Courier New", monospace' }}>
+                    <div className="text-center mb-2">
+                      <div className="text-base font-black tracking-wide">MAXPOS</div>
+                      <div className="text-[10px] tracking-widest">— CUPOM NÃO FISCAL —</div>
+                    </div>
+                    <div className="border-t border-b border-dashed border-gray-400 py-1 text-[11px] mb-2 space-y-0.5">
+                      <div>Operador: {currentUser.name.toUpperCase()}</div>
+                      <div>Data: {new Date(s.date).toLocaleString('pt-BR')}</div>
+                      <div>Venda: {s.id.slice(0, 8).toUpperCase()}</div>
+                      {s.cpfCnpjNota && <div>CPF/CNPJ: {maskCpfCnpj(s.cpfCnpjNota)}</div>}
+                    </div>
+                    <div className="text-[11px]">
+                      {s.items.map((it, i) => {
+                        const bruto = it.price * it.quantity;
+                        const liquido = bruto - (it.discount ?? 0);
+                        return (
+                          <div key={i} className="mb-1.5">
+                            <div className="truncate font-bold">{String(i + 1).padStart(3, '0')} {(it.name || '').toUpperCase()}</div>
+                            <div className="flex justify-between">
+                              <span>{it.quantity} {(it.unit || 'UN').toUpperCase()} × {it.price.toFixed(2).replace('.', ',')}</span>
+                              <span>{liquido.toFixed(2).replace('.', ',')}</span>
+                            </div>
+                            {(it.discount ?? 0) > 0 && (
+                              <div className="flex justify-between text-[10px]">
+                                <span>  Desconto</span>
+                                <span>-{(it.discount ?? 0).toFixed(2).replace('.', ',')}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
+                      <div className="flex justify-between">
+                        <span>Subtotal</span>
+                        <span>R$ {itemsSubtotal.toFixed(2).replace('.', ',')}</span>
+                      </div>
+                      {(s.discount ?? 0) > 0 && (
+                        <div className="flex justify-between">
+                          <span>Desconto venda</span>
+                          <span>-{(s.discount ?? 0).toFixed(2).replace('.', ',')}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-sm font-black">
+                        <span>TOTAL</span>
+                        <span>R$ {s.total.toFixed(2).replace('.', ',')}</span>
+                      </div>
+                    </div>
+                    <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
+                      <div className="font-bold">FORMAS DE PAGAMENTO</div>
+                      {s.payments.map((p, i) => {
+                        const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale' };
+                        const label = (labels[p.method] ?? p.method) +
+                          (p.installments && p.installments > 1 ? ` ${p.installments}x` : '');
+                        return (
+                          <div key={i} className="flex justify-between">
+                            <span>{label}</span>
+                            <span>R$ {p.amount.toFixed(2).replace('.', ',')}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="text-center text-[10px] mt-3 tracking-widest">
+                      *** OBRIGADO ***
+                    </div>
+                  </div>
+                  <div className="px-4 py-3 flex gap-3 border-t border-gray-300 bg-gray-50 no-print">
+                    <button
+                      onClick={() => setReprintSale(null)}
+                      className="flex-1 px-4 py-2 border-2 text-gray-700 font-bold hover:bg-gray-100"
+                      style={{ borderColor: '#9ca3af' }}
+                    >
+                      FECHAR
+                    </button>
+                    <button
+                      onClick={printReprint}
+                      className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
+                      style={{ background: NAVY_DARK }}
+                    >
+                      <Receipt size={16} /> IMPRIMIR
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          );
+        })()}
+
+        {/* ─── Consulta de Preço (F7) ─── */}
+        {priceQueryOpen && (() => {
+          const term = priceQueryTerm.trim();
+          const found = term.length === 0 ? [] : products.filter(p =>
+            (p.name || '').toLowerCase().includes(term.toLowerCase()) ||
+            (p.ean13 || '').includes(term) ||
+            (p.ref || '').toLowerCase().includes(term.toLowerCase())
+          ).slice(0, 8);
+          return (
+            <div
+              className="fixed inset-0 z-[200] flex items-start justify-center p-6 bg-black/40"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setPriceQueryOpen(false); }
+                else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && priceQueryOpen && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div className="w-full max-w-3xl mt-12 bg-white border-2 shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+                <div className="px-4 py-2.5 flex items-center justify-between text-white" style={{ background: NAVY_DARK }}>
+                  <span className="font-black tracking-wide text-sm uppercase">F7 · Consulta de Preço</span>
+                  <button
+                    onClick={() => setPriceQueryOpen(false)}
+                    className="text-xs font-bold px-2 py-1 border border-white/40 hover:bg-white/10"
+                  >
+                    FECHAR (Esc)
+                  </button>
+                </div>
+                <div className="p-4">
+                  <input
+                    autoFocus
+                    value={priceQueryTerm}
+                    onChange={(e) => setPriceQueryTerm(e.target.value)}
+                    placeholder="Bipe ou digite EAN, REF ou nome do produto"
+                    className="w-full bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  <div className="mt-3 border border-gray-300 max-h-[55vh] overflow-y-auto custom-scrollbar">
+                    {term.length === 0 ? (
+                      <div className="py-10 text-center text-gray-400 text-sm">Digite ou bipe para consultar — nada é adicionado ao carrinho.</div>
+                    ) : found.length === 0 ? (
+                      <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto encontrado.</div>
+                    ) : found.map((p) => (
+                      <div
+                        key={p.id}
+                        className="grid grid-cols-[140px_1fr_140px_120px] gap-3 px-4 py-3 text-sm border-b border-gray-200 hover:bg-yellow-50"
+                      >
+                        <span className="tabular-nums text-gray-500 truncate">{p.ref || p.ean13 || '—'}</span>
+                        <span className="truncate font-bold text-gray-900">{(p.name || '').toUpperCase()}</span>
+                        <span className="text-gray-600 text-xs">
+                          {(p.controlStock ?? true)
+                            ? <>Estoque: <b className={p.stock <= 0 ? 'text-red-700' : ''}>{p.stock}</b></>
+                            : <span className="text-gray-400">Sem controle</span>}
+                        </span>
+                        <span className="text-right font-bold tabular-nums text-2xl" style={{ color: MONEY }}>R$ {fmt(p.price)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Card de aviso/erro — substitui alert() nativo do navegador */}
+        {alertDialog && (() => {
+          const palette = alertDialog.variant === 'error'
+            ? { bg: RED, border: '#7f1d1d' }
+            : alertDialog.variant === 'info'
+              ? { bg: NAVY_DARK, border: '#0c1739' }
+              : { bg: YELLOW_DARK, border: '#7a5a08' };
+          return (
+            <div
+              className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/60"
+              onClick={(e) => { if (e.target === e.currentTarget) setAlertDialog(null); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
+                  e.preventDefault(); e.stopPropagation();
+                  setAlertDialog(null);
+                } else if (e.key.length === 1 || /^F\d+$/.test(e.key)) {
+                  e.stopPropagation();
+                }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && alertDialog && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div
+                className="bg-white border-2 max-w-md w-full shadow-2xl"
+                style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: palette.bg }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div
+                  className="px-4 py-2.5 flex items-center justify-between text-white"
+                  style={{ background: palette.bg }}
+                >
+                  <span className="font-black tracking-wide text-sm uppercase">{alertDialog.title}</span>
+                </div>
+                <div className="p-5 space-y-5">
+                  <p className="text-base text-gray-800 leading-relaxed">{alertDialog.message}</p>
+                  <button
+                    type="button"
+                    autoFocus
+                    onClick={() => setAlertDialog(null)}
+                    className="w-full py-3 text-sm font-black uppercase tracking-wide border-2 text-white ring-4 ring-offset-2 ring-blue-300 shadow-lg"
+                    style={{ background: palette.bg, borderColor: palette.border }}
+                  >
+                    OK (Enter)
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }

@@ -72,3 +72,47 @@ export const formatBRL = (n: number | null | undefined): string => {
   const v = typeof n === 'number' && !isNaN(n) ? n : 0;
   return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
+
+/** Aplica máscara CPF (000.000.000-00) ou CNPJ (00.000.000/0000-00) conforme nº de dígitos. */
+export const maskCpfCnpj = (value: string): string => {
+  const digits = value.replace(/\D/g, '').slice(0, 14);
+  if (digits.length <= 11) return maskCPF(digits);
+  return maskCNPJ(digits);
+};
+
+/** Valida CPF (11 dígitos com dígitos verificadores corretos). */
+const isValidCPF = (d: string): boolean => {
+  if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(d[i]) * (10 - i);
+  let dv1 = (sum * 10) % 11;
+  if (dv1 === 10) dv1 = 0;
+  if (dv1 !== parseInt(d[9])) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(d[i]) * (11 - i);
+  let dv2 = (sum * 10) % 11;
+  if (dv2 === 10) dv2 = 0;
+  return dv2 === parseInt(d[10]);
+};
+
+/** Valida CNPJ (14 dígitos com dígitos verificadores corretos). */
+const isValidCNPJ = (d: string): boolean => {
+  if (d.length !== 14 || /^(\d)\1+$/.test(d)) return false;
+  const calc = (slice: string, weights: number[]) => {
+    let sum = 0;
+    for (let i = 0; i < weights.length; i++) sum += parseInt(slice[i]) * weights[i];
+    const mod = sum % 11;
+    return mod < 2 ? 0 : 11 - mod;
+  };
+  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  return calc(d.slice(0, 12), w1) === parseInt(d[12]) && calc(d.slice(0, 13), w2) === parseInt(d[13]);
+};
+
+/** Valida CPF (11) ou CNPJ (14). Aceita formato com máscara ou só dígitos. */
+export const isValidCpfCnpj = (value: string): boolean => {
+  const d = value.replace(/\D/g, '');
+  if (d.length === 11) return isValidCPF(d);
+  if (d.length === 14) return isValidCNPJ(d);
+  return false;
+};

@@ -560,3 +560,293 @@ REVOKE ALL ON FUNCTION public.confirmar_pix_pendente(UUID) FROM public;
 GRANT EXECUTE ON FUNCTION public.confirmar_pix_pendente(UUID)
   TO anon, authenticated;
 -- ============================================================
+
+-- ============================================================
+-- CAIXA (sessão de turno do operador + movimentos sangria/suprimento)
+-- ============================================================
+-- Sessão de caixa: aberta com fundo de troco, fechada com contagem física.
+-- Cada operador pode ter no máximo UMA sessão aberta por vez.
+CREATE TABLE IF NOT EXISTS cash_sessions (
+  id                TEXT PRIMARY KEY,
+  "operadorId"     TEXT NOT NULL,
+  "aberturaAt"     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "fundoTroco"     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  "fechamentoAt"   TIMESTAMPTZ,
+  "dinheiroContado" NUMERIC(12,2),
+  observacao        TEXT,
+  status            TEXT NOT NULL DEFAULT 'aberto',
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Garante 1 sessão aberta por operador (índice parcial)
+CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_one_open_per_operator
+  ON cash_sessions ("operadorId")
+  WHERE status = 'aberto';
+
+CREATE INDEX IF NOT EXISTS cash_sessions_status_idx
+  ON cash_sessions (status, "aberturaAt" DESC);
+
+-- Movimentos: sangria (saída de dinheiro) ou suprimento (entrada extra)
+CREATE TABLE IF NOT EXISTS cash_movements (
+  id             TEXT PRIMARY KEY,
+  "sessionId"   TEXT NOT NULL REFERENCES cash_sessions(id) ON DELETE CASCADE,
+  tipo           TEXT NOT NULL CHECK (tipo IN ('sangria','suprimento')),
+  valor          NUMERIC(12,2) NOT NULL CHECK (valor > 0),
+  motivo         TEXT NOT NULL DEFAULT '',
+  "operadorId"  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS cash_movements_session_idx
+  ON cash_movements ("sessionId", created_at);
+
+-- Vincular venda à sessão (coluna opcional para retrocompat com vendas antigas)
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS "sessionId" TEXT;
+CREATE INDEX IF NOT EXISTS sales_session_idx ON sales ("sessionId");
+
+-- RLS
+ALTER TABLE cash_sessions  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cash_movements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "auth_all" ON cash_sessions;
+DROP POLICY IF EXISTS "auth_all" ON cash_movements;
+CREATE POLICY "auth_all" ON cash_sessions  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_all" ON cash_movements FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- finalize_sale_atomic v2: aceita sessionId opcional, grava em sales
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.finalize_sale_atomic(p_payload JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sale_id   TEXT := p_payload->>'id';
+  v_item      JSONB;
+  v_payment   JSONB;
+BEGIN
+  INSERT INTO sales (id, date, total, "clientId", "vendedorId", status, "sessionId")
+  VALUES (
+    v_sale_id,
+    (p_payload->>'date')::TIMESTAMPTZ,
+    (p_payload->>'total')::NUMERIC,
+    p_payload->>'clientId',
+    p_payload->>'vendedorId',
+    COALESCE(p_payload->>'status', 'completed'),
+    p_payload->>'sessionId'
+  );
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
+    INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
+                            "costPrice", category, ref, unit, ean13,
+                            "controlStock", stock, "minStock")
+    VALUES (
+      v_sale_id,
+      v_item->>'id',
+      v_item->>'name',
+      (v_item->>'price')::NUMERIC,
+      (v_item->>'quantity')::INTEGER,
+      COALESCE((v_item->>'costPrice')::NUMERIC, 0),
+      COALESCE(v_item->>'category', ''),
+      COALESCE(v_item->>'ref', ''),
+      COALESCE(v_item->>'unit', 'UN'),
+      v_item->>'ean13',
+      COALESCE((v_item->>'controlStock')::BOOLEAN, true),
+      COALESCE((v_item->>'stock')::INTEGER, 0),
+      COALESCE((v_item->>'minStock')::INTEGER, 0)
+    );
+
+    IF COALESCE((v_item->>'controlStock')::BOOLEAN, true) THEN
+      UPDATE products
+         SET stock = GREATEST(0, stock - (v_item->>'quantity')::INTEGER)
+       WHERE id = v_item->>'id';
+    END IF;
+  END LOOP;
+
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payload->'payments') LOOP
+    INSERT INTO sale_payments ("saleId", method, amount, installments, "clientId")
+    VALUES (
+      v_sale_id,
+      v_payment->>'method',
+      (v_payment->>'amount')::NUMERIC,
+      NULLIF(v_payment->>'installments', '')::INTEGER,
+      v_payment->>'clientId'
+    );
+
+    IF v_payment->>'method' = 'fiado' AND v_payment->>'clientId' IS NOT NULL THEN
+      UPDATE clients
+         SET balance = balance - (v_payment->>'amount')::NUMERIC
+       WHERE id = v_payment->>'clientId';
+    END IF;
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
+-- ============================================================
+
+-- ============================================================
+-- DESCONTO + CPF NA NOTA
+-- ============================================================
+ALTER TABLE sales      ADD COLUMN IF NOT EXISTS "discount"      NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE sales      ADD COLUMN IF NOT EXISTS "cpfCnpjNota"   TEXT;
+ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS "discount"      NUMERIC(12,2) NOT NULL DEFAULT 0;
+
+-- finalize_sale_atomic v3: aceita discount (item + total) e cpfCnpjNota
+CREATE OR REPLACE FUNCTION public.finalize_sale_atomic(p_payload JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sale_id   TEXT := p_payload->>'id';
+  v_item      JSONB;
+  v_payment   JSONB;
+BEGIN
+  INSERT INTO sales (id, date, total, "clientId", "vendedorId", status, "sessionId", discount, "cpfCnpjNota")
+  VALUES (
+    v_sale_id,
+    (p_payload->>'date')::TIMESTAMPTZ,
+    (p_payload->>'total')::NUMERIC,
+    p_payload->>'clientId',
+    p_payload->>'vendedorId',
+    COALESCE(p_payload->>'status', 'completed'),
+    p_payload->>'sessionId',
+    COALESCE((p_payload->>'discount')::NUMERIC, 0),
+    NULLIF(p_payload->>'cpfCnpjNota','')
+  );
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
+    INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
+                            "costPrice", category, ref, unit, ean13,
+                            "controlStock", stock, "minStock", discount)
+    VALUES (
+      v_sale_id,
+      v_item->>'id',
+      v_item->>'name',
+      (v_item->>'price')::NUMERIC,
+      (v_item->>'quantity')::INTEGER,
+      COALESCE((v_item->>'costPrice')::NUMERIC, 0),
+      COALESCE(v_item->>'category', ''),
+      COALESCE(v_item->>'ref', ''),
+      COALESCE(v_item->>'unit', 'UN'),
+      v_item->>'ean13',
+      COALESCE((v_item->>'controlStock')::BOOLEAN, true),
+      COALESCE((v_item->>'stock')::INTEGER, 0),
+      COALESCE((v_item->>'minStock')::INTEGER, 0),
+      COALESCE((v_item->>'discount')::NUMERIC, 0)
+    );
+
+    IF COALESCE((v_item->>'controlStock')::BOOLEAN, true) THEN
+      UPDATE products
+         SET stock = GREATEST(0, stock - (v_item->>'quantity')::INTEGER)
+       WHERE id = v_item->>'id';
+    END IF;
+  END LOOP;
+
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payload->'payments') LOOP
+    INSERT INTO sale_payments ("saleId", method, amount, installments, "clientId")
+    VALUES (
+      v_sale_id,
+      v_payment->>'method',
+      (v_payment->>'amount')::NUMERIC,
+      NULLIF(v_payment->>'installments', '')::INTEGER,
+      v_payment->>'clientId'
+    );
+
+    IF v_payment->>'method' = 'fiado' AND v_payment->>'clientId' IS NOT NULL THEN
+      UPDATE clients
+         SET balance = balance - (v_payment->>'amount')::NUMERIC
+       WHERE id = v_payment->>'clientId';
+    END IF;
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
+-- ============================================================
+
+-- ============================================================
+-- QUANTIDADE FRACIONADA (peso/balanca)
+-- ============================================================
+ALTER TABLE sale_items ALTER COLUMN quantity TYPE NUMERIC(12,3) USING quantity::numeric;
+ALTER TABLE products   ALTER COLUMN stock    TYPE NUMERIC(12,3) USING stock::numeric;
+ALTER TABLE sale_items ALTER COLUMN stock    TYPE NUMERIC(12,3) USING stock::numeric;
+
+-- finalize_sale_atomic v4: qty/stock como NUMERIC para suportar balanca
+CREATE OR REPLACE FUNCTION public.finalize_sale_atomic(p_payload JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sale_id   TEXT := p_payload->>'id';
+  v_item      JSONB;
+  v_payment   JSONB;
+BEGIN
+  INSERT INTO sales (id, date, total, "clientId", "vendedorId", status, "sessionId", discount, "cpfCnpjNota")
+  VALUES (
+    v_sale_id,
+    (p_payload->>'date')::TIMESTAMPTZ,
+    (p_payload->>'total')::NUMERIC,
+    p_payload->>'clientId',
+    p_payload->>'vendedorId',
+    COALESCE(p_payload->>'status', 'completed'),
+    p_payload->>'sessionId',
+    COALESCE((p_payload->>'discount')::NUMERIC, 0),
+    NULLIF(p_payload->>'cpfCnpjNota','')
+  );
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
+    INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
+                            "costPrice", category, ref, unit, ean13,
+                            "controlStock", stock, "minStock", discount)
+    VALUES (
+      v_sale_id,
+      v_item->>'id',
+      v_item->>'name',
+      (v_item->>'price')::NUMERIC,
+      (v_item->>'quantity')::NUMERIC,
+      COALESCE((v_item->>'costPrice')::NUMERIC, 0),
+      COALESCE(v_item->>'category', ''),
+      COALESCE(v_item->>'ref', ''),
+      COALESCE(v_item->>'unit', 'UN'),
+      v_item->>'ean13',
+      COALESCE((v_item->>'controlStock')::BOOLEAN, true),
+      COALESCE((v_item->>'stock')::NUMERIC, 0),
+      COALESCE((v_item->>'minStock')::INTEGER, 0),
+      COALESCE((v_item->>'discount')::NUMERIC, 0)
+    );
+
+    IF COALESCE((v_item->>'controlStock')::BOOLEAN, true) THEN
+      UPDATE products
+         SET stock = GREATEST(0, stock - (v_item->>'quantity')::NUMERIC)
+       WHERE id = v_item->>'id';
+    END IF;
+  END LOOP;
+
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payload->'payments') LOOP
+    INSERT INTO sale_payments ("saleId", method, amount, installments, "clientId")
+    VALUES (
+      v_sale_id,
+      v_payment->>'method',
+      (v_payment->>'amount')::NUMERIC,
+      NULLIF(v_payment->>'installments', '')::INTEGER,
+      v_payment->>'clientId'
+    );
+
+    IF v_payment->>'method' = 'fiado' AND v_payment->>'clientId' IS NOT NULL THEN
+      UPDATE clients
+         SET balance = balance - (v_payment->>'amount')::NUMERIC
+       WHERE id = v_payment->>'clientId';
+    END IF;
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
+-- ============================================================

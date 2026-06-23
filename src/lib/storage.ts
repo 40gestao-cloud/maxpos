@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment } from '../types';
+import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement } from '../types';
 
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
@@ -349,5 +349,159 @@ export const Storage = {
 
   logout: async (): Promise<void> => {
     await supabase.auth.signOut();
+  },
+
+  // ─── Caixa: sessões + movimentos (sangria/suprimento) ────
+  getOpenSession: async (operadorId: string): Promise<CashSession | null> => {
+    const { data, error } = await supabase
+      .from('cash_sessions')
+      .select('*')
+      .eq('operadorId', operadorId)
+      .eq('status', 'aberto')
+      .order('aberturaAt', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as CashSession | null) ?? null;
+  },
+
+  openCashSession: async (operadorId: string, fundoTroco: number): Promise<CashSession> => {
+    const session: CashSession = {
+      id: crypto.randomUUID(),
+      operadorId,
+      aberturaAt: new Date().toISOString(),
+      fundoTroco,
+      status: 'aberto',
+    };
+    const { error } = await supabase.from('cash_sessions').insert(session);
+    if (error) throw error;
+    return session;
+  },
+
+  closeCashSession: async (
+    sessionId: string,
+    dinheiroContado: number,
+    observacao?: string,
+  ): Promise<void> => {
+    const { error } = await supabase
+      .from('cash_sessions')
+      .update({
+        status: 'fechado',
+        fechamentoAt: new Date().toISOString(),
+        dinheiroContado,
+        observacao: observacao ?? null,
+      })
+      .eq('id', sessionId);
+    if (error) throw error;
+  },
+
+  addCashMovement: async (
+    sessionId: string,
+    operadorId: string,
+    tipo: 'sangria' | 'suprimento',
+    valor: number,
+    motivo: string,
+  ): Promise<CashMovement> => {
+    const mov: CashMovement = {
+      id: crypto.randomUUID(),
+      sessionId,
+      tipo,
+      valor,
+      motivo,
+      operadorId,
+      createdAt: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('cash_movements').insert({
+      id: mov.id,
+      sessionId: mov.sessionId,
+      tipo: mov.tipo,
+      valor: mov.valor,
+      motivo: mov.motivo,
+      operadorId: mov.operadorId,
+    });
+    if (error) throw error;
+    return mov;
+  },
+
+  getMovementsBySession: async (sessionId: string): Promise<CashMovement[]> => {
+    const { data, error } = await supabase
+      .from('cash_movements')
+      .select('*')
+      .eq('sessionId', sessionId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map((m: any) => ({
+      id: m.id,
+      sessionId: m.sessionId,
+      tipo: m.tipo,
+      valor: Number(m.valor),
+      motivo: m.motivo ?? '',
+      operadorId: m.operadorId,
+      createdAt: m.created_at,
+    })) as CashMovement[];
+  },
+
+  // Última venda concluída pelo operador (preferindo a sessão atual, se houver)
+  getLastSaleForReprint: async (operadorId: string, sessionId?: string | null): Promise<Sale | null> => {
+    let q = supabase
+      .from('sales')
+      .select('*, sale_items(*), sale_payments(*)')
+      .eq('vendedorId', operadorId)
+      .eq('status', 'completed')
+      .order('date', { ascending: false })
+      .limit(1);
+    if (sessionId) q = q.eq('sessionId', sessionId);
+    const { data, error } = await q;
+    if (error) throw error;
+    const row: any = (data ?? [])[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      date: row.date,
+      total: Number(row.total),
+      clientId: row.clientId ?? undefined,
+      vendedorId: row.vendedorId ?? undefined,
+      status: row.status,
+      discount: Number(row.discount ?? 0),
+      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
+      items: (row.sale_items ?? []).map((item: any) => ({
+        id: item.productId ?? item.id,
+        name: item.name,
+        price: Number(item.price),
+        quantity: Number(item.quantity),
+        costPrice: Number(item.costPrice ?? 0),
+        category: item.category ?? '',
+        ref: item.ref ?? '',
+        unit: item.unit ?? 'UN',
+        ean13: item.ean13,
+        controlStock: item.controlStock ?? true,
+        stock: Number(item.stock ?? 0),
+        minStock: item.minStock ?? 0,
+        discount: Number(item.discount ?? 0),
+      })),
+      payments: (row.sale_payments ?? []).map((p: any) => ({
+        method: p.method,
+        amount: Number(p.amount),
+        installments: p.installments ?? undefined,
+        clientId: p.clientId ?? undefined,
+      })),
+    } as Sale;
+  },
+
+  // Soma de pagamentos em dinheiro das vendas vinculadas à sessão
+  getCashSalesTotal: async (sessionId: string): Promise<number> => {
+    const { data, error } = await supabase
+      .from('sales')
+      .select('id, sale_payments(method, amount)')
+      .eq('sessionId', sessionId)
+      .eq('status', 'completed');
+    if (error) throw error;
+    let total = 0;
+    for (const sale of (data ?? []) as any[]) {
+      for (const p of (sale.sale_payments ?? [])) {
+        if (p.method === 'dinheiro') total += Number(p.amount);
+      }
+    }
+    return total;
   },
 };

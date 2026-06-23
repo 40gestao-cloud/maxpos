@@ -79,15 +79,18 @@ export interface Sale {
   id: string;
   date: string;
   items: CartItem[];
-  total: number;
+  total: number;          // total final (subtotal − discount)
   payments: Payment[];
   clientId?: string;
   vendedorId?: string;
   status: 'completed' | 'cancelled';
+  discount?: number;      // desconto comercial no total da venda (R$)
+  cpfCnpjNota?: string;   // CPF (11) ou CNPJ (14) na nota — só dígitos
 }
 
 export interface CartItem extends Product {
   quantity: number;
+  discount?: number; // desconto comercial no item (R$ total, não unitário)
 }
 
 export interface Payment {
@@ -154,4 +157,27 @@ export interface CreditInstallment {
   due_date: string;
   status: 'pending' | 'paid';
   paid_at?: string;
+}
+
+// Sessão de caixa do operador — abre com fundo de troco, fecha com contagem física
+export interface CashSession {
+  id: string;
+  operadorId: string;
+  aberturaAt: string;
+  fundoTroco: number;
+  fechamentoAt?: string | null;
+  dinheiroContado?: number | null;
+  observacao?: string | null;
+  status: 'aberto' | 'fechado';
+}
+
+// Movimentos de caixa fora de venda — sangria (saída) ou suprimento (entrada)
+export interface CashMovement {
+  id: string;
+  sessionId: string;
+  tipo: 'sangria' | 'suprimento';
+  valor: number;
+  motivo: string;
+  operadorId: string;
+  createdAt: string;
 }
