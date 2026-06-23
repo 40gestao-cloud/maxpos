@@ -693,11 +693,24 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         return;
       }
 
-      // F4 / F5 — só na leitura (Subtotal → checkout)
-      if (e.key === 'F4' || e.key === 'F5') {
+      // F4 — Subtotal (leitura → checkout)
+      if (e.key === 'F4') {
         e.preventDefault();
         if (modalOpen || pickerOpen || checkoutMode) return;
         if (cart.length > 0) setCheckoutMode(true);
+        return;
+      }
+
+      // F5 — Subtotal na leitura · no checkout foca o botao DESCONTO
+      // (a partir dali, Tab anda entre DESCONTO → CPF → CLIENTE; Enter abre o modal)
+      if (e.key === 'F5') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        if (checkoutMode) {
+          document.querySelector<HTMLButtonElement>('[data-extra-action="desconto"]')?.focus();
+        } else if (cart.length > 0) {
+          setCheckoutMode(true);
+        }
         return;
       }
 
@@ -1839,27 +1852,30 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     )}
                     <div className="mt-4 grid grid-cols-2 gap-2">
                       <button
+                        data-extra-action="desconto"
                         onClick={openTotalDiscountModal}
                         disabled={subtotal <= 0}
-                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50"
+                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                         style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
-                        title="Desconto no total (F6)"
+                        title="Desconto no total (F6 abre direto · F5 foca aqui)"
                       >
                         F6 DESCONTO
                       </button>
                       <button
+                        data-extra-action="cpf"
                         onClick={openCpfModal}
-                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50"
+                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                         style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
                         title="CPF / CNPJ na nota"
                       >
                         {cpfNota ? 'CPF: ' + maskCpfCnpj(cpfNota) : '+ CPF NA NOTA'}
                       </button>
                       <button
+                        data-extra-action="cliente"
                         onClick={openLinkClientPicker}
-                        className="col-span-2 py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 flex items-center justify-center gap-2"
+                        className="col-span-2 py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                         style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
-                        title="Vincular cliente à venda"
+                        title="Vincular cliente a venda"
                       >
                         <Users size={12} />
                         {linkedClient ? `CLIENTE: ${linkedClient.name.toUpperCase()}` : '+ VINCULAR CLIENTE'}
@@ -1967,6 +1983,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   <span><b>F2</b> Cartão</span>
                   <span className="opacity-40">·</span>
                   <span><b>F3</b> PIX / Vale</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F5</b> Desconto/CPF/Cliente</span>
+                  <span className="opacity-40">·</span>
+                  <span><b>F6</b> Desconto direto</span>
                   <span className="opacity-40">·</span>
                   <span><b>Esc</b> Voltar</span>
                   <span className="opacity-40">·</span>
