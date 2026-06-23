@@ -759,6 +759,10 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       if (e.key === 'Enter') {
         if (!checkoutMode || modalOpen || pickerOpen || saving) return;
         if (isEditable) return; // inputs cuidam do próprio ENTER
+        // Se o foco está num botão (forma de pagamento, DESCONTO, CPF, CLIENTE,
+        // VOLTAR, etc.), deixa o navegador disparar o click nativo. Senão o
+        // Enter sequestrava a venda fechando sozinho quando ela já estava paga.
+        if (target && target.tagName === 'BUTTON') return;
         const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
         const pd = payments.reduce((a, p) => a + p.amount, 0);
         if (tot > 0 && pd >= tot - 0.001) {
