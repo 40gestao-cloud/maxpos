@@ -173,6 +173,29 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     return () => clearTimeout(t);
   }, [checkoutMode]);
 
+  // Mantém o foco no input do CÓDIGO sempre que nenhum modal/picker está aberto
+  // e a tela não é o checkout. Garante que o leitor de código de barras emita
+  // as teclas para o input certo logo após fechar qualquer modal (Abertura de
+  // Caixa, Sangria, Suprimento, Alerta, etc.) — o onBlur sozinho não pega esse
+  // caso porque o input já estava blurred antes do modal abrir.
+  useEffect(() => {
+    if (loading || checkoutMode) return;
+    const anyModalOpen = openCashModal || sangriaModal || supModal || closeCashModal ||
+      discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null ||
+      cashModalOpen || pixModalOpen || showInstallments || showClientPicker ||
+      classicSearchOpen || helpOpen || changeModal !== null || thankYouOpen ||
+      confirmDialog !== null || alertDialog !== null || cardPickerOpen || valePickerOpen;
+    if (anyModalOpen) return;
+    const t = setTimeout(() => {
+      const ae = document.activeElement;
+      if (!ae || ae === document.body) codeInputRef.current?.focus();
+    }, 30);
+    return () => clearTimeout(t);
+  }, [loading, checkoutMode, openCashModal, sangriaModal, supModal, closeCashModal,
+      discountModal, cpfModalOpen, priceQueryOpen, reprintSale, cashModalOpen,
+      pixModalOpen, showInstallments, showClientPicker, classicSearchOpen, helpOpen,
+      changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen]);
+
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
     let active = true;
