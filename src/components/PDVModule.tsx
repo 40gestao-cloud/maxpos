@@ -140,11 +140,11 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const beepFinalizeRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const scan = new Audio('/sounds/kaching.mp3');
+    const scan = new Audio('/sounds/freesound_community-store-scanner-beep-90395.mp3');
     scan.preload = 'auto';
     scan.volume = 0.8;
     beepScanRef.current = scan;
-    const finalize = new Audio('/sounds/freesound_community-store-scanner-beep-90395.mp3');
+    const finalize = new Audio('/sounds/kaching.mp3');
     finalize.preload = 'auto';
     finalize.volume = 0.9;
     beepFinalizeRef.current = finalize;
