@@ -9,7 +9,7 @@ import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj, isValidCpfCnpj } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj } from '../lib/masks';
 
 // Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
 // Selector cobre input/button/select/textarea/links + qualquer [tabindex] >= 0,
@@ -514,10 +514,12 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
       setCpfModalOpen(false);
       return;
     }
-    if (!isValidCpfCnpj(digits)) {
+    // Sistema é simulação — só exigimos o tamanho (11 = CPF, 14 = CNPJ),
+    // sem checar dígitos verificadores.
+    if (digits.length !== 11 && digits.length !== 14) {
       showAlert({
-        title: 'CPF/CNPJ inválido',
-        message: 'Digite um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.',
+        title: 'Tamanho inválido',
+        message: 'CPF tem 11 dígitos e CNPJ tem 14. Digite um dos dois.',
         variant: 'warning',
       });
       return;
