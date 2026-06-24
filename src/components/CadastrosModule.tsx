@@ -315,7 +315,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   const getAvailableRoles = (role?: UserRole): UserRole[] => {
     if (!role) return [];
     if (role === 'admin' || role === 'chairman') {
-      return ['admin', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas'];
+      return ['admin', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'operador_geral'];
     }
     if (role === 'ceo') return ['gerente_logistica', 'gerente_vendas', 'gerente_financas'];
     if (role === 'gerente_logistica') return ['colaborador_logistica'];
@@ -335,6 +335,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     colaborador_vendas: 'Colaborador Vendas',
     colaborador_atendimento: 'Colaborador Atendimento',
     colaborador_financas: 'Colaborador Finanças',
+    operador_geral: 'Operador Geral',
   };
 
   const availableRoles = getAvailableRoles(currentUser?.role);
@@ -738,22 +739,26 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   <td className="p-6 text-sm text-gray-600">{u.email}</td>
                   <td className="p-6 text-sm font-mono text-gray-600/60">{u.id}</td>
                   <td className="p-6">
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => handleEdit(u, 'equipe')}
-                        className="p-2 rounded glass-blue shimmer"
-                        title="Editar"
-                      >
-                        <Edit2 size={16} className="relative z-[2]" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Excluir"
-                      >
-                        <Trash2 size={16} className="relative z-[2]" />
-                      </button>
-                    </div>
+                    {availableRoles.length > 0 ? (
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => handleEdit(u, 'equipe')}
+                          className="p-2 rounded glass-blue shimmer"
+                          title="Editar"
+                        >
+                          <Edit2 size={16} className="relative z-[2]" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(u.id, 'equipe', u.name)}
+                          className="p-2 rounded glass-red shimmer"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} className="relative z-[2]" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400 italic">somente leitura</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1122,27 +1127,29 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </button>
             </>
           )}
-          <button
-            onClick={() => {
-              setEditingItem(null);
-              setFormData({});
-              if (subTab === 'equipe') setShowAddUser(true);
-              if (subTab === 'clientes') {
-                setFormData({ type: 'PF' });
-                setShowAddClient(true);
-              }
-              if (subTab === 'produtos') setShowAddProduct(true);
-              if (subTab === 'servicos') setShowAddService(true);
-              if (subTab === 'fornecedores') {
-                setFormData({ type: 'PF' });
-                setShowAddSupplier(true);
-              }
-            }}
-            className="bg-[#FFC107] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase shimmer border-2 border-[#B8860B]"
-          >
-            <Plus size={20} className="relative z-[2]" />
-            <span className="relative z-[2]">NOVO</span>
-          </button>
+          {!(subTab === 'equipe' && availableRoles.length === 0) && (
+            <button
+              onClick={() => {
+                setEditingItem(null);
+                setFormData({});
+                if (subTab === 'equipe') setShowAddUser(true);
+                if (subTab === 'clientes') {
+                  setFormData({ type: 'PF' });
+                  setShowAddClient(true);
+                }
+                if (subTab === 'produtos') setShowAddProduct(true);
+                if (subTab === 'servicos') setShowAddService(true);
+                if (subTab === 'fornecedores') {
+                  setFormData({ type: 'PF' });
+                  setShowAddSupplier(true);
+                }
+              }}
+              className="bg-[#FFC107] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase shimmer border-2 border-[#B8860B]"
+            >
+              <Plus size={20} className="relative z-[2]" />
+              <span className="relative z-[2]">NOVO</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1936,7 +1943,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       )}
 
       <div className="neumorphic flex flex-col min-h-[480px] relative">
-        <div className="overflow-x-auto overflow-y-auto flex-1 custom-scrollbar scroll-smooth">
+        <div className="overflow-x-auto flex-1 custom-scrollbar scroll-smooth">
           {renderTable()}
         </div>
         

@@ -69,14 +69,14 @@ export default function App() {
   };
 
   const menuItems = [
-    { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'admin'] },
-    { id: 'pdv', icon: ShoppingCart, label: 'PDV / Caixa', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
-    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'admin'] },
-    { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'admin'] },
-    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
-    { id: 'fiscal', icon: Shield, label: 'Fiscal', roles: ['chairman', 'ceo', 'admin'] },
-    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'admin'] },
-    { id: 'catalogo', icon: Globe, label: 'Catálogo Online', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
+    { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
+    { id: 'pdv', icon: ShoppingCart, label: 'PDV / Caixa', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
+    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'] },
+    { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
+    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
+    { id: 'fiscal', icon: Shield, label: 'Fiscal', roles: ['chairman', 'ceo', 'operador_geral', 'admin'] },
+    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
+    { id: 'catalogo', icon: Globe, label: 'Catálogo Online', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
     { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
   ];
 
@@ -98,7 +98,7 @@ export default function App() {
   const activeIsPDV = activeTab === 'pdv';
 
   return (
-    <div className="flex min-h-screen bg-white overflow-hidden" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+    <div className="flex h-screen bg-white overflow-hidden" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
       {/* Sidebar Overlay — mobile sempre, PDV em qualquer largura */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -215,7 +215,16 @@ export default function App() {
               className={activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'min-h-full'}
             >
               {activeTab === 'inicio' && <InicioModule currentUser={user} />}
-              {activeTab === 'pdv' && <PDVModule currentUser={user} onExitToMenu={() => setIsSidebarOpen(true)} />}
+              {activeTab === 'pdv' && (
+                <PDVModule
+                  currentUser={user}
+                  onExitToMenu={() => setIsSidebarOpen(true)}
+                  onGoToInicio={() => {
+                    setActiveTab('inicio');
+                    setIsSidebarOpen(false);
+                  }}
+                />
+              )}
               {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}
               {activeTab === 'estoque' && <EstoqueModule />}
               {activeTab === 'financeiro' && <FinanceiroModule />}

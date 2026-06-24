@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement } from '../types';
+import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry } from '../types';
 
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
@@ -486,6 +486,30 @@ export const Storage = {
         clientId: p.clientId ?? undefined,
       })),
     } as Sale;
+  },
+
+  // ─── Auditoria ───────────────────────────────────────────
+  getAuditLog: async (filters?: {
+    entityType?: string;
+    userId?: string;
+    action?: 'insert' | 'update' | 'delete';
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<AuditLogEntry[]> => {
+    let q = supabase
+      .from('audit_log')
+      .select('*')
+      .order('changed_at', { ascending: false })
+      .limit(filters?.limit ?? 200);
+    if (filters?.entityType) q = q.eq('entity_type', filters.entityType);
+    if (filters?.userId)     q = q.eq('user_id', filters.userId);
+    if (filters?.action)     q = q.eq('action', filters.action);
+    if (filters?.from)       q = q.gte('changed_at', filters.from);
+    if (filters?.to)         q = q.lte('changed_at', filters.to);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []) as AuditLogEntry[];
   },
 
   // Soma de pagamentos em dinheiro das vendas vinculadas à sessão

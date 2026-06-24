@@ -388,6 +388,10 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
+  -- Suprime auditoria por entidade (seriam milhares de inserts).
+  -- O reset em si fica registrado na sua propria entrada (abaixo).
+  PERFORM set_config('maxpos.skip_audit', 'on', true);
+
   -- Ordem respeita FKs (sale_items/sale_payments/credit_installments
   -- têm ON DELETE CASCADE, mas excluímos explicitamente por clareza)
   DELETE FROM credit_installments;
@@ -402,6 +406,19 @@ BEGIN
   DELETE FROM suppliers;
   DELETE FROM clients;
   DELETE FROM products;
+
+  -- Reativa auditoria e grava uma unica entrada-resumo do reset.
+  PERFORM set_config('maxpos.skip_audit', 'off', true);
+  INSERT INTO audit_log (
+    entity_type, entity_id, action,
+    user_id, user_name, user_email, user_role,
+    summary
+  )
+  SELECT
+    'factory_reset', NULL, 'delete',
+    p.id, p.name, p.email, p.role,
+    'Factory reset executado: todos os dados operacionais apagados'
+  FROM user_profiles p WHERE p.id = auth.uid();
 END;
 $$;
 
@@ -788,6 +805,10 @@ DECLARE
   v_item      JSONB;
   v_payment   JSONB;
 BEGIN
+  -- O INSERT em sales abaixo gera 1 entrada de auditoria (a venda em si).
+  -- A partir daqui suprimimos auditoria para os UPDATEs em products (estoque)
+  -- e clients (saldo fiado): sao consequencias automaticas da venda, ja
+  -- rastreaveis a partir do registro da venda + sale_items.
   INSERT INTO sales (id, date, total, "clientId", "vendedorId", status, "sessionId", discount, "cpfCnpjNota")
   VALUES (
     v_sale_id,
@@ -800,6 +821,8 @@ BEGIN
     COALESCE((p_payload->>'discount')::NUMERIC, 0),
     NULLIF(p_payload->>'cpfCnpjNota','')
   );
+
+  PERFORM set_config('maxpos.skip_audit', 'on', true);
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
     INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
@@ -845,6 +868,383 @@ BEGIN
        WHERE id = v_payment->>'clientId';
     END IF;
   END LOOP;
+
+  PERFORM set_config('maxpos.skip_audit', 'off', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
+-- ============================================================
+
+-- ============================================================
+-- AUDITORIA — registra todas as operacoes em entidades de negocio
+-- ============================================================
+-- Cobertura: products, services, clients, suppliers, sales,
+-- cash_sessions, cash_movements. INSERT/UPDATE/DELETE sao
+-- registrados automaticamente por trigger AFTER FOR EACH ROW.
+-- Visibilidade: somente admin/chairman le via RLS.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_type   TEXT NOT NULL,
+  entity_id     TEXT,
+  action        TEXT NOT NULL CHECK (action IN ('insert', 'update', 'delete')),
+  user_id       UUID,
+  user_name     TEXT,
+  user_email    TEXT,
+  user_role     TEXT,
+  changed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  old_values    JSONB,
+  new_values    JSONB,
+  summary       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS audit_log_changed_at_idx
+  ON audit_log (changed_at DESC);
+CREATE INDEX IF NOT EXISTS audit_log_entity_idx
+  ON audit_log (entity_type, changed_at DESC);
+CREATE INDEX IF NOT EXISTS audit_log_user_idx
+  ON audit_log (user_id, changed_at DESC);
+
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS audit_log_admin_read ON audit_log;
+CREATE POLICY audit_log_admin_read
+  ON audit_log
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles
+       WHERE id = auth.uid()
+         AND role IN ('admin', 'chairman')
+    )
+  );
+-- INSERT/UPDATE/DELETE bloqueados via RLS; o trigger usa SECURITY DEFINER.
+
+-- --- Funcao generica de trigger ---
+CREATE OR REPLACE FUNCTION public.audit_trigger_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id    UUID;
+  v_user_name  TEXT;
+  v_user_email TEXT;
+  v_user_role  TEXT;
+  v_entity_id  TEXT;
+  v_action     TEXT;
+  v_old        JSONB;
+  v_new        JSONB;
+  v_summary    TEXT;
+  v_label      TEXT;
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NOT NULL THEN
+    SELECT name, email, role
+      INTO v_user_name, v_user_email, v_user_role
+      FROM user_profiles WHERE id = v_user_id;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    v_action := 'insert';
+    v_old    := NULL;
+    v_new    := to_jsonb(NEW);
+    v_entity_id := v_new->>'id';
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_action := 'update';
+    v_old    := to_jsonb(OLD);
+    v_new    := to_jsonb(NEW);
+    v_entity_id := v_new->>'id';
+  ELSE
+    v_action := 'delete';
+    v_old    := to_jsonb(OLD);
+    v_new    := NULL;
+    v_entity_id := v_old->>'id';
+  END IF;
+
+  -- Bypass: operacoes em lote (finalize_sale_atomic, factory_reset) setam
+  -- `maxpos.skip_audit = 'on'` na sessao Postgres para nao poluir o log.
+  -- A venda em si JA grava 1 audit em sales — nao precisa de 1 por item.
+  IF current_setting('maxpos.skip_audit', true) = 'on' THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  -- Remove campo image (base64 pesado) do snapshot de produtos
+  IF TG_TABLE_NAME = 'products' THEN
+    IF v_old IS NOT NULL THEN v_old := v_old - 'image'; END IF;
+    IF v_new IS NOT NULL THEN v_new := v_new - 'image'; END IF;
+  END IF;
+
+  v_label := CASE TG_TABLE_NAME
+    WHEN 'products'       THEN 'Produto'
+    WHEN 'services'       THEN 'Servico'
+    WHEN 'clients'        THEN 'Cliente'
+    WHEN 'suppliers'      THEN 'Fornecedor'
+    WHEN 'sales'          THEN 'Venda'
+    WHEN 'cash_sessions'  THEN 'Sessao de caixa'
+    WHEN 'cash_movements' THEN 'Movimento de caixa'
+    ELSE TG_TABLE_NAME
+  END;
+
+  v_summary := v_label || ' ' || CASE v_action
+    WHEN 'insert' THEN 'criado(a)'
+    WHEN 'update' THEN 'editado(a)'
+    ELSE 'excluido(a)'
+  END;
+
+  IF (v_new->>'name') IS NOT NULL THEN
+    v_summary := v_summary || ': ' || (v_new->>'name');
+  ELSIF (v_old->>'name') IS NOT NULL THEN
+    v_summary := v_summary || ': ' || (v_old->>'name');
+  ELSIF TG_TABLE_NAME = 'sales' THEN
+    v_summary := v_summary || ' #' || COALESCE(v_new->>'id', v_old->>'id');
+  ELSIF TG_TABLE_NAME = 'cash_movements' THEN
+    v_summary := v_summary || ' (' || COALESCE(v_new->>'tipo', v_old->>'tipo') || ')';
+  END IF;
+
+  -- Auditoria nunca pode derrubar a transacao de negocio. Se a insercao
+  -- falhar (RLS, constraint, disk full, etc.), emitimos um WARNING no log
+  -- do Postgres e seguimos: vendas, edicoes e exclusoes continuam funcionando.
+  BEGIN
+    INSERT INTO audit_log (
+      entity_type, entity_id, action,
+      user_id, user_name, user_email, user_role,
+      old_values, new_values, summary
+    ) VALUES (
+      TG_TABLE_NAME, v_entity_id, v_action,
+      v_user_id, v_user_name, v_user_email, v_user_role,
+      v_old, v_new, v_summary
+    );
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'audit_trigger_fn falhou em % (%): %', TG_TABLE_NAME, v_action, SQLERRM;
+  END;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+-- --- Triggers em cada tabela auditada ---
+DROP TRIGGER IF EXISTS audit_products       ON products;
+DROP TRIGGER IF EXISTS audit_services       ON services;
+DROP TRIGGER IF EXISTS audit_clients        ON clients;
+DROP TRIGGER IF EXISTS audit_suppliers      ON suppliers;
+DROP TRIGGER IF EXISTS audit_sales          ON sales;
+DROP TRIGGER IF EXISTS audit_cash_sessions  ON cash_sessions;
+DROP TRIGGER IF EXISTS audit_cash_movements ON cash_movements;
+
+CREATE TRIGGER audit_products
+  AFTER INSERT OR UPDATE OR DELETE ON products
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_services
+  AFTER INSERT OR UPDATE OR DELETE ON services
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_clients
+  AFTER INSERT OR UPDATE OR DELETE ON clients
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_suppliers
+  AFTER INSERT OR UPDATE OR DELETE ON suppliers
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_sales
+  AFTER INSERT OR UPDATE OR DELETE ON sales
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_cash_sessions
+  AFTER INSERT OR UPDATE OR DELETE ON cash_sessions
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+CREATE TRIGGER audit_cash_movements
+  AFTER INSERT OR UPDATE OR DELETE ON cash_movements
+  FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_fn();
+-- ============================================================
+
+-- ============================================================
+-- ENDURECIMENTO RLS — user_profiles
+-- ============================================================
+-- Antes: qualquer authenticated podia INSERT/UPDATE/DELETE em qualquer
+-- linha. A defesa contra operador_geral criar/editar equipe era so a UI.
+-- Agora:
+--   - INSERT direto bloqueado (trigger handle_new_user SECURITY DEFINER
+--     continua criando perfis ao registrar usuario via auth.signUp).
+--   - UPDATE permitido para o proprio usuario (avatar, etc) OU para
+--     gestores (admin/chairman/ceo/gerente_*).
+--   - DELETE direto bloqueado (apague o usuario em auth.users; FK cascade
+--     remove user_profiles automaticamente).
+--   - Trigger BEFORE UPDATE impede mudanca de role no proprio cargo,
+--     exceto admin/chairman (defesa contra privilege escalation).
+-- ============================================================
+
+DROP POLICY IF EXISTS "profiles_insert"               ON user_profiles;
+DROP POLICY IF EXISTS "profiles_update"               ON user_profiles;
+DROP POLICY IF EXISTS "profiles_insert_blocked"       ON user_profiles;
+DROP POLICY IF EXISTS "profiles_update_self_or_manager" ON user_profiles;
+DROP POLICY IF EXISTS "profiles_delete_blocked"       ON user_profiles;
+
+CREATE POLICY "profiles_insert_blocked" ON user_profiles
+  FOR INSERT TO authenticated
+  WITH CHECK (false);
+
+CREATE POLICY "profiles_update_self_or_manager" ON user_profiles
+  FOR UPDATE TO authenticated
+  USING (
+    id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles me
+      WHERE me.id = auth.uid()
+        AND me.role IN ('admin', 'chairman', 'ceo',
+                        'gerente_logistica', 'gerente_vendas', 'gerente_financas')
+    )
+  )
+  WITH CHECK (
+    id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles me
+      WHERE me.id = auth.uid()
+        AND me.role IN ('admin', 'chairman', 'ceo',
+                        'gerente_logistica', 'gerente_vendas', 'gerente_financas')
+    )
+  );
+
+CREATE POLICY "profiles_delete_blocked" ON user_profiles
+  FOR DELETE TO authenticated
+  USING (false);
+
+-- Trigger anti-self-escalation
+CREATE OR REPLACE FUNCTION public.prevent_role_self_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_caller_role TEXT;
+BEGIN
+  IF OLD.role IS DISTINCT FROM NEW.role THEN
+    SELECT role INTO v_caller_role FROM user_profiles WHERE id = auth.uid();
+    IF auth.uid() = NEW.id
+       AND COALESCE(v_caller_role, '') NOT IN ('admin', 'chairman') THEN
+      RAISE EXCEPTION 'Voce nao pode alterar o proprio cargo'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS user_profiles_prevent_self_role_change ON user_profiles;
+CREATE TRIGGER user_profiles_prevent_self_role_change
+  BEFORE UPDATE ON user_profiles
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_role_self_change();
+-- ============================================================
+
+-- ============================================================
+-- finalize_sale_atomic v5: lock pessimista + checagem real de estoque
+-- ============================================================
+-- Antes (v4): UPDATE products SET stock = GREATEST(0, stock - qty) clampava
+-- silenciosamente no zero. Em vendas concorrentes do mesmo produto (dois
+-- operadores), ambos passavam pela checagem client-side, ambos finalizavam,
+-- e o estoque "absorvia" a venda extra — overselling sem alerta.
+--
+-- Agora: SELECT ... FOR UPDATE serializa quem chegou primeiro; o segundo
+-- operador recebe um erro claro ("Estoque insuficiente para X") e a venda
+-- inteira faz rollback. Cliente nao paga, produto nao sai, estoque integro.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.finalize_sale_atomic(p_payload JSONB)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sale_id        TEXT := p_payload->>'id';
+  v_item           JSONB;
+  v_payment        JSONB;
+  v_current_stock  NUMERIC;
+  v_qty            NUMERIC;
+  v_item_name      TEXT;
+  v_controls_stock BOOLEAN;
+BEGIN
+  INSERT INTO sales (id, date, total, "clientId", "vendedorId", status, "sessionId", discount, "cpfCnpjNota")
+  VALUES (
+    v_sale_id,
+    (p_payload->>'date')::TIMESTAMPTZ,
+    (p_payload->>'total')::NUMERIC,
+    p_payload->>'clientId',
+    p_payload->>'vendedorId',
+    COALESCE(p_payload->>'status', 'completed'),
+    p_payload->>'sessionId',
+    COALESCE((p_payload->>'discount')::NUMERIC, 0),
+    NULLIF(p_payload->>'cpfCnpjNota','')
+  );
+
+  PERFORM set_config('maxpos.skip_audit', 'on', true);
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'items') LOOP
+    v_qty            := (v_item->>'quantity')::NUMERIC;
+    v_item_name      := v_item->>'name';
+    v_controls_stock := COALESCE((v_item->>'controlStock')::BOOLEAN, true);
+
+    INSERT INTO sale_items ("saleId", "productId", name, price, quantity,
+                            "costPrice", category, ref, unit, ean13,
+                            "controlStock", stock, "minStock", discount)
+    VALUES (
+      v_sale_id,
+      v_item->>'id',
+      v_item_name,
+      (v_item->>'price')::NUMERIC,
+      v_qty,
+      COALESCE((v_item->>'costPrice')::NUMERIC, 0),
+      COALESCE(v_item->>'category', ''),
+      COALESCE(v_item->>'ref', ''),
+      COALESCE(v_item->>'unit', 'UN'),
+      v_item->>'ean13',
+      v_controls_stock,
+      COALESCE((v_item->>'stock')::NUMERIC, 0),
+      COALESCE((v_item->>'minStock')::INTEGER, 0),
+      COALESCE((v_item->>'discount')::NUMERIC, 0)
+    );
+
+    IF v_controls_stock THEN
+      -- Lock pessimista: serializa esta linha. Se outro operador estiver
+      -- finalizando uma venda do mesmo produto, esta query bloqueia ate
+      -- a outra transacao commitar/abortar.
+      SELECT stock INTO v_current_stock
+        FROM products
+       WHERE id = v_item->>'id'
+        FOR UPDATE;
+
+      IF v_current_stock IS NULL THEN
+        RAISE EXCEPTION 'Produto "%" nao encontrado no estoque (id=%)',
+          v_item_name, v_item->>'id'
+          USING ERRCODE = 'P0002';
+      END IF;
+
+      IF v_current_stock < v_qty THEN
+        RAISE EXCEPTION 'Estoque insuficiente para "%": disponivel %, solicitado %',
+          v_item_name, v_current_stock, v_qty
+          USING ERRCODE = 'P0001';
+      END IF;
+
+      UPDATE products SET stock = stock - v_qty WHERE id = v_item->>'id';
+    END IF;
+  END LOOP;
+
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payload->'payments') LOOP
+    INSERT INTO sale_payments ("saleId", method, amount, installments, "clientId")
+    VALUES (
+      v_sale_id,
+      v_payment->>'method',
+      (v_payment->>'amount')::NUMERIC,
+      NULLIF(v_payment->>'installments', '')::INTEGER,
+      v_payment->>'clientId'
+    );
+
+    IF v_payment->>'method' = 'fiado' AND v_payment->>'clientId' IS NOT NULL THEN
+      UPDATE clients
+         SET balance = balance - (v_payment->>'amount')::NUMERIC
+       WHERE id = v_payment->>'clientId';
+    END IF;
+  END LOOP;
+
+  PERFORM set_config('maxpos.skip_audit', 'off', true);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;

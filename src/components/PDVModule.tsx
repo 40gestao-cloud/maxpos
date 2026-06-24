@@ -45,9 +45,10 @@ function trapTab(e: ReactKeyboardEvent, container: HTMLElement | null) {
 interface PDVModuleProps {
   currentUser: User;
   onExitToMenu?: () => void;
+  onGoToInicio?: () => void;
 }
 
-export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps) {
+export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: PDVModuleProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -602,17 +603,33 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
   const clearItemDiscount = (id: string) =>
     setCart(prev => prev.map(c => c.id === id ? { ...c, discount: 0 } : c));
 
-  // Após confirmar Desconto/CPF/Cliente, manda o foco para CONFIRMAR VENDA.
-  // Se ele estiver desabilitado (venda ainda não paga), foca o input VALOR DESTA FORMA.
+  // Após confirmar Desconto/CPF/Cliente OU qualquer forma de pagamento, manda
+  // o foco para CONFIRMAR VENDA. Se ele estiver desabilitado (venda ainda nao
+  // paga), foca o input VALOR DESTA FORMA. Sem isso, o navegador devolve o foco
+  // para o botao da forma de pagamento que ficou disabled, e o ENTER nao dispara
+  // nem o click nativo (botao desabilitado) nem o handler global (que ignora
+  // BUTTON como target).
+  //
+  // Implementacao: usamos requestAnimationFrame em vez de setTimeout(50). O rAF
+  // sincroniza com o ciclo de pintura do navegador — apos React 18 ter feito
+  // flush das mudancas de estado disparadas dentro do mesmo handler. setTimeout
+  // com delay fixo era raceable em maquinas lentas (botao ainda disabled quando
+  // o timer disparava). Se ainda assim o botao estiver disabled na primeira
+  // tentativa, fazemos um segundo rAF como rede de seguranca.
   const focusAfterExtraConfirm = () => {
-    setTimeout(() => {
+    const tryFocus = (retry: boolean) => {
       const btn = document.querySelector<HTMLButtonElement>('[data-action="confirm-sale"]');
       if (btn && !btn.disabled) {
         btn.focus();
-      } else {
-        partialAmountRef.current?.focus();
+        return;
       }
-    }, 50);
+      if (retry) {
+        requestAnimationFrame(() => tryFocus(false));
+        return;
+      }
+      partialAmountRef.current?.focus();
+    };
+    requestAnimationFrame(() => tryFocus(true));
   };
 
   // ─── Reimpressão do último cupom ─────────────────────────
@@ -825,6 +842,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
     setPayments(prev => [...prev, { method, amount: finalAmount, ...(installments ? { installments } : {}) }]);
     setPartialAmount('');
+    focusAfterExtraConfirm();
   };
 
   // Trava defensiva: impede que dois modais/formas sejam acionados ao mesmo tempo
@@ -845,6 +863,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setPayments(prev => [...prev, { method: 'credito', amount: pendingCreditAmount, installments }]);
     setPartialAmount('');
     setShowInstallments(false);
+    focusAfterExtraConfirm();
   };
 
   const removePayment = (index: number) => {
@@ -929,6 +948,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setCashChange(change);
     setPartialAmount('');
     setCashModalOpen(false);
+    focusAfterExtraConfirm();
   };
 
   const handleValeClick = () => {
@@ -938,6 +958,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
     setPayments(prev => [...prev, { method: 'vale', amount: finalAmount }]);
     setPartialAmount('');
+    focusAfterExtraConfirm();
   };
 
   const handleFiadoClick = () => {
@@ -1013,6 +1034,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
     setPartialAmount('');
     setPixModalOpen(false);
+    focusAfterExtraConfirm();
   };
 
   const cancelPixPayment = async () => {
@@ -1068,6 +1090,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
     }]);
     setPartialAmount('');
     setShowClientPicker(false);
+    focusAfterExtraConfirm();
   };
 
   // Pede confirmacao antes de finalizar a venda (mesmo padrao do CANCELAR)
@@ -1139,10 +1162,24 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
         setThankYouOpen(true);
       }
     } catch (err: any) {
+      const msg = err?.message ? String(err.message) : 'Falha desconhecida ao gravar a venda.';
+      // Race de estoque concorrente (finalize_sale_atomic faz SELECT FOR UPDATE
+      // e levanta excecao se outro operador esvaziou o estoque do produto entre
+      // a checagem local e a finalizacao). Aqui o cache local esta fora de sync
+      // — recarregamos products pra refletir o estado real do servidor.
+      const isStockError = /estoque insuficiente|nao encontrado no estoque/i.test(msg);
+      if (isStockError) {
+        try {
+          const fresh = await Storage.getProducts();
+          setProducts(fresh);
+        } catch { /* silencia: a venda ja falhou, nao queremos mascarar */ }
+      }
       showAlert({
-        title: 'Erro ao salvar venda',
-        message: err?.message ? String(err.message) : 'Falha desconhecida ao gravar a venda.',
-        variant: 'error',
+        title: isStockError ? 'Estoque insuficiente' : 'Erro ao salvar venda',
+        message: isStockError
+          ? `${msg}\n\nO estoque foi atualizado. Ajuste a quantidade no carrinho e tente novamente.`
+          : msg,
+        variant: isStockError ? 'warning' : 'error',
       });
     } finally {
       setSaving(false);
@@ -2046,7 +2083,7 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             ref={(el) => { if (el && changeModal) el.focus(); }}
           >
             <div
-              className="w-full max-w-2xl bg-white border-4 shadow-2xl"
+              className="w-full max-w-3xl bg-white border-4 shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -2064,10 +2101,13 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                   Troco
                 </div>
                 <div
-                  className="text-[9rem] font-black tabular-nums leading-none"
+                  className="flex items-baseline gap-3 whitespace-nowrap leading-none"
                   style={{ color: MONEY, textShadow: '0 4px 0 rgba(21,128,61,0.15)' }}
                 >
-                  R$ {changeModal.amount.toFixed(2).replace('.', ',')}
+                  <span className="text-5xl font-black">R$</span>
+                  <span className="text-[7.5rem] font-black tabular-nums">
+                    {changeModal.amount.toFixed(2).replace('.', ',')}
+                  </span>
                 </div>
                 <div className="mt-6 text-sm text-gray-700 font-bold uppercase tracking-wider">
                   Pressione <kbd className="px-2 py-0.5 rounded border-2 mx-1" style={{ background: 'white', borderColor: MONEY, fontFamily: 'Consolas, monospace' }}>Enter</kbd> para continuar
@@ -2829,6 +2869,16 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
             className="fixed inset-0 z-[350] flex items-center justify-center p-4 bg-black/70"
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                setOpenCashModal(false);
+                // Vai direto para Inicio — abrir so a sidebar deixaria o operador
+                // poder fechar o overlay sem trocar de aba e ficar no PDV sem
+                // sessao de caixa (vendas iriam sem sessionId).
+                if (onGoToInicio) onGoToInicio();
+                else onExitToMenu?.();
+              }
               else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmOpenCashSession(); }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
@@ -2858,13 +2908,29 @@ export default function PDVModule({ currentUser, onExitToMenu }: PDVModuleProps)
                     style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                   />
                 </div>
-                <button
-                  onClick={confirmOpenCashSession}
-                  className="w-full py-3 text-white text-base font-black uppercase tracking-wide ring-4 ring-offset-2 ring-green-300"
-                  style={{ background: MONEY }}
-                >
-                  ABRIR CAIXA (Enter)
-                </button>
+                <div className="flex gap-3 pt-1">
+                  {(onGoToInicio || onExitToMenu) && (
+                    <button
+                      onClick={() => {
+                        setOpenCashModal(false);
+                        if (onGoToInicio) onGoToInicio();
+                        else onExitToMenu?.();
+                      }}
+                      className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50 uppercase text-sm tracking-wide"
+                      style={{ borderColor: '#9ca3af' }}
+                      title="Voltar ao Inicio sem abrir o caixa (Esc)"
+                    >
+                      VOLTAR AO INICIO (Esc)
+                    </button>
+                  )}
+                  <button
+                    onClick={confirmOpenCashSession}
+                    className="flex-1 py-3 text-white text-base font-black uppercase tracking-wide ring-4 ring-offset-2 ring-green-300"
+                    style={{ background: MONEY }}
+                  >
+                    ABRIR CAIXA (Enter)
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type UserRole = 
+export type UserRole =
   | 'admin'
-  | 'chairman' 
-  | 'ceo' 
-  | 'gerente_logistica' 
-  | 'gerente_vendas' 
-  | 'gerente_financas' 
-  | 'colaborador_logistica' 
-  | 'colaborador_vendas' 
-  | 'colaborador_atendimento' 
-  | 'colaborador_financas';
+  | 'chairman'
+  | 'ceo'
+  | 'gerente_logistica'
+  | 'gerente_vendas'
+  | 'gerente_financas'
+  | 'colaborador_logistica'
+  | 'colaborador_vendas'
+  | 'colaborador_atendimento'
+  | 'colaborador_financas'
+  | 'operador_geral';
 
 export interface User {
   id: string;
@@ -169,6 +170,22 @@ export interface CashSession {
   dinheiroContado?: number | null;
   observacao?: string | null;
   status: 'aberto' | 'fechado';
+}
+
+// Entrada do log de auditoria (uma operação INSERT/UPDATE/DELETE em uma entidade)
+export interface AuditLogEntry {
+  id: string;
+  entity_type: string;
+  entity_id: string | null;
+  action: 'insert' | 'update' | 'delete';
+  user_id: string | null;
+  user_name: string | null;
+  user_email: string | null;
+  user_role: string | null;
+  changed_at: string;
+  old_values: Record<string, any> | null;
+  new_values: Record<string, any> | null;
+  summary: string | null;
 }
 
 // Movimentos de caixa fora de venda — sangria (saída) ou suprimento (entrada)
