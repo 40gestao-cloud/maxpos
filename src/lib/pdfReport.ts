@@ -7,64 +7,162 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Sale, Account, CreditInstallment } from '../types';
 
+// Mascara CPF/CNPJ a partir de string só com dígitos (11 = CPF, 14 = CNPJ).
+const maskDoc = (digits: string): string => {
+  if (digits.length === 11) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 14) {
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+  }
+  return digits;
+};
+
+const brl = (n: number) => n.toFixed(2).replace('.', ',');
+
+// Formata qtd em pt-BR — KG/G com até 3 casas; demais como inteiro quando possível.
+const fmtQty = (q: number, unit?: string): string => {
+  const u = (unit || '').toUpperCase();
+  if (u === 'KG' || u === 'G') return q.toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
+  return Number.isInteger(q) ? String(q) : q.toFixed(3).replace(/\.?0+$/, '').replace('.', ',');
+};
+
+export interface SaleReceiptExtras {
+  operatorName?: string;
+  cashChange?: number;
+  cashReceived?: number;
+}
+
 export const PDFReport = {
-  generateSaleReceipt: (sale: Sale) => {
-    const doc = new jsPDF({
-      unit: 'mm',
-      format: [80, 200] // Thermal printer format
-    });
+  generateSaleReceipt: (sale: Sale, extras: SaleReceiptExtras = {}) => {
+    // Largura 80mm (impressora térmica padrão). Altura cresce conforme conteúdo.
+    const W = 80;
+    const margemX = 4;
+    const colTotalX = W - margemX;
+    const lineH = 3.6;
+    // Estimativa generosa da altura final — recortamos depois.
+    const estimatedH = 90 + sale.items.length * 9 + (sale.payments?.length ?? 0) * 5;
+    const doc = new jsPDF({ unit: 'mm', format: [W, estimatedH] });
 
-    doc.setFontSize(12);
-    doc.text('MAXPOS', 40, 10, { align: 'center' });
-    doc.setFontSize(8);
-    doc.text('ERP Enterprise Edition', 40, 14, { align: 'center' });
-    doc.text('------------------------------------------', 40, 18, { align: 'center' });
-
-    doc.text(`Pedido: #${sale.id.slice(0, 8)}`, 5, 25);
-    doc.text(`Data: ${new Date(sale.date).toLocaleString()}`, 5, 30);
-    doc.text('------------------------------------------', 40, 35, { align: 'center' });
-
-    let y = 40;
-    doc.text('Item', 5, y);
-    doc.text('Qtd', 45, y);
-    doc.text('Total', 65, y);
-    y += 5;
-
-    sale.items.forEach(item => {
-      doc.text(item.name.slice(0, 20), 5, y);
-      doc.text(item.quantity.toString(), 45, y);
-      doc.text(`R$ ${(item.price * item.quantity).toFixed(2)}`, 65, y);
-      y += 5;
-    });
-
-    doc.text('------------------------------------------', 40, y + 5, { align: 'center' });
-    doc.setFontSize(10);
-    doc.text('TOTAL:', 5, y + 15);
-    doc.text(`R$ ${sale.total.toFixed(2)}`, 75, y + 15, { align: 'right' });
-
-    const methodLabels: Record<string, string> = {
-      dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado',
+    let y = 6;
+    const center = (txt: string, ySnap: number, size = 8, bold = false) => {
+      doc.setFontSize(size);
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.text(txt, W / 2, ySnap, { align: 'center' });
+    };
+    const left = (txt: string, ySnap: number, size = 8, bold = false) => {
+      doc.setFontSize(size);
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.text(txt, margemX, ySnap);
+    };
+    const right = (txt: string, ySnap: number, size = 8, bold = false) => {
+      doc.setFontSize(size);
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.text(txt, colTotalX, ySnap, { align: 'right' });
+    };
+    const divider = (ySnap: number) => {
+      doc.setDrawColor(150);
+      doc.setLineWidth(0.15);
+      doc.line(margemX, ySnap, colTotalX, ySnap);
     };
 
-    if (sale.payments && sale.payments.length > 0) {
-      doc.setFontSize(8);
-      doc.text('------------------------------------------', 40, y + 20, { align: 'center' });
-      doc.text('PAGAMENTOS:', 5, y + 26);
-      let py = y + 31;
-      sale.payments.forEach(p => {
-        let label = methodLabels[p.method] ?? p.method;
-        if (p.method === 'credito' && p.installments && p.installments > 1) {
-          label = `Crédito ${p.installments}x (R$ ${(p.amount / p.installments).toFixed(2)}/parc.)`;
-        } else if (p.method === 'fiado' && p.clientName) {
-          label = `Fiado — ${p.clientName}`;
-        }
-        doc.text(label, 5, py);
-        doc.text(`R$ ${p.amount.toFixed(2)}`, 75, py, { align: 'right' });
-        py += 5;
-      });
+    // Cabeçalho
+    center('MAXPOS', y, 13, true); y += 4.5;
+    center('CUPOM NÃO FISCAL', y, 7); y += 4;
+    divider(y); y += 3;
+
+    // Dados da venda
+    left(`Cupom: ${sale.id.slice(0, 8).toUpperCase()}`, y, 7.5); y += lineH;
+    left(`Data:  ${new Date(sale.date).toLocaleString('pt-BR')}`, y, 7.5); y += lineH;
+    if (extras.operatorName) { left(`Op:    ${extras.operatorName.toUpperCase()}`, y, 7.5); y += lineH; }
+    if (sale.cpfCnpjNota) { left(`Doc:   ${maskDoc(sale.cpfCnpjNota)}`, y, 7.5); y += lineH; }
+    y += 1; divider(y); y += 3;
+
+    // Itens — linha 1: nº + nome (até 32 chars); linha 2: qtd × preço unit  …  total item
+    doc.setFontSize(7.5);
+    sale.items.forEach((it, idx) => {
+      const nome = (it.name || '').toUpperCase().slice(0, 32);
+      const liquido = it.price * it.quantity - (it.discount ?? 0);
+      left(`${String(idx + 1).padStart(3, '0')} ${nome}`, y, 7.5, true);
+      y += lineH;
+      const detalhe = `${fmtQty(it.quantity, it.unit)} ${(it.unit || 'UN').toUpperCase()} x ${brl(it.price)}`;
+      left(detalhe, y, 7);
+      right(brl(liquido), y, 7.5, true);
+      y += lineH;
+      if ((it.discount ?? 0) > 0) {
+        left(`  Desconto item`, y, 6.8);
+        right(`-${brl(it.discount ?? 0)}`, y, 6.8);
+        y += lineH;
+      }
+    });
+
+    y += 1; divider(y); y += 3;
+
+    // Totais
+    const itemsSubtotal = sale.items.reduce((a, it) => a + it.price * it.quantity - (it.discount ?? 0), 0);
+    left('Subtotal', y, 8);
+    right(`R$ ${brl(itemsSubtotal)}`, y, 8);
+    y += lineH;
+    if ((sale.discount ?? 0) > 0) {
+      left('Desconto venda', y, 8);
+      right(`- R$ ${brl(sale.discount ?? 0)}`, y, 8);
+      y += lineH;
+    }
+    left('TOTAL', y, 10, true);
+    right(`R$ ${brl(sale.total)}`, y, 10, true);
+    y += lineH + 1;
+
+    divider(y); y += 3;
+
+    // Pagamentos
+    const methodLabels: Record<string, string> = {
+      dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito',
+      debito: 'Débito', fiado: 'Fiado', vale: 'Vale',
+    };
+    left('PAGAMENTOS', y, 7.5, true); y += lineH;
+    (sale.payments ?? []).forEach(p => {
+      let label = methodLabels[p.method] ?? p.method;
+      if (p.method === 'credito' && p.installments && p.installments > 1) {
+        label = `Crédito ${p.installments}x`;
+      } else if (p.method === 'fiado' && p.clientName) {
+        label = `Fiado - ${p.clientName.slice(0, 18)}`;
+      }
+      left(label, y, 7.5);
+      right(`R$ ${brl(p.amount)}`, y, 7.5);
+      y += lineH;
+    });
+
+    if ((extras.cashChange ?? 0) > 0.001) {
+      y += 1;
+      left('TROCO', y, 8, true);
+      right(`R$ ${brl(extras.cashChange ?? 0)}`, y, 8, true);
+      y += lineH;
     }
 
-    doc.save(`venda_${sale.id.slice(0, 5)}.pdf`);
+    y += 2; divider(y); y += 4;
+    center('*** OBRIGADO ***', y, 8, true); y += 4;
+    center('Volte sempre!', y, 7); y += 5;
+
+    // Em alguns ambientes (sandbox, popup blocker, browser sem File System Access),
+    // doc.save pode falhar silenciosamente. Fallback: gera blob URL e dispara
+    // download via <a download> simulado. Se ambos falharem, rethrow para o caller.
+    const filename = `recibo-${sale.id.slice(0, 8)}.pdf`;
+    try {
+      doc.save(filename);
+    } catch (saveErr) {
+      console.warn('[PDFReport] doc.save falhou, tentando fallback via Blob:', saveErr);
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 500);
+    }
   },
 
   generateFinancialReport: (accounts: Account[], sales: Sale[] = [], installmentsMap: Record<string, CreditInstallment[]> = {}) => {

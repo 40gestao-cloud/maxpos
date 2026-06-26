@@ -442,6 +442,56 @@ export const Storage = {
   },
 
   // Última venda concluída pelo operador (preferindo a sessão atual, se houver)
+  // Últimas N vendas do operador (na sessão atual, se informada) — usada na
+  // tela de reimpressão para o operador escolher qual cupom reimprimir.
+  getRecentSalesForReprint: async (
+    operadorId: string,
+    sessionId?: string | null,
+    limit: number = 10,
+  ): Promise<Sale[]> => {
+    let q = supabase
+      .from('sales')
+      .select('*, sale_items(*), sale_payments(*)')
+      .eq('vendedorId', operadorId)
+      .eq('status', 'completed')
+      .order('date', { ascending: false })
+      .limit(limit);
+    if (sessionId) q = q.eq('sessionId', sessionId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      date: row.date,
+      total: Number(row.total),
+      clientId: row.clientId ?? undefined,
+      vendedorId: row.vendedorId ?? undefined,
+      status: row.status,
+      discount: Number(row.discount ?? 0),
+      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
+      items: (row.sale_items ?? []).map((item: any) => ({
+        id: item.productId ?? item.id,
+        name: item.name,
+        price: Number(item.price),
+        quantity: Number(item.quantity),
+        costPrice: Number(item.costPrice ?? 0),
+        category: item.category ?? '',
+        ref: item.ref ?? '',
+        unit: item.unit ?? 'UN',
+        ean13: item.ean13,
+        controlStock: item.controlStock ?? true,
+        stock: Number(item.stock ?? 0),
+        minStock: item.minStock ?? 0,
+        discount: Number(item.discount ?? 0),
+      })),
+      payments: (row.sale_payments ?? []).map((p: any) => ({
+        method: p.method,
+        amount: Number(p.amount),
+        installments: p.installments ?? undefined,
+        clientId: p.clientId ?? undefined,
+      })),
+    })) as Sale[];
+  },
+
   getLastSaleForReprint: async (operadorId: string, sessionId?: string | null): Promise<Sale | null> => {
     let q = supabase
       .from('sales')

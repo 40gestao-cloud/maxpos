@@ -10,6 +10,7 @@ import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMoveme
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj } from '../lib/masks';
+import { PDFReport } from '../lib/pdfReport';
 
 // Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
 // Selector cobre input/button/select/textarea/links + qualquer [tabindex] >= 0,
@@ -82,7 +83,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   const [classicSearchTerm, setClassicSearchTerm] = useState('');
   const [classicMsg, setClassicMsg] = useState<{ type: 'err'; text: string } | null>(null);
   const [classicSuggestionIdx, setClassicSuggestionIdx] = useState(-1);
-  const [cupomSeq] = useState(() => String(Date.now()).slice(-6));
+  // Cupom regenerado a cada venda: '------' quando não há venda em andamento.
+  const [cupomSeq, setCupomSeq] = useState<string>('------');
   const [helpOpen, setHelpOpen] = useState(false);
   const [changeModal, setChangeModal] = useState<{ amount: number } | null>(null);
   const [thankYouOpen, setThankYouOpen] = useState(false);
@@ -103,6 +105,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   } | null>(null);
   // Sinaliza que o PIX foi confirmado pelo MaxBank — efeito reativo finaliza a venda sozinho
   const [pixAutoFinalize, setPixAutoFinalize] = useState(false);
+  // Fix #10 — overlay rápido "PIX RECEBIDO" antes do auto-finalize
+  const [pixConfirmedFlash, setPixConfirmedFlash] = useState(false);
   // ─── Caixa (sessão do operador) ───
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
   const [cashSessionLoaded, setCashSessionLoaded] = useState(false);
@@ -133,6 +137,24 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   const [clientPickerMode, setClientPickerMode] = useState<'fiado' | 'link'>('fiado');
   // Reimpressão do último cupom
   const [reprintSale, setReprintSale] = useState<Sale | null>(null);
+  // Recibo pós-venda — aparece entre o troco e o agradecimento. Sale + troco.
+  const [postSaleReceipt, setPostSaleReceipt] = useState<{ sale: Sale; troco: number } | null>(null);
+  // Fix #16 — gancheira: um slot só. Suspende a venda atual; recupera depois.
+  const [suspendedSale, setSuspendedSale] = useState<{
+    cart: CartItem[];
+    payments: Payment[];
+    saleDiscount: number;
+    cpfNota: string;
+    linkedClient: Client | null;
+    suspendedAt: string;
+  } | null>(null);
+  // Fix #17 — esconder sugestões via Esc sem limpar o input. Resetado ao digitar.
+  const [suggestionsHidden, setSuggestionsHidden] = useState(false);
+  // Fix #19 — auth simulada do Vale-Alimentação (4 dígitos).
+  const [valeAuthModal, setValeAuthModal] = useState<{ amount: number } | null>(null);
+  const [valeAuthDigits, setValeAuthDigits] = useState('');
+  // Fix #23 — lista de últimos cupons disponíveis para reimpressão.
+  const [reprintList, setReprintList] = useState<Sale[] | null>(null);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
@@ -161,6 +183,24 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     } catch { /* autoplay/policy — silencia */ }
   };
 
+  // Fix #18 — beep grave sintetizado avisando estoque baixo/zerado.
+  // Sem arquivo extra: usa Web Audio API com oscilador square 220Hz/250ms.
+  const playWarnBeep = () => {
+    try {
+      const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = 220;
+      gain.gain.value = 0.18;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      setTimeout(() => { try { osc.stop(); ctx.close(); } catch {} }, 250);
+    } catch { /* sem áudio — silencia */ }
+  };
+
   useEffect(() => {
     if (!classicMsg) return;
     const t = setTimeout(() => setClassicMsg(null), 3000);
@@ -174,28 +214,35 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     return () => clearTimeout(t);
   }, [checkoutMode]);
 
-  // Mantém o foco no input do CÓDIGO sempre que nenhum modal/picker está aberto
-  // e a tela não é o checkout. Garante que o leitor de código de barras emita
-  // as teclas para o input certo logo após fechar qualquer modal (Abertura de
-  // Caixa, Sangria, Suprimento, Alerta, etc.) — o onBlur sozinho não pega esse
-  // caso porque o input já estava blurred antes do modal abrir.
+  // Mantém o foco no input do CÓDIGO sempre que nenhum modal/picker está aberto.
+  // Roda na leitura E no checkout (codeInputRef troca para o input certo
+  // automaticamente). Garante que o leitor de código de barras emita as teclas
+  // para o input certo logo após fechar qualquer modal — o onBlur sozinho não
+  // pega esse caso porque o input já estava blurred antes do modal abrir.
+  // No checkout, partialAmountRef tem prioridade no momento de entrada
+  // (useEffect acima), mas ao fechar um modal o foco vai para CÓDIGO.
   useEffect(() => {
-    if (loading || checkoutMode) return;
+    if (loading) return;
     const anyModalOpen = openCashModal || sangriaModal || supModal || closeCashModal ||
       discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null ||
       cashModalOpen || pixModalOpen || showInstallments || showClientPicker ||
       classicSearchOpen || helpOpen || changeModal !== null || thankYouOpen ||
-      confirmDialog !== null || alertDialog !== null || cardPickerOpen || valePickerOpen;
+      confirmDialog !== null || alertDialog !== null || cardPickerOpen || valePickerOpen ||
+      postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null;
     if (anyModalOpen) return;
     const t = setTimeout(() => {
       const ae = document.activeElement;
+      // No checkout, se o foco já está no partialAmount ou num botão de pagamento
+      // ou no botão CONFIRMAR VENDA, respeita — só refoca CÓDIGO quando o foco
+      // se perdeu para o body.
       if (!ae || ae === document.body) codeInputRef.current?.focus();
     }, 30);
     return () => clearTimeout(t);
   }, [loading, checkoutMode, openCashModal, sangriaModal, supModal, closeCashModal,
       discountModal, cpfModalOpen, priceQueryOpen, reprintSale, cashModalOpen,
       pixModalOpen, showInstallments, showClientPicker, classicSearchOpen, helpOpen,
-      changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen]);
+      changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen,
+      postSaleReceipt, valeAuthModal, reprintList]);
 
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
@@ -265,6 +312,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     if (stockOK) {
       setLastAdded({ ...product, quantity: safeQty });
       playBeep('scan');
+      // Fix #18 — após o scan OK, avisar com beep grave se o estoque após
+      // a venda for <=0 ou <= mínimo configurado (operador percebe sem olhar).
+      if (product.controlStock !== false) {
+        const restante = parseFloat((product.stock - safeQty - (cart.find(i => i.id === product.id)?.quantity ?? 0)).toFixed(3));
+        if (restante <= 0 || restante <= (product.minStock ?? 0)) {
+          setTimeout(playWarnBeep, 180);
+        }
+      }
     }
   };
 
@@ -278,7 +333,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     const star = raw.search(/[*xX]/);
     return star > 0 ? raw.slice(star + 1).trim() : raw;
   })();
-  const classicSuggestions = (!checkoutMode && classicQuery.length >= 2)
+  const classicSuggestions = (!checkoutMode && !suggestionsHidden && classicQuery.length >= 2)
     ? products.filter(p =>
         (p.name || '').toLowerCase().includes(classicQuery.toLowerCase()) ||
         (p.ean13 || '').includes(classicQuery) ||
@@ -329,7 +384,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     // Casamos pelo prefixo de 7 chars do EAN cadastrado. Unidade KG/G → 5 dígitos = gramas; outros → 5 dígitos = preço em centavos.
     if (/^2\d{12}$/.test(code)) {
       const prefix = code.slice(0, 7);
-      const scaleProduct = products.find(p => (p.ean13 || '').slice(0, 7) === prefix);
+      // Fix #13 — se mais de um produto compartilha o prefixo, recusa o match
+      // para evitar lançar o item errado silenciosamente.
+      const candidates = products.filter(p => (p.ean13 || '').slice(0, 7) === prefix);
+      if (candidates.length > 1) {
+        setClassicMsg({
+          type: 'err',
+          text: `EAN balança ambíguo: ${candidates.length} produtos com prefixo ${prefix}`,
+        });
+        setClassicCode('');
+        setClassicSuggestionIdx(-1);
+        return;
+      }
+      const scaleProduct = candidates[0];
       const embedded = parseInt(code.slice(7, 12), 10);
       if (scaleProduct && !isNaN(embedded) && embedded > 0) {
         const unit = (scaleProduct.unit || '').toUpperCase();
@@ -370,13 +437,140 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     onConfirm: () => void;
   }) => {
     setConfirmDialog(opts);
-    setConfirmFocusIdx(1);
+    // Ações destrutivas começam com foco no CANCELAR (0) — evita Enter
+    // acidental destruir a venda. Ações success começam no CONFIRMAR (1).
+    setConfirmFocusIdx(opts.variant === 'danger' ? 0 : 1);
   };
 
   // Card de aviso/erro (substitui alert() nativo do navegador)
   const showAlert = (opts: { title: string; message: string; variant?: 'warning' | 'error' | 'info' }) => {
     setAlertDialog({ title: opts.title, message: opts.message, variant: opts.variant ?? 'warning' });
   };
+
+  // Volta do fechamento pra leitura. Se houver pagamentos lançados, pede
+  // confirmação e descarta — evita inconsistência (pagamentos sem itens, ou
+  // itens trocados sem refletir nos pagamentos antigos).
+  const tryReturnToLeitura = () => {
+    if (payments.length === 0) {
+      setCheckoutMode(false);
+      setSaleDiscount(0);
+      setCpfNota('');
+      setLinkedClient(null);
+      return;
+    }
+    askConfirm({
+      title: 'VOLTAR À LEITURA',
+      message: 'Há pagamentos lançados nesta venda. Voltar agora descarta esses pagamentos. Continuar?',
+      confirmLabel: 'VOLTAR E DESCARTAR',
+      cancelLabel: 'FICAR NO FECHAMENTO',
+      variant: 'danger',
+      onConfirm: () => {
+        setPayments([]);
+        setCashChange(0);
+        setSaleDiscount(0);
+        setCpfNota('');
+        setLinkedClient(null);
+        setCheckoutMode(false);
+      },
+    });
+  };
+
+  // Fix #16 — gancheira (suspender / recuperar) num único slot.
+  const suspendCurrentSale = () => {
+    if (cart.length === 0) return;
+    if (suspendedSale) {
+      askConfirm({
+        title: 'GANCHEIRA OCUPADA',
+        message: 'Já existe uma venda suspensa. Suspender a atual descarta a antiga. Continuar?',
+        confirmLabel: 'SUSPENDER (DESCARTAR ANTIGA)',
+        cancelLabel: 'VOLTAR',
+        variant: 'danger',
+        onConfirm: () => doSuspend(),
+      });
+      return;
+    }
+    doSuspend();
+  };
+  const doSuspend = () => {
+    setSuspendedSale({
+      cart,
+      payments,
+      saleDiscount,
+      cpfNota,
+      linkedClient,
+      suspendedAt: new Date().toISOString(),
+    });
+    setCart([]); setPayments([]); setLastAdded(null); setPartialAmount('');
+    setClassicCode(''); setCheckoutMode(false); setCashChange(0);
+    setSaleDiscount(0); setCpfNota(''); setLinkedClient(null);
+  };
+  const recallSuspendedSale = () => {
+    if (!suspendedSale) return;
+    if (cart.length > 0 || payments.length > 0) {
+      showAlert({
+        title: 'Limpe a venda atual',
+        message: 'Há itens/pagamentos lançados. Conclua ou cancele a venda antes de recuperar a venda suspensa.',
+        variant: 'warning',
+      });
+      return;
+    }
+    setCart(suspendedSale.cart);
+    setPayments(suspendedSale.payments);
+    setSaleDiscount(suspendedSale.saleDiscount);
+    setCpfNota(suspendedSale.cpfNota);
+    setLinkedClient(suspendedSale.linkedClient);
+    setSuspendedSale(null);
+  };
+
+  // Sai do PDV. Se houver venda em andamento (cart ou payments), confirma antes.
+  const tryExitToMenu = () => {
+    if (!onExitToMenu) return;
+    if (cart.length === 0 && payments.length === 0) { onExitToMenu(); return; }
+    askConfirm({
+      title: 'SAIR DO PDV',
+      message: 'Há uma venda em andamento. Sair do PDV agora descarta itens e pagamentos lançados. Continuar?',
+      confirmLabel: 'SAIR E DESCARTAR',
+      cancelLabel: 'CONTINUAR VENDA',
+      variant: 'danger',
+      onConfirm: () => onExitToMenu(),
+    });
+  };
+
+  // Fix #5 — se o carrinho esvaziar dentro do checkout (operador cancelou
+  // todos os itens), volta automaticamente para a leitura limpando o resto.
+  useEffect(() => {
+    if (!checkoutMode) return;
+    if (cart.length > 0) return;
+    setPayments([]);
+    setCashChange(0);
+    setSaleDiscount(0);
+    setCpfNota('');
+    setLinkedClient(null);
+    setCheckoutMode(false);
+  }, [checkoutMode, cart.length]);
+
+  // Fix #7 — cupom novo a cada venda. Reset quando não há venda em andamento.
+  useEffect(() => {
+    if (cart.length === 0 && payments.length === 0) {
+      if (cupomSeq !== '------') setCupomSeq('------');
+    } else if (cupomSeq === '------') {
+      setCupomSeq(String(Date.now()).slice(-6));
+    }
+  }, [cart.length, payments.length, cupomSeq]);
+
+  // Fix #12 — produto deletado remotamente: remove do carrinho e avisa.
+  useEffect(() => {
+    if (products.length === 0) return;
+    const ids = new Set(products.map(p => p.id));
+    const sumido = cart.filter(c => !ids.has(c.id));
+    if (sumido.length === 0) return;
+    setCart(prev => prev.filter(c => ids.has(c.id)));
+    showAlert({
+      title: 'Itens removidos do carrinho',
+      message: `Foram excluídos no cadastro: ${sumido.map(s => (s.name || '').toUpperCase()).join(', ')}.`,
+      variant: 'warning',
+    });
+  }, [products]);
 
   // ─── Caixa: handlers ─────────────────────────────────────
   const confirmOpenCashSession = async () => {
@@ -490,9 +684,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       setCloseCashModal(false);
       setCloseCashContado('');
       setCloseCashObs('');
-      // Após fechar, abre o modal de abertura para o próximo turno
-      setOpenCashFundo(maskCurrency(0));
-      setOpenCashModal(true);
+      // Fix #11 — fim de turno volta pro Início. Se o operador quiser abrir
+      // novo caixa, basta entrar de novo em Vendas (o modal abre lá).
+      if (onGoToInicio) onGoToInicio();
+      else onExitToMenu?.();
     } catch (err: any) {
       showAlert({
         title: 'Erro ao fechar caixa',
@@ -532,13 +727,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   };
 
   // ─── Desconto: handlers ──────────────────────────────────
-  const openItemDiscountModal = () => {
+  // Fix #8 — sem itemId aplica no último item lido (atalho F6); com itemId
+  // permite aplicar em qualquer item do carrinho via botão "%" na linha.
+  const openItemDiscountModal = (itemId?: string) => {
     if (cart.length === 0) {
       showAlert({ title: 'Carrinho vazio', message: 'Adicione um item antes de aplicar desconto.', variant: 'warning' });
       return;
     }
-    const last = cart[cart.length - 1];
-    setDiscountModal({ scope: 'item', itemId: last.id });
+    const target = itemId ? cart.find(c => c.id === itemId) : cart[cart.length - 1];
+    if (!target) return;
+    setDiscountModal({ scope: 'item', itemId: target.id });
     setDiscountInput(maskCurrency(0));
     setDiscountKind('reais');
   };
@@ -589,13 +787,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     }
     const wasTotalScope = discountModal.scope === 'total';
     setDiscountModal(null);
-    // Desconto SEMPRE vem antes do pagamento. No checkout, depois de aplicar,
-    // foca o primeiro botão de forma de pagamento (DINHEIRO) — o operador segue
-    // pra escolher a forma e pagar.
+    // Apos aplicar desconto no total durante o checkout, mandar foco direto pra
+    // FECHAR VENDA (CONFIRMAR VENDA). focusAfterExtraConfirm volta pra
+    // partialAmountRef se o botao estiver desabilitado (venda ainda nao paga).
     if (wasTotalScope && checkoutMode) {
-      setTimeout(() => {
-        document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]')?.focus();
-      }, 50);
+      focusAfterExtraConfirm();
     }
   };
 
@@ -617,43 +813,56 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   // o timer disparava). Se ainda assim o botao estiver disabled na primeira
   // tentativa, fazemos um segundo rAF como rede de seguranca.
   const focusAfterExtraConfirm = () => {
-    const tryFocus = (retry: boolean) => {
+    const tryNow = (): boolean => {
       const btn = document.querySelector<HTMLButtonElement>('[data-action="confirm-sale"]');
-      if (btn && !btn.disabled) {
-        btn.focus();
-        return;
-      }
-      if (retry) {
-        requestAnimationFrame(() => tryFocus(false));
-        return;
-      }
-      partialAmountRef.current?.focus();
+      if (btn && !btn.disabled) { btn.focus(); return true; }
+      return false;
     };
-    requestAnimationFrame(() => tryFocus(true));
+    // Fix #21 — tentativa síncrona primeiro: se o botão já está habilitado
+    // (caso comum quando o desconto/pagamento já zerou o restante), evita o
+    // "salto" visível de foco pulando body → partial → confirm.
+    if (tryNow()) return;
+    requestAnimationFrame(() => {
+      if (tryNow()) return;
+      requestAnimationFrame(() => {
+        if (tryNow()) return;
+        partialAmountRef.current?.focus();
+      });
+    });
   };
 
-  // ─── Reimpressão do último cupom ─────────────────────────
+  // ─── Reimpressão (Fix #23 — últimas N vendas do operador) ─
   const openReprintModal = async () => {
     try {
-      const last = await Storage.getLastSaleForReprint(currentUser.id, cashSession?.id ?? null);
-      if (!last) {
+      const list = await Storage.getRecentSalesForReprint(currentUser.id, cashSession?.id ?? null, 10);
+      if (list.length === 0) {
         showAlert({ title: 'Sem venda anterior', message: 'Nenhuma venda concluída por este operador para reimprimir.', variant: 'info' });
         return;
       }
-      setReprintSale(last);
+      if (list.length === 1) { setReprintSale(list[0]); return; }
+      setReprintList(list);
     } catch (err: any) {
-      showAlert({ title: 'Erro ao carregar venda', message: err?.message ?? String(err), variant: 'error' });
+      showAlert({ title: 'Erro ao carregar vendas', message: err?.message ?? String(err), variant: 'error' });
     }
   };
 
   const printReprint = () => {
-    // Imprime apenas o conteúdo do modal — CSS print-only nas classes Tailwind print:*
-    window.print();
+    if (!reprintSale) return;
+    try {
+      PDFReport.generateSaleReceipt(reprintSale, { operatorName: currentUser.name });
+    } catch (err: any) {
+      console.error('[PDV] Falha ao gerar recibo PDF (reimpressão):', err);
+      showAlert({
+        title: 'Erro ao gerar PDF',
+        message: err?.message ? String(err.message) : 'Não foi possível gerar o recibo.',
+        variant: 'error',
+      });
+    }
   };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null || postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
@@ -708,7 +917,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         if (isEditable && classicCode.length > 0) return;
         e.preventDefault();
         if (checkoutMode) {
-          setCheckoutMode(false);
+          tryReturnToLeitura();
         } else {
           cancelEntireSale();
         }
@@ -817,7 +1026,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -956,8 +1165,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
-    setPayments(prev => [...prev, { method: 'vale', amount: finalAmount }]);
+    // Fix #19 — vale-alimentação simula auth do cartão (4 dígitos quaisquer).
+    setValeAuthDigits('');
+    setValeAuthModal({ amount: finalAmount });
+  };
+  const confirmValeAuth = () => {
+    if (!valeAuthModal) return;
+    if (!/^\d{4}$/.test(valeAuthDigits)) {
+      showAlert({ title: 'PIN inválido', message: 'Digite os 4 últimos dígitos do cartão Vale.', variant: 'warning' });
+      return;
+    }
+    setPayments(prev => [...prev, { method: 'vale', amount: valeAuthModal.amount }]);
     setPartialAmount('');
+    setValeAuthModal(null);
+    setValeAuthDigits('');
     focusAfterExtraConfirm();
   };
 
@@ -1066,7 +1287,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
             setPartialAmount('');
             setPixModalOpen(false);
-            setPixAutoFinalize(true);
+            // Fix #10 — mostra o flash "PIX RECEBIDO" por 1,2s antes do auto-finalize
+            setPixConfirmedFlash(true);
+            setTimeout(() => {
+              setPixConfirmedFlash(false);
+              setPixAutoFinalize(true);
+            }, 1200);
           }
         }
       )
@@ -1079,6 +1305,33 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       setLinkedClient(client);
       setShowClientPicker(false);
       focusAfterExtraConfirm();
+      return;
+    }
+    // Fix #15 — checa limite de crédito antes de lançar fiado.
+    //   - balance negativo = dívida atual; positivo = crédito (deve a ele).
+    //   - creditLimit <= 0  = cliente sem limite cadastrado → bloqueia.
+    if (client.creditLimit <= 0) {
+      showAlert({
+        title: 'Cliente sem limite de crédito',
+        message: `${client.name} não tem limite de crédito cadastrado. Atualize o cadastro do cliente antes de lançar fiado.`,
+        variant: 'warning',
+      });
+      return;
+    }
+    const currentDebt = client.balance < 0 ? -client.balance : 0;
+    const disponivel = client.creditLimit - currentDebt;
+    if (pendingFiadoAmount > disponivel + 0.001) {
+      showAlert({
+        title: 'Limite de crédito excedido',
+        message:
+          `${client.name}\n` +
+          `· Limite: R$ ${client.creditLimit.toFixed(2).replace('.', ',')}\n` +
+          `· Já deve: R$ ${currentDebt.toFixed(2).replace('.', ',')}\n` +
+          `· Disponível: R$ ${Math.max(0, disponivel).toFixed(2).replace('.', ',')}\n` +
+          `· Lançamento: R$ ${pendingFiadoAmount.toFixed(2).replace('.', ',')}\n\n` +
+          `Reduza o valor do fiado, escolha outra forma de pagamento, ou aumente o limite no cadastro.`,
+        variant: 'warning',
+      });
       return;
     }
     // modo 'fiado'
@@ -1154,12 +1407,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       setSaleDiscount(0);
       setCpfNota('');
       setLinkedClient(null);
+      // Fluxo pós-venda:
+      //   (1) Se houver troco, tela grande de troco para o cliente.
+      //   (2) Modal de Recibo na tela — operador pode IMPRIMIR (PDF) ou CONTINUAR.
+      //   (3) Tela de Agradecimento.
+      // Independente do troco, o recibo é a próxima etapa — o handler do troco
+      // ou do confirm direto abre postSaleReceipt.
+      setPostSaleReceipt({ sale: newSale, troco: trocoFinal });
       if (trocoFinal > 0.001) {
-        // Tela grande dedicada de troco (padrão supermercado) — depois abre agradecimento
         setChangeModal({ amount: trocoFinal });
-      } else {
-        // Sem troco: vai direto para tela de agradecimento
-        setThankYouOpen(true);
       }
     } catch (err: any) {
       const msg = err?.message ? String(err.message) : 'Falha desconhecida ao gravar a venda.';
@@ -1261,7 +1517,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             <div className="flex items-center gap-3 min-w-0 flex-1">
               {onExitToMenu && (
                 <button
-                  onClick={onExitToMenu}
+                  onClick={tryExitToMenu}
                   className="shrink-0 glass-blue px-5 py-2.5 rounded-lg flex items-center gap-2 font-bold uppercase tracking-wide text-base md:text-lg text-white border-2 transition-all"
                   style={{ borderColor: '#FFC107' }}
                   title="Abrir menu / Sair do PDV"
@@ -1352,13 +1608,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                 {/* Items table */}
                 <div className="flex-1 flex flex-col min-w-0 border-r border-gray-300">
                   <div
-                    className="grid grid-cols-[70px_160px_1fr_80px_130px_150px_40px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
+                    className="grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
                     style={{ background: NAVY_DARK }}
                   >
                     <div>ITEM</div>
                     <div>CÓDIGO</div>
                     <div>DESCRIÇÃO</div>
                     <div className="text-right">QTD</div>
+                    <div className="text-right">ESTOQUE</div>
                     <div className="text-right">UNIT R$</div>
                     <div className="text-right">TOTAL R$</div>
                     <div></div>
@@ -1368,19 +1625,31 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                       const bruto = item.price * item.quantity;
                       const desc = item.discount ?? 0;
                       const liquido = bruto - desc;
+                      // Estoque ao vivo (lookup no products) menos o que já está no carrinho deste item
+                      const live = products.find(p => p.id === item.id);
+                      const controla = (live?.controlStock ?? item.controlStock ?? true);
+                      const baseStock = live?.stock ?? item.stock ?? 0;
+                      const restante = parseFloat((baseStock - item.quantity).toFixed(3));
                       return (
                         <div
                           key={item.id}
-                          className={`grid grid-cols-[70px_160px_1fr_80px_130px_150px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b border-gray-200 ${
+                          className={`grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b border-gray-200 ${
                             idx === cart.length - 1 ? 'bg-yellow-50' : ''
                           }`}
                         >
                           <div className="text-gray-500">{String(idx + 1).padStart(3, '0')}</div>
                           <div className="text-gray-500 truncate">{item.ean13 || item.ref || '—'}</div>
-                          <div className="truncate font-semibold">
-                            {(item.name || '').toUpperCase()}
+                          <div className="truncate font-semibold flex items-center gap-2 min-w-0">
+                            <span className="truncate">{(item.name || '').toUpperCase()}</span>
+                            <button
+                              onClick={() => openItemDiscountModal(item.id)}
+                              tabIndex={-1}
+                              className="shrink-0 px-1.5 text-[10px] font-black border rounded hover:bg-yellow-100"
+                              style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
+                              title="Desconto neste item"
+                            >%</button>
                             {desc > 0 && (
-                              <span className="ml-2 text-[11px] font-bold tracking-wider align-middle inline-flex items-center gap-1" style={{ color: RED }}>
+                              <span className="text-[11px] font-bold tracking-wider align-middle inline-flex items-center gap-1 shrink-0" style={{ color: RED }}>
                                 · DESC −R$ {fmt(desc)}
                                 <button
                                   onClick={() => clearItemDiscount(item.id)}
@@ -1393,6 +1662,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                             )}
                           </div>
                           <div className="text-right">{fmtQty(item.quantity, item.unit)}{item.unit && (item.unit.toUpperCase() === 'KG' || item.unit.toUpperCase() === 'G') ? ` ${item.unit.toLowerCase()}` : ''}</div>
+                          <div
+                            className={`text-right font-bold ${!controla ? 'text-gray-400' : restante <= 0 ? 'text-red-700' : restante <= (live?.minStock ?? 0) ? 'text-yellow-700' : 'text-gray-700'}`}
+                            title={controla ? `Em estoque: ${fmtQty(baseStock, item.unit)} · Após venda: ${fmtQty(Math.max(restante, 0), item.unit)}` : 'Sem controle de estoque'}
+                          >
+                            {controla ? fmtQty(baseStock, item.unit) : '∞'}
+                          </div>
                           <div className="text-right">{fmt(item.price)}</div>
                           <div className="text-right font-bold">{fmt(liquido)}</div>
                           <button
@@ -1476,7 +1751,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                     <input
                       ref={codeInputRef}
                       value={classicCode}
-                      onChange={(e) => { setClassicCode(e.target.value); setClassicSuggestionIdx(-1); }}
+                      onChange={(e) => { setClassicCode(e.target.value); setClassicSuggestionIdx(-1); setSuggestionsHidden(false); }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -1489,8 +1764,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                           setClassicSuggestionIdx(prev => Math.max(prev - 1, -1));
                         } else if (e.key === 'Escape') {
                           e.preventDefault();
-                          setClassicCode('');
-                          setClassicSuggestionIdx(-1);
+                          // Fix #17 — 1º Esc fecha só as sugestões (mantém texto).
+                          // 2º Esc (sem sugestões visíveis) limpa o input.
+                          if (classicSuggestions.length > 0) {
+                            setSuggestionsHidden(true);
+                            setClassicSuggestionIdx(-1);
+                          } else {
+                            setClassicCode('');
+                            setClassicSuggestionIdx(-1);
+                          }
                         }
                       }}
                       onBlur={() => {
@@ -1543,6 +1825,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                     )}
                   </div>
                   <div className="flex-1" />
+                  {/* Fix #16 — gancheira: suspende a venda atual ou recupera a suspensa */}
+                  {cart.length > 0 ? (
+                    <button
+                      onClick={suspendCurrentSale}
+                      className="px-4 py-2.5 text-sm font-black uppercase tracking-wider border-2 hover:bg-yellow-50"
+                      style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
+                      title="Suspender venda na gancheira (para atender outro cliente)"
+                    >
+                      ⌖ SUSPENDER
+                    </button>
+                  ) : suspendedSale ? (
+                    <button
+                      onClick={recallSuspendedSale}
+                      className="px-4 py-2.5 text-sm font-black uppercase tracking-wider border-2 ring-2 ring-yellow-300"
+                      style={{ background: YELLOW, color: NAVY_DARK, borderColor: NAVY_DARK }}
+                      title={`Recuperar venda suspensa (${suspendedSale.cart.length} itens · suspensa em ${new Date(suspendedSale.suspendedAt).toLocaleTimeString('pt-BR')})`}
+                    >
+                      ⟲ RECUPERAR ({suspendedSale.cart.length})
+                    </button>
+                  ) : null}
                   <button
                     onClick={cancelSale}
                     disabled={cart.length === 0 && payments.length === 0}
@@ -1658,6 +1960,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                         className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-2 focus:ring-blue-500/30"
                         style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                       />
+                      {/* Fix #9 — feedback inline quando valor digitado passa do restante. */}
+                      {partialAmount && parseCurrencyToNumber(partialAmount) > remaining + 0.001 && remaining > 0 && (
+                        <p className="mt-1 text-[11px] font-bold" style={{ color: YELLOW_DARK }}>
+                          ⚠ Valor maior que o restante (R$ {fmt(remaining)}) — será lançado só R$ {fmt(remaining)}.
+                        </p>
+                      )}
                     </div>
 
                     {/* Pagamentos Lançados — abaixo do VALOR DESTA FORMA */}
@@ -1699,7 +2007,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                                         if (e.key === 'Enter') { e.preventDefault(); commitEditPayment(); }
                                         else if (e.key === 'Escape') { e.preventDefault(); setEditingPaymentIdx(null); setEditingPaymentValue(''); }
                                       }}
-                                      onBlur={commitEditPayment}
+                                      // Fix #14 — blur agora CANCELA a edição (mais previsível).
+                                      // Para confirmar, Enter ou clicar no lápis novamente.
+                                      onBlur={() => { setEditingPaymentIdx(null); setEditingPaymentValue(''); }}
                                       className="w-full mt-0.5 bg-white border-2 text-sm font-bold text-gray-900 outline-none px-1.5 py-0.5 tabular-nums focus:border-blue-700"
                                       style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                                     />
@@ -1710,9 +2020,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
                                     tabIndex={-1}
+                                    // Em modo edição, preventDefault no mousedown evita o blur
+                                    // do input (que agora cancela) — assim o click confirma.
+                                    onMouseDown={isEditing ? (e) => e.preventDefault() : undefined}
                                     onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
                                     className="p-1.5 rounded glass-blue shimmer"
-                                    title="Editar valor"
+                                    title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor'}
                                   >
                                     <Pencil size={12} className="relative z-[2]" />
                                   </button>
@@ -2000,7 +2313,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   />
                   <div className="flex-1" />
                   <button
-                    onClick={() => setCheckoutMode(false)}
+                    onClick={tryReturnToLeitura}
                     className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                     style={{ borderColor: '#9ca3af' }}
                     title="Voltar para a leitura"
@@ -2071,12 +2384,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
           <div
             className="fixed inset-0 z-[300] flex items-center justify-center p-4"
             style={{ background: 'rgba(0,0,0,0.75)' }}
-            onClick={() => { setChangeModal(null); setThankYouOpen(true); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
                 e.preventDefault();
                 setChangeModal(null);
-                setThankYouOpen(true);
+                // postSaleReceipt aparece em seguida (já setado pelo finalizeSale)
               }
             }}
             tabIndex={-1}
@@ -2115,7 +2427,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               </div>
               <div className="px-6 py-3 flex justify-end" style={{ background: MONEY }}>
                 <button
-                  onClick={() => { setChangeModal(null); setThankYouOpen(true); }}
+                  onClick={() => { setChangeModal(null); /* postSaleReceipt já está setado e aparece em seguida */ }}
                   className="px-8 py-3 bg-white text-base font-black uppercase tracking-wider rounded"
                   style={{ color: MONEY }}
                   autoFocus
@@ -2127,13 +2439,294 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
           </div>
         )}
 
+        {/* Recibo pós-venda — aparece entre o troco e a tela de agradecimento.
+            Operador pode IMPRIMIR (gera PDF) ou CONTINUAR (vai para o agradecimento). */}
+        {postSaleReceipt && !changeModal && (() => {
+          const s = postSaleReceipt.sale;
+          const itemsSubtotal = s.items.reduce((a, it) => a + it.price * it.quantity - (it.discount ?? 0), 0);
+          const goNext = () => {
+            setPostSaleReceipt(null);
+            setThankYouOpen(true);
+          };
+          const tryPrintPDF = () => {
+            try {
+              PDFReport.generateSaleReceipt(s, {
+                operatorName: currentUser.name,
+                cashChange: postSaleReceipt.troco,
+              });
+            } catch (err: any) {
+              console.error('[PDV] Falha ao gerar recibo PDF:', err);
+              showAlert({
+                title: 'Erro ao gerar PDF',
+                message: err?.message ? String(err.message) : 'Não foi possível gerar o recibo. Verifique o console do navegador.',
+                variant: 'error',
+              });
+            }
+          };
+          return (
+            <div
+              className="fixed inset-0 z-[305] flex items-center justify-center p-4 bg-black/60"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') {
+                  e.preventDefault(); e.stopPropagation();
+                  goNext();
+                } else if (e.key === 'Enter') {
+                  // Deixa o navegador disparar o click() do botao focado
+                  // (IMPRIMIR PDF ou CONTINUAR). So tratamos aqui se o foco
+                  // estiver fora de um botao — segue como CONTINUAR.
+                  const tag = (e.target as HTMLElement)?.tagName;
+                  if (tag !== 'BUTTON') {
+                    e.preventDefault(); e.stopPropagation();
+                    goNext();
+                  } else {
+                    e.stopPropagation();
+                  }
+                } else if (e.key === 'p' || e.key === 'P') {
+                  e.preventDefault(); e.stopPropagation();
+                  tryPrintPDF();
+                } else if (e.key.length === 1 || /^F\d+$/.test(e.key)) {
+                  e.stopPropagation();
+                }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && postSaleReceipt && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div
+                className="bg-white border-2 max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl"
+                style={{ borderColor: MONEY }}
+              >
+                <div
+                  className="px-4 py-2.5 flex items-center justify-between text-white"
+                  style={{ background: MONEY }}
+                >
+                  <span className="font-black tracking-wide text-sm uppercase">Recibo · Venda concluída</span>
+                  <button
+                    onClick={goNext}
+                    tabIndex={-1}
+                    className="hover:opacity-70"
+                    title="Continuar (Enter)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div
+                  className="flex-1 overflow-y-auto custom-scrollbar p-4"
+                  style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
+                >
+                  <div className="text-center mb-2">
+                    <div className="text-base font-black tracking-wide">MAXPOS</div>
+                    <div className="text-[10px] tracking-widest">— CUPOM NÃO FISCAL —</div>
+                  </div>
+                  <div className="border-t border-b border-dashed border-gray-400 py-1 text-[11px] mb-2 space-y-0.5">
+                    <div>Operador: {currentUser.name.toUpperCase()}</div>
+                    <div>Data: {new Date(s.date).toLocaleString('pt-BR')}</div>
+                    <div>Venda: {s.id.slice(0, 8).toUpperCase()}</div>
+                    {s.cpfCnpjNota && <div>CPF/CNPJ: {maskCpfCnpj(s.cpfCnpjNota)}</div>}
+                  </div>
+                  <div className="text-[11px]">
+                    {s.items.map((it, i) => {
+                      const bruto = it.price * it.quantity;
+                      const liquido = bruto - (it.discount ?? 0);
+                      return (
+                        <div key={i} className="mb-1.5">
+                          <div className="truncate font-bold">{String(i + 1).padStart(3, '0')} {(it.name || '').toUpperCase()}</div>
+                          <div className="flex justify-between">
+                            <span>{fmtQty(it.quantity, it.unit)} {(it.unit || 'UN').toUpperCase()} × {it.price.toFixed(2).replace('.', ',')}</span>
+                            <span>{liquido.toFixed(2).replace('.', ',')}</span>
+                          </div>
+                          {(it.discount ?? 0) > 0 && (
+                            <div className="flex justify-between text-[10px]">
+                              <span>  Desconto</span>
+                              <span>-{(it.discount ?? 0).toFixed(2).replace('.', ',')}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>Subtotal</span>
+                      <span>R$ {itemsSubtotal.toFixed(2).replace('.', ',')}</span>
+                    </div>
+                    {(s.discount ?? 0) > 0 && (
+                      <div className="flex justify-between">
+                        <span>Desconto venda</span>
+                        <span>-{(s.discount ?? 0).toFixed(2).replace('.', ',')}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm font-black">
+                      <span>TOTAL</span>
+                      <span>R$ {s.total.toFixed(2).replace('.', ',')}</span>
+                    </div>
+                  </div>
+                  <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
+                    <div className="font-bold">FORMAS DE PAGAMENTO</div>
+                    {s.payments.map((p, i) => {
+                      const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale' };
+                      const label = (labels[p.method] ?? p.method) +
+                        (p.installments && p.installments > 1 ? ` ${p.installments}x` : '') +
+                        (p.method === 'fiado' && p.clientName ? ` — ${p.clientName}` : '');
+                      return (
+                        <div key={i} className="flex justify-between">
+                          <span>{label}</span>
+                          <span>R$ {p.amount.toFixed(2).replace('.', ',')}</span>
+                        </div>
+                      );
+                    })}
+                    {postSaleReceipt.troco > 0.001 && (
+                      <div className="flex justify-between text-sm font-black pt-1">
+                        <span>TROCO</span>
+                        <span style={{ color: MONEY }}>R$ {postSaleReceipt.troco.toFixed(2).replace('.', ',')}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-center text-[10px] mt-3 tracking-widest">
+                    *** OBRIGADO ***
+                  </div>
+                </div>
+                <div className="px-4 py-3 flex gap-3 border-t border-gray-300 bg-gray-50">
+                  <button
+                    onClick={tryPrintPDF}
+                    className="flex-1 px-4 py-3 text-white text-sm font-black uppercase tracking-wide flex items-center justify-center gap-2 outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-300"
+                    style={{ background: NAVY_DARK }}
+                    title="Baixar este recibo em PDF (atalho: P)"
+                  >
+                    <Receipt size={16} /> IMPRIMIR PDF (P)
+                  </button>
+                  <button
+                    onClick={goNext}
+                    autoFocus
+                    className="flex-1 px-4 py-3 text-white text-sm font-black uppercase tracking-wide outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-300"
+                    style={{ background: MONEY }}
+                    title="Ir para a tela de agradecimento (Enter)"
+                  >
+                    CONTINUAR (Enter)
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Fix #19 — Vale-Alimentação: auth simulada (4 dígitos) */}
+        {valeAuthModal && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValeAuthModal(null); setValeAuthDigits(''); }
+              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmValeAuth(); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && valeAuthModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div className="px-4 py-2.5 text-white" style={{ background: NAVY_DARK }}>
+                <span className="font-black tracking-wide text-sm uppercase">Vale-Alimentação · Autorização</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-xs text-gray-600">
+                  Simulação: peça ao cliente os <b>4 últimos dígitos</b> do cartão Vale. Qualquer combinação de 4 dígitos autoriza (para fins didáticos).
+                </p>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Valor</span>
+                  <span className="font-bold tabular-nums">R$ {fmt(valeAuthModal.amount)}</span>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">ÚLTIMOS 4 DÍGITOS</label>
+                  <input
+                    autoFocus
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={valeAuthDigits}
+                    onChange={(e) => setValeAuthDigits(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    placeholder="0000"
+                    className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700 text-center tracking-[0.4em]"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => { setValeAuthModal(null); setValeAuthDigits(''); }}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={confirmValeAuth}
+                    disabled={!/^\d{4}$/.test(valeAuthDigits)}
+                    className="flex-1 px-4 py-3 text-white font-bold disabled:opacity-30"
+                    style={{ background: NAVY_DARK }}
+                  >
+                    AUTORIZAR
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Fix #23 — escolher qual cupom reimprimir (últimas N) */}
+        {reprintList && (
+          <div
+            className="fixed inset-0 z-[200] flex items-start justify-center p-6 bg-black/40"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setReprintList(null); }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && reprintList && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="w-full max-w-2xl mt-10 bg-white border-2 shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div className="px-4 py-2.5 flex items-center justify-between text-white" style={{ background: NAVY_DARK }}>
+                <span className="font-black tracking-wide text-sm uppercase">Reimprimir · Últimas {reprintList.length} vendas</span>
+                <button onClick={() => setReprintList(null)} className="text-xs font-bold px-2 py-1 border border-white/40 hover:bg-white/10">FECHAR (Esc)</button>
+              </div>
+              <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                {reprintList.map((s, idx) => (
+                  <button
+                    key={s.id}
+                    onClick={() => { setReprintList(null); setReprintSale(s); }}
+                    className="w-full grid grid-cols-[60px_180px_1fr_140px] gap-3 text-left px-4 py-3 text-sm border-b border-gray-200 hover:bg-yellow-50"
+                  >
+                    <span className="tabular-nums text-gray-400 text-xs self-center">{String(idx + 1).padStart(2, '0')}</span>
+                    <span className="tabular-nums text-gray-700 self-center">{new Date(s.date).toLocaleString('pt-BR')}</span>
+                    <span className="text-gray-500 text-xs self-center truncate">
+                      Cupom <b className="font-mono">{s.id.slice(0, 8).toUpperCase()}</b> · {s.items.length} {s.items.length === 1 ? 'item' : 'itens'}
+                    </span>
+                    <span className="text-right font-bold tabular-nums text-lg self-center" style={{ color: MONEY }}>R$ {fmt(s.total)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Fix #10 — flash "PIX RECEBIDO" antes do auto-finalize */}
+        {pixConfirmedFlash && (
+          <div
+            className="fixed inset-0 z-[420] flex items-center justify-center pointer-events-none"
+            style={{ background: 'rgba(15,118,110,0.92)' }}
+          >
+            <div className="text-center text-white">
+              <div className="text-5xl md:text-6xl font-black tracking-wider">PIX RECEBIDO</div>
+              <div className="mt-3 text-xl md:text-2xl font-bold tabular-nums opacity-90">R$ {pixAmount.toFixed(2).replace('.', ',')}</div>
+            </div>
+          </div>
+        )}
+
         {/* Agradecimento — tela final do supermercado SuperMax (só fecha com ENTER) */}
         {thankYouOpen && (
           <div
             className="fixed inset-0 z-[310] flex items-center justify-center"
             style={{ background: 'rgba(255,255,255,0.98)' }}
             onKeyDown={(e) => {
-              // Apenas ENTER fecha — clique, Esc, Espaço e qualquer outra tecla são ignorados
               if (e.key === 'Enter') {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2870,14 +3463,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                setOpenCashModal(false);
-                // Vai direto para Inicio — abrir so a sidebar deixaria o operador
-                // poder fechar o overlay sem trocar de aba e ficar no PDV sem
-                // sessao de caixa (vendas iriam sem sessionId).
-                if (onGoToInicio) onGoToInicio();
-                else onExitToMenu?.();
+                // Esc por reflexo NAO deve derrubar o operador pro Inicio —
+                // para sair, ele tem que clicar VOLTAR AO INICIO explicitamente.
+                e.preventDefault(); e.stopPropagation();
               }
               else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmOpenCashSession(); }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
@@ -3435,8 +4023,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                       onClick={printReprint}
                       className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
                       style={{ background: NAVY_DARK }}
+                      title="Baixar recibo desta venda em PDF"
                     >
-                      <Receipt size={16} /> IMPRIMIR
+                      <Receipt size={16} /> RECIBO PDF
                     </button>
                   </div>
                 </div>
