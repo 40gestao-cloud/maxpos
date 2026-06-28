@@ -105,7 +105,7 @@ export default function Login({ onLogin }: LoginProps) {
         </form>
 
         <div className="pt-6 text-center">
-          <img src="/icon-assinatura-modoclaro.png" alt="Assinatura" className="mx-auto h-8" />
+          <img src="/icon-assinatura-modoclaro.png" alt="Assinatura" className="mx-auto h-12" />
         </div>
       </div>
     </div>
