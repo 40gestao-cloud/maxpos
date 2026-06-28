@@ -105,9 +105,7 @@ export default function Login({ onLogin }: LoginProps) {
         </form>
 
         <div className="pt-6 text-center">
-          <p className="text-sm text-gray-600 font-bold uppercase tracking-widest">
-            © 2026 Desenvolvido por Igor Souza
-          </p>
+          <img src="/icon-assinatura-modoclaro.png" alt="Assinatura" className="mx-auto h-8" />
         </div>
       </div>
     </div>
