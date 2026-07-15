@@ -1250,3 +1250,308 @@ $$;
 REVOKE ALL ON FUNCTION public.finalize_sale_atomic(JSONB) FROM public;
 GRANT EXECUTE ON FUNCTION public.finalize_sale_atomic(JSONB) TO authenticated;
 -- ============================================================
+
+-- ============================================================
+-- RPC: renotificar_pix_pago — fallback do MaxPay quando o PIX já
+-- foi marcado como 'pago' por outra via. confirmar_pix_pendente é
+-- no-op nesse caso (WHERE status='aguardando'); esta função apenas
+-- toca paid_at para reemitir o evento Realtime que o PDV escuta.
+-- Mesma assinatura usada pelo LogMax — MaxPay chama identicamente.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.renotificar_pix_pago(p_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE pix_pendentes
+     SET paid_at = NOW()
+   WHERE id = p_id AND status = 'pago';
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.renotificar_pix_pago(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.renotificar_pix_pago(UUID) TO anon, authenticated;
+-- ============================================================
+
+-- ============================================================
+-- MAXBANK — Carteira do colaborador + Folha de Pagamento
+-- ============================================================
+-- Portado do LogMax (migrations 061/062), adaptado ao MaxPOS: aqui
+-- não existe tabela `funcionarios` separada — a Equipe já É
+-- `user_profiles`, então `folha_pagamento.colaborador_id` referencia
+-- user_profiles diretamente (sem bridge por email).
+--
+--   • maxbank_contas      — 1 conta por colaborador, 3 carteiras
+--                           (salário, benefícios, bonificações).
+--   • maxbank_transacoes  — extrato; origem polimórfica.
+--   • folha_pagamento     — folha mensal por colaborador; status
+--                           Rascunho → Processada → Paga.
+--   • RPC creditar_folha_maxbank(p_folha_id) credita o líquido em
+--     maxbank_contas.saldo_salario ao marcar a folha como Paga.
+--     Idempotente via UNIQUE parcial (mesma folha não credita 2x).
+--   • RLS: colaborador lê a própria conta/extrato/folha; admin/
+--     chairman/ceo/gerente_financas/colaborador_financas leem e
+--     gerenciam tudo.
+--   • MaxBank e MaxPay reconhecem o MaxPOS como filial (id 5) e
+--     usam o mesmo auth.users — colaborador loga no MaxBank com o
+--     mesmo email/senha do MaxPOS.
+-- ============================================================
+
+-- ─── maxbank_contas ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS maxbank_contas (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  colaborador_id      UUID NOT NULL UNIQUE
+                       REFERENCES user_profiles(id) ON DELETE CASCADE,
+  saldo_salario       NUMERIC(15,2) NOT NULL DEFAULT 0
+                       CHECK (saldo_salario >= 0),
+  saldo_beneficios    NUMERIC(15,2) NOT NULL DEFAULT 0
+                       CHECK (saldo_beneficios >= 0),
+  saldo_bonificacoes  NUMERIC(15,2) NOT NULL DEFAULT 0
+                       CHECK (saldo_bonificacoes >= 0),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION maxbank_contas_set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_maxbank_contas_updated_at ON maxbank_contas;
+CREATE TRIGGER trg_maxbank_contas_updated_at
+  BEFORE UPDATE ON maxbank_contas
+  FOR EACH ROW EXECUTE FUNCTION maxbank_contas_set_updated_at();
+
+-- ─── maxbank_transacoes ─────────────────────────────────────
+CREATE TABLE IF NOT EXISTS maxbank_transacoes (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conta_id     UUID NOT NULL REFERENCES maxbank_contas(id) ON DELETE CASCADE,
+  tipo         TEXT NOT NULL CHECK (tipo IN ('credito', 'debito')),
+  carteira     TEXT NOT NULL CHECK (carteira IN ('salario', 'beneficios', 'bonificacoes')),
+  valor        NUMERIC(15,2) NOT NULL CHECK (valor > 0),
+  descricao    TEXT NOT NULL,
+  origem       TEXT,
+  origem_id    UUID,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by   UUID REFERENCES auth.users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_maxbank_transacoes_conta_data
+  ON maxbank_transacoes (conta_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_maxbank_transacoes_origem
+  ON maxbank_transacoes (origem, origem_id)
+  WHERE origem IS NOT NULL;
+
+-- Idempotência: mesma folha não credita 2x na mesma carteira.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_maxbank_transacoes_folha
+  ON maxbank_transacoes (origem_id, carteira)
+  WHERE origem = 'folha_pagamento';
+
+-- Auto-criação de conta para cada user_profile novo (colaborador da Equipe)
+CREATE OR REPLACE FUNCTION criar_maxbank_conta_para_colaborador()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO maxbank_contas (colaborador_id)
+  VALUES (NEW.id)
+  ON CONFLICT (colaborador_id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_user_profiles_maxbank_conta ON user_profiles;
+CREATE TRIGGER trg_user_profiles_maxbank_conta
+  AFTER INSERT ON user_profiles
+  FOR EACH ROW EXECUTE FUNCTION criar_maxbank_conta_para_colaborador();
+
+-- Backfill — colaboradores existentes ganham conta zerada.
+INSERT INTO maxbank_contas (colaborador_id)
+SELECT up.id
+FROM user_profiles up
+WHERE NOT EXISTS (
+  SELECT 1 FROM maxbank_contas mc WHERE mc.colaborador_id = up.id
+);
+
+-- ─── folha_pagamento ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS folha_pagamento (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  colaborador_id    UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  mes_ref           TEXT NOT NULL, -- formato 'YYYY-MM'
+  salario_bruto     NUMERIC(15,2) NOT NULL DEFAULT 0 CHECK (salario_bruto >= 0),
+  descontos         NUMERIC(15,2) NOT NULL DEFAULT 0 CHECK (descontos >= 0),
+  salario_liquido   NUMERIC(15,2) NOT NULL DEFAULT 0 CHECK (salario_liquido >= 0),
+  status            TEXT NOT NULL DEFAULT 'Rascunho'
+                     CHECK (status IN ('Rascunho', 'Processada', 'Paga')),
+  observacoes       TEXT,
+  ativo             BOOLEAN NOT NULL DEFAULT true,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  paid_at           TIMESTAMPTZ,
+  created_by        UUID REFERENCES auth.users(id)
+);
+
+-- Uma folha ativa por colaborador/mês (soft-delete via `ativo`
+-- libera reprocessamento sem violar a constraint).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_folha_pagamento_colaborador_mes
+  ON folha_pagamento (colaborador_id, mes_ref)
+  WHERE ativo;
+
+CREATE INDEX IF NOT EXISTS idx_folha_pagamento_mes
+  ON folha_pagamento (mes_ref, status);
+
+-- ─── RLS ─────────────────────────────────────────────────────
+ALTER TABLE maxbank_contas     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE maxbank_transacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE folha_pagamento    ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS maxbank_contas_read ON maxbank_contas;
+CREATE POLICY maxbank_contas_read ON maxbank_contas
+  FOR SELECT TO authenticated USING (
+    colaborador_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles me
+       WHERE me.id = auth.uid()
+         AND me.role IN ('admin', 'chairman', 'ceo', 'gerente_financas', 'colaborador_financas')
+    )
+  );
+
+DROP POLICY IF EXISTS maxbank_transacoes_read ON maxbank_transacoes;
+CREATE POLICY maxbank_transacoes_read ON maxbank_transacoes
+  FOR SELECT TO authenticated USING (
+    conta_id IN (SELECT id FROM maxbank_contas WHERE colaborador_id = auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM user_profiles me
+       WHERE me.id = auth.uid()
+         AND me.role IN ('admin', 'chairman', 'ceo', 'gerente_financas', 'colaborador_financas')
+    )
+  );
+-- INSERT/UPDATE/DELETE de maxbank_contas/transacoes: sem policy =
+-- bloqueado para authenticated. Só via RPC SECURITY DEFINER.
+
+DROP POLICY IF EXISTS folha_pagamento_read ON folha_pagamento;
+CREATE POLICY folha_pagamento_read ON folha_pagamento
+  FOR SELECT TO authenticated USING (
+    colaborador_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM user_profiles me
+       WHERE me.id = auth.uid()
+         AND me.role IN ('admin', 'chairman', 'ceo', 'gerente_financas', 'colaborador_financas')
+    )
+  );
+
+DROP POLICY IF EXISTS folha_pagamento_write ON folha_pagamento;
+CREATE POLICY folha_pagamento_write ON folha_pagamento
+  FOR ALL TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles me
+       WHERE me.id = auth.uid()
+         AND me.role IN ('admin', 'chairman', 'ceo', 'gerente_financas', 'colaborador_financas')
+    )
+  ) WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles me
+       WHERE me.id = auth.uid()
+         AND me.role IN ('admin', 'chairman', 'ceo', 'gerente_financas', 'colaborador_financas')
+    )
+  );
+
+-- ─── Realtime ───────────────────────────────────────────────
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'maxbank_contas'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE maxbank_contas;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'folha_pagamento'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE folha_pagamento;
+  END IF;
+END $$;
+
+-- ─── RPC: creditar_folha_maxbank ────────────────────────────
+-- Chamada pelo frontend (Folha de Pagamento) após marcar a folha
+-- como 'Paga'. Credita o salário líquido em maxbank_contas e
+-- registra o extrato. Idempotente: reprocessar a mesma folha não
+-- duplica o crédito (UNIQUE parcial em maxbank_transacoes).
+CREATE OR REPLACE FUNCTION public.creditar_folha_maxbank(p_folha_id UUID)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_colaborador_id   UUID;
+  v_salario_liquido  NUMERIC(15,2);
+  v_mes_ref          TEXT;
+  v_ativo            BOOLEAN;
+  v_conta_id         UUID;
+  v_transacao_id     UUID;
+  v_descricao        TEXT;
+BEGIN
+  SELECT colaborador_id, salario_liquido, mes_ref, ativo
+    INTO v_colaborador_id, v_salario_liquido, v_mes_ref, v_ativo
+    FROM folha_pagamento
+   WHERE id = p_folha_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Folha não encontrada: %', p_folha_id
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_ativo = false THEN
+    RAISE EXCEPTION 'Folha inativa (soft-deleted) não pode ser creditada.'
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_salario_liquido IS NULL OR v_salario_liquido <= 0 THEN
+    RAISE EXCEPTION 'Salário líquido inválido (% para folha %).', v_salario_liquido, p_folha_id;
+  END IF;
+
+  -- Garante conta MaxBank do colaborador (fallback caso o trigger
+  -- de auto-criação tenha perdido alguém).
+  INSERT INTO maxbank_contas (colaborador_id)
+  VALUES (v_colaborador_id)
+  ON CONFLICT (colaborador_id) DO NOTHING;
+
+  SELECT id INTO v_conta_id
+    FROM maxbank_contas
+   WHERE colaborador_id = v_colaborador_id;
+
+  v_descricao := 'Folha ' || COALESCE(v_mes_ref, '?') || ' — salário líquido';
+
+  BEGIN
+    INSERT INTO maxbank_transacoes
+      (conta_id, tipo, carteira, valor, descricao, origem, origem_id, created_by)
+    VALUES
+      (v_conta_id, 'credito', 'salario', v_salario_liquido,
+       v_descricao, 'folha_pagamento', p_folha_id, auth.uid())
+    RETURNING id INTO v_transacao_id;
+  EXCEPTION
+    WHEN unique_violation THEN
+      -- Folha já foi creditada antes; idempotente.
+      RETURN NULL;
+  END;
+
+  UPDATE maxbank_contas
+     SET saldo_salario = saldo_salario + v_salario_liquido
+   WHERE id = v_conta_id;
+
+  RETURN v_transacao_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.creditar_folha_maxbank(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.creditar_folha_maxbank(UUID) TO authenticated;
+-- ============================================================

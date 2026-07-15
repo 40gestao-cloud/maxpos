@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry } from '../types';
+import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
 
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
@@ -577,5 +577,60 @@ export const Storage = {
       }
     }
     return total;
+  },
+
+  // ─── Folha de Pagamento / MaxBank ─────────────────────────
+  getFolhas: async (mesRef?: string): Promise<FolhaPagamento[]> => {
+    let q = supabase.from('folha_pagamento').select('*').eq('ativo', true).order('created_at', { ascending: false });
+    if (mesRef) q = q.eq('mes_ref', mesRef);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []) as FolhaPagamento[];
+  },
+
+  upsertFolha: async (folha: Partial<FolhaPagamento> & { id?: string }): Promise<FolhaPagamento> => {
+    const row = { ...folha, id: folha.id ?? crypto.randomUUID() };
+    const { data, error } = await supabase.from('folha_pagamento').upsert(row).select().single();
+    if (error) throw error;
+    return data as FolhaPagamento;
+  },
+
+  deleteFolha: async (id: string): Promise<void> => {
+    const { error } = await supabase.from('folha_pagamento').update({ ativo: false }).eq('id', id);
+    if (error) throw error;
+  },
+
+  // Marca a folha como Paga e credita o líquido na conta MaxBank
+  // do colaborador via RPC (idempotente).
+  pagarFolha: async (folhaId: string): Promise<void> => {
+    const { error: updateErr } = await supabase
+      .from('folha_pagamento')
+      .update({ status: 'Paga', paid_at: new Date().toISOString() })
+      .eq('id', folhaId);
+    if (updateErr) throw updateErr;
+
+    const { error: rpcErr } = await supabase.rpc('creditar_folha_maxbank', { p_folha_id: folhaId });
+    if (rpcErr) throw rpcErr;
+  },
+
+  getMaxbankConta: async (colaboradorId: string): Promise<MaxbankConta | null> => {
+    const { data, error } = await supabase
+      .from('maxbank_contas')
+      .select('*')
+      .eq('colaborador_id', colaboradorId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as MaxbankConta | null) ?? null;
+  },
+
+  getMaxbankExtrato: async (contaId: string): Promise<MaxbankTransacao[]> => {
+    const { data, error } = await supabase
+      .from('maxbank_transacoes')
+      .select('*')
+      .eq('conta_id', contaId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    return (data ?? []) as MaxbankTransacao[];
   },
 };

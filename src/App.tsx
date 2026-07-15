@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
-  DollarSign, Shield, BarChart3,
+  DollarSign, Shield, BarChart3, Wallet,
   LayoutDashboard, UserCircle, Globe, Settings, Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,6 +17,7 @@ import PDVModule from './components/PDVModule';
 import CadastrosModule from './components/CadastrosModule';
 import EstoqueModule from './components/EstoqueModule';
 import FinanceiroModule from './components/FinanceiroModule';
+import FolhaPagamentoModule from './components/FolhaPagamentoModule';
 import FiscalModule from './components/FiscalModule';
 import RelatoriosModule from './components/RelatoriosModule';
 import CatalogoModule from './components/CatalogoModule';
@@ -28,7 +29,7 @@ import { supabase } from './lib/supabase';
 import { Storage } from './lib/storage';
 import { User } from './types';
 
-type Tab = 'inicio' | 'pdv' | 'cadastros' | 'estoque' | 'financeiro' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
+type Tab = 'inicio' | 'pdv' | 'cadastros' | 'estoque' | 'financeiro' | 'folha' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
@@ -74,6 +75,7 @@ export default function App() {
     { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'] },
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
     { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
+    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
     { id: 'fiscal', icon: Shield, label: 'Fiscal', roles: ['chairman', 'ceo', 'operador_geral', 'admin'] },
     { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
     { id: 'catalogo', icon: Globe, label: 'Catálogo Online', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
@@ -228,6 +230,7 @@ export default function App() {
               {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}
               {activeTab === 'estoque' && <EstoqueModule />}
               {activeTab === 'financeiro' && <FinanceiroModule />}
+              {activeTab === 'folha' && <FolhaPagamentoModule />}
               {activeTab === 'fiscal' && <FiscalModule />}
               {activeTab === 'relatorios' && <RelatoriosModule />}
               {activeTab === 'catalogo' && <CatalogoModule />}

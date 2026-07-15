@@ -198,3 +198,43 @@ export interface CashMovement {
   operadorId: string;
   createdAt: string;
 }
+
+// Folha de pagamento mensal de um colaborador (Equipe). Ao marcar
+// como 'Paga', credita o líquido na conta MaxBank do colaborador.
+export interface FolhaPagamento {
+  id: string;
+  colaborador_id: string;
+  mes_ref: string; // 'YYYY-MM'
+  salario_bruto: number;
+  descontos: number;
+  salario_liquido: number;
+  status: 'Rascunho' | 'Processada' | 'Paga';
+  observacoes?: string | null;
+  ativo: boolean;
+  created_at: string;
+  paid_at?: string | null;
+}
+
+// Conta MaxBank do colaborador (3 carteiras). Lida pelo app MaxBank
+// quando o colaborador loga com o mesmo email/senha do MaxPOS.
+export interface MaxbankConta {
+  id: string;
+  colaborador_id: string;
+  saldo_salario: number;
+  saldo_beneficios: number;
+  saldo_bonificacoes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaxbankTransacao {
+  id: string;
+  conta_id: string;
+  tipo: 'credito' | 'debito';
+  carteira: 'salario' | 'beneficios' | 'bonificacoes';
+  valor: number;
+  descricao: string;
+  origem?: string | null;
+  origem_id?: string | null;
+  created_at: string;
+}
