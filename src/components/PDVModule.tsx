@@ -1107,6 +1107,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
+      // Ctrl+G — Gancheira (suspender venda atual ou recuperar a suspensa).
+      // Só na leitura, fora de modal/picker: em checkout o operador está a um
+      // Enter da venda, atalho ali seria perigoso.
+      if ((e.key === 'g' || e.key === 'G') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (cart.length > 0) suspendCurrentSale();
+        else if (suspendedSale) recallSuspendedSale();
+        return;
+      }
+
       // F4 — Subtotal (leitura → checkout)
       if (e.key === 'F4') {
         e.preventDefault();
@@ -1194,7 +1205,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, isTraining, onExitToMenu, onExitTraining]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, isTraining, onExitToMenu, onExitTraining]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -1223,9 +1234,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   };
 
   // Trava defensiva: impede que dois modais/formas sejam acionados ao mesmo tempo
-  // (ex.: parcelamento aberto + Tab para PIX + Enter)
+  // (ex.: parcelamento aberto + Tab para PIX + Enter). NÃO inclui os pickers
+  // flutuantes de F2/F3 — os handlers globais já bloqueiam F1/F2/F3 enquanto
+  // esses pickers estão abertos, e incluí-los aqui gera stale closure: quando o
+  // Enter no picker chama handleCreditClick/handlePixClick/etc., a closure
+  // ainda vê o picker como aberto e faz early-return silencioso.
   const isAnyPaymentModalOpen = () =>
-    showInstallments || pixModalOpen || cashModalOpen || showClientPicker || cardPickerOpen || valePickerOpen;
+    showInstallments || pixModalOpen || cashModalOpen || showClientPicker;
 
   const handleCreditClick = () => {
     if (isAnyPaymentModalOpen()) return;
@@ -1808,6 +1823,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             )}
             {cashSession && !checkoutMode && cart.length === 0 && payments.length === 0 && (
               <button
+                data-training-target="close-cash-btn"
                 onClick={startCloseCash}
                 className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
                 style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}

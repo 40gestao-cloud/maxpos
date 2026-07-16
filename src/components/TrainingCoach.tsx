@@ -52,6 +52,10 @@ type Step = {
   body: string;
   hint?: string;
   done: (s: CoachPDVState, prev: CoachPDVState | null) => boolean;
+  // Se retornar true, o coach volta 1 passo (para o passo anterior deste track).
+  // Usado quando um passo depende de estado transitório (ex.: confirmDialog
+  // aberto) e o operador pode fechar por engano — sem isso o passo fica travado.
+  rewind?: (s: CoachPDVState, prev: CoachPDVState | null) => boolean;
 };
 
 type Track = {
@@ -255,7 +259,7 @@ const TRACK_FIADO: Track = {
       target: '[data-pay-method="fiado"]',
       title: 'Escolha FIADO',
       body:
-        'Fiado não tem tecla F (é raro — só clientes cadastrados). Como chegar lá:\n\n• Aperte Tab várias vezes (ou seta ← →) até o botão FIADO ficar destacado\n• Aperte ENTER\n\nUma lista de clientes vai aparecer.',
+        'Duas formas de chegar no fiado — escolha a mais rápida:\n\n• Rápido (recomendado): F3 abre o picker PIX/VALE/FIADO, ↓↓ desce até FIADO, Enter.\n• Manual: Tab (ou setas ← →) até o botão FIADO ficar destacado, Enter.\n\nUma lista de clientes vai aparecer.',
       done: (s) => s.showClientPicker,
     },
     {
@@ -331,8 +335,11 @@ const TRACK_FIX_MISTAKE: Track = {
       body:
         'Na janela de confirmação:\n\n• Use ← → ou Tab para escolher CANCELAR VENDA / VOLTAR\n• Enter aceita a opção destacada\n\nRepare: o botão VOLTAR já veio destacado (variante "perigo" — cancelar é ação destrutiva). Você precisa mover para CANCELAR VENDA e Enter.',
       hint:
-        'Esse detalhe evita perder venda por reflexo: se você apertar Enter sem olhar, ele VOLTA em vez de cancelar. Em ações "sucesso" (como confirmar venda), acontece o inverso — o botão principal já vem destacado.',
+        'Esse detalhe evita perder venda por reflexo: se você apertar Enter sem olhar, ele VOLTA em vez de cancelar. Se fechar por engano, aperte F9 de novo. Em ações "sucesso" (como confirmar venda), acontece o inverso — o botão principal já vem destacado.',
       done: (s) => s.cart.length === 0 && s.confirmDialog === null,
+      // Fechou o dialog sem zerar o carrinho? Foi VOLTAR/Esc por reflexo.
+      // Volta ao passo cancel-all para o operador reabrir com F9.
+      rewind: (s, prev) => prev !== null && prev.confirmDialog !== null && s.confirmDialog === null && s.cart.length > 0,
     },
   ],
 };
@@ -365,10 +372,10 @@ const TRACK_DISCOUNT: Track = {
     {
       id: 'apply-percent',
       target: '[data-training-target="discount-modal"]',
-      title: 'Escolha % e digite 10',
+      title: 'Troque para % e digite 10',
       body:
-        'Na janela:\n\n1. Tab (ou clique) em "% (Percentual)" e ENTER — troca o modo (o botão fica destacado).\n2. Tab até o campo de valor.\n3. Digite 10 e Enter.\n\nO item cai de R$ 12 para R$ 10,80 (12 − 10%).',
-      hint: 'Prefere valor em reais? Escolha "R$ (Reais)" e digite 2,00 para tirar exatos R$ 2.',
+        'O foco já está no campo VALOR. Para trocar de R$ para percentual, aperte a tecla % (ou $ para voltar a reais).\n\nDepois digite 10 e Enter. O café cai de R$ 12 para R$ 10,80 (12 − 10%).',
+      hint: 'Prefere valor em reais? Não troque — só digite 2,00 e Enter para tirar exatos R$ 2 (o modo padrão é R$).',
       done: (s) => s.discountModal === null,
     },
     {
@@ -452,27 +459,28 @@ const TRACK_EXTRAS: Track = {
     {
       id: 'suspend',
       target: '[data-training-target="code-input"]',
-      title: 'Suspender venda (gancheira)',
+      title: 'Suspender venda — Ctrl+G',
       body:
-        'Cliente esqueceu o dinheiro em casa? Vai buscar? Você NÃO pode deixar a fila parada. SUSPENDE a venda: os itens ficam "no ar" e você atende o próximo cliente.\n\nAperte Tab até o botão SUSPENDER e Enter — ou clique.',
-      hint: 'O nome "gancheira" vem do supermercado: literalmente um gancho onde o operador pendura o cupom pausado.',
+        'Cliente esqueceu o dinheiro em casa? Vai buscar? Você NÃO pode deixar a fila parada. SUSPENDE a venda: os itens ficam "no ar" e você atende o próximo cliente.\n\nAperte Ctrl+G. (O botão SUSPENDER no canto inferior faz o mesmo, se preferir clicar.)',
+      hint: 'O nome "gancheira" vem do supermercado: literalmente um gancho onde o operador pendura o cupom pausado. Ctrl+G = Gancheira.',
       done: (s) => s.suspendedSale !== null && s.cart.length === 0,
     },
     {
       id: 'recall',
       target: '[data-training-target="code-input"]',
-      title: 'Cliente voltou — RECUPERAR',
+      title: 'Cliente voltou — Ctrl+G recupera',
       body:
-        'Quando o cliente voltar, apareceu o botão amarelo "RECUPERAR" no lugar do SUSPENDER. Tab até ele e Enter — os itens voltam para o carrinho intactos.',
+        'Quando o cliente voltar, o botão amarelo RECUPERAR aparece no lugar do SUSPENDER. Aperte Ctrl+G de novo — os itens voltam para o carrinho intactos.',
+      hint: 'Mesma tecla, mesmo motivo: se há venda no carrinho, Ctrl+G suspende; se há venda pendurada, Ctrl+G recupera.',
       done: (s) => s.suspendedSale === null && s.cart.length >= 1,
     },
     goCheckout,
     {
       id: 'press-f5-cpf',
-      target: '[data-extra-action="cpf"]',
-      title: 'CPF na nota',
+      target: '[data-extra-action="desconto"]',
+      title: 'CPF na nota (F5 → Tab → Enter)',
       body:
-        'Cliente pediu CPF na nota para participar de sorteios/programas fiscais? No fechamento, os botões extras (DESCONTO / CPF / CLIENTE) ficam à direita.\n\n• F5 foca no primeiro (DESCONTO)\n• Tab passa para CPF NA NOTA\n• Enter abre o modal\n\nFaça isso agora.',
+        'Cliente pediu CPF na nota para participar de sorteios/programas fiscais? No fechamento, os botões extras ficam à direita.\n\n1. Aperte F5 — o foco cai no primeiro botão, DESCONTO (é aqui que o spotlight está agora).\n2. Aperte Tab uma vez — passa para CPF NA NOTA.\n3. Aperte Enter — abre o modal.\n\nFaça a sequência agora.',
       done: (s) => s.cpfModalOpen,
     },
     {
@@ -533,9 +541,10 @@ const TRACK_CASH_MGMT: Track = {
     },
     {
       id: 'click-close',
-      target: '[data-training-target="code-input"]',
-      title: 'Fechar o caixa',
-      body: 'No topo direito há o botão FECHAR CAIXA (fim de turno). Tab até ele — ou clique — e aperte ENTER.',
+      target: '[data-training-target="close-cash-btn"]',
+      title: 'Fechar o caixa (Ctrl+L)',
+      body:
+        'Fim de turno: aperte Ctrl+L para iniciar o fechamento do caixa. O botão FECHAR CAIXA no topo direito faz o mesmo — o atalho é só o caminho pelo teclado.',
       done: (s) => s.closeCashModal,
     },
     {
@@ -596,6 +605,12 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
     // Atualiza a referência ANTES do check (para o próximo tick já ter prev = state atual).
     // O prev usado no check é o que a closure capturou desta invocação.
     prevStateRef.current = state;
+    // Rewind tem precedência sobre done — se o passo entrou em estado inválido,
+    // volta ao anterior antes de checar avanço.
+    if (step.rewind && stepIdx > 0 && step.rewind(state, prev)) {
+      setStepIdx(i => Math.max(0, i - 1));
+      return;
+    }
     if (step.done(state, prev)) {
       const t = setTimeout(() => {
         if (stepIdx < track.steps.length - 1) {
