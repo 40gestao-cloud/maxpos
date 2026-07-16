@@ -1044,8 +1044,25 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
+      // Shift+F1 — abrir ajuda (padrão universal de PDV: F1 = ajuda, mas F1
+      // sozinho já é "dinheiro" no checkout, então usamos Shift+F1)
+      if (e.key === 'F1' && e.shiftKey) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        setHelpOpen(true);
+        return;
+      }
+
+      // "?" — atalho alternativo para ajuda (só fora de input)
+      if (e.key === '?' && !isEditable) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        setHelpOpen(true);
+        return;
+      }
+
       // F1 / F2 / F3 — só no checkout (formas de pagamento)
-      if (e.key === 'F1' || e.key === 'F2' || e.key === 'F3') {
+      if ((e.key === 'F1' || e.key === 'F2' || e.key === 'F3') && !e.shiftKey) {
         e.preventDefault();
         if (modalOpen || pickerOpen || !checkoutMode) return;
         const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
@@ -1054,6 +1071,39 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         if (e.key === 'F1') handleCashClick();
         else if (e.key === 'F2') { setValePickerOpen(false); setCardPickerOpen(true); }
         else if (e.key === 'F3') { setCardPickerOpen(false); setValePickerOpen(true); }
+        return;
+      }
+
+      // Ctrl+R — reimprimir última venda (só na leitura, fora de venda)
+      if ((e.key === 'r' || e.key === 'R') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (cart.length === 0 && payments.length === 0) openReprintModal();
+        return;
+      }
+
+      // Ctrl+M — abrir menu (sair do PDV)
+      if ((e.key === 'm' || e.key === 'M') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen) return;
+        if (onExitToMenu) tryExitToMenu();
+        return;
+      }
+
+      // Ctrl+L — fechar caixa (Lock)
+      if ((e.key === 'l' || e.key === 'L') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (cashSession && cart.length === 0 && payments.length === 0) startCloseCash();
+        return;
+      }
+
+      // Ctrl+T — sair do modo treinamento (só quando ativo)
+      if ((e.key === 't' || e.key === 'T') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (!isTraining) return;
+        if (modalOpen || pickerOpen) return;
+        onExitTraining?.();
         return;
       }
 
@@ -1144,7 +1194,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, isTraining, onExitToMenu, onExitTraining]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -1687,7 +1737,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   onClick={tryExitToMenu}
                   className="shrink-0 glass-blue px-5 py-2.5 rounded-lg flex items-center gap-2 font-bold uppercase tracking-wide text-base md:text-lg text-white border-2 transition-all"
                   style={{ borderColor: '#FFC107' }}
-                  title="Abrir menu / Sair do PDV"
+                  title="Abrir menu / Sair do PDV (Ctrl+M)"
                 >
                   <Menu size={20} /> MENU
                 </button>
@@ -1751,7 +1801,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 onClick={openReprintModal}
                 className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
                 style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
-                title="Reimprimir o último cupom desta sessão"
+                title="Reimprimir o último cupom desta sessão (Ctrl+R)"
               >
                 <Receipt size={14} /> REIMPRIMIR
               </button>
@@ -1761,7 +1811,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 onClick={startCloseCash}
                 className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
                 style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
-                title="Fechar caixa (encerrar turno)"
+                title="Fechar caixa · encerrar turno (Ctrl+L)"
               >
                 <Lock size={14} /> FECHAR CAIXA
               </button>
@@ -1770,7 +1820,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               onClick={() => setHelpOpen(true)}
               className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-black text-xl border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
               style={{ background: NAVY_DARK, color: YELLOW, borderColor: NAVY_DARK }}
-              title="Ajuda — fluxo de atendimento"
+              title="Ajuda — fluxo de atendimento (Shift+F1 ou ?)"
               aria-label="Abrir ajuda"
             >
               <HelpCircle size={22} />
@@ -2246,7 +2296,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     {/* Espaço menor para subir os cards um pouco */}
                     <div className="h-4" />
 
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale)</span></h3>
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span></h3>
                     <div className="relative grid grid-cols-3 sm:grid-cols-6 gap-2">
                       {[
                         { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign, hint: 'F1' },
@@ -2254,7 +2304,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         { id: 'debito', label: 'DÉBITO', icon: Banknote, hint: 'F2' },
                         { id: 'pix', label: 'PIX', icon: Wallet, hint: 'F3' },
                         { id: 'vale', label: 'VALE', icon: Wallet, hint: 'F3' },
-                        { id: 'fiado', label: 'FIADO', icon: Users },
+                        { id: 'fiado', label: 'FIADO', icon: Users, hint: 'F3' },
                       ].map((m, mIdx, arr) => {
                         const Icon = m.icon;
                         return (
@@ -2337,30 +2387,38 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         </div>
                       )}
 
-                      {/* Picker flutuante F3 — PIX / Vale-Alimentação */}
+                      {/* Picker flutuante F3 — PIX / Vale-Alimentação / Fiado */}
                       {valePickerOpen && (
                         <div
                           className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
                           style={{ borderColor: NAVY_DARK }}
                           onKeyDown={(e) => {
                             if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValePickerOpen(false); }
-                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 2); }
-                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 2) % 2); }
+                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 3); }
+                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 3) % 3); }
                             else if (e.key === 'Enter') {
                               e.preventDefault(); e.stopPropagation();
                               const idx = valePickerIdx;
                               setValePickerOpen(false);
                               setValePickerIdx(0);
-                              setTimeout(() => { if (idx === 0) handlePixClick(); else handleValeClick(); }, 0);
+                              setTimeout(() => {
+                                if (idx === 0) handlePixClick();
+                                else if (idx === 1) handleValeClick();
+                                else handleFiadoClick();
+                              }, 0);
                             }
                           }}
                           tabIndex={-1}
                           ref={(el) => { if (el && valePickerOpen) el.focus(); }}
                         >
                           <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
-                            F3 · PIX/Vale — ↑↓ navegar · Enter selecionar · Esc fechar
+                            F3 · PIX/Vale/Fiado — ↑↓ navegar · Enter selecionar · Esc fechar
                           </div>
-                          {['PIX', 'VALE-ALIMENTAÇÃO'].map((label, idx) => (
+                          {[
+                            { label: 'PIX', Icon: Wallet },
+                            { label: 'VALE-ALIMENTAÇÃO', Icon: Wallet },
+                            { label: 'FIADO', Icon: Users },
+                          ].map(({ label, Icon }, idx) => (
                             <button
                               key={label}
                               type="button"
@@ -2368,12 +2426,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                               onClick={() => {
                                 setValePickerOpen(false);
                                 if (idx === 0) handlePixClick();
-                                else handleValeClick();
+                                else if (idx === 1) handleValeClick();
+                                else handleFiadoClick();
                                 setValePickerIdx(0);
                               }}
                               className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
                             >
-                              <Wallet size={18} />
+                              <Icon size={18} />
                               <span className="font-bold text-gray-900">{label}</span>
                             </button>
                           ))}
@@ -3141,11 +3200,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
                       <kbd className="px-2.5 py-1 font-black text-sm rounded border-2" style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK, fontFamily: 'Consolas, monospace' }}>F3</kbd>
                       <Wallet size={16} style={{ color: NAVY_DARK }} />
-                      <span className="text-sm text-gray-800"><b>PIX</b> (MaxBank) ou <b>Vale-Alimentação</b></span>
+                      <span className="text-sm text-gray-800"><b>PIX</b> · <b>Vale-Alimentação</b> · <b>Fiado</b> — picker com ↑↓ e Enter</span>
                     </div>
                     <div className="flex items-center gap-3 p-2.5 border border-gray-300 rounded bg-gray-50">
                       <Users size={16} style={{ color: NAVY_DARK }} />
-                      <span className="text-sm text-gray-800"><b>Fiado</b> — clique no botão, escolha o cliente</span>
+                      <span className="text-sm text-gray-800"><b>Fiado</b> — no picker <b>F3</b>, seta ↓ até FIADO + Enter; escolha o cliente na lista</span>
                     </div>
                   </div>
                 </div>
@@ -3192,6 +3251,36 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </div>
                 </div>
 
+                {/* Operação de caixa — atalhos globais */}
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: NAVY_DARK }}>
+                    <Keyboard size={14} className="inline mb-0.5 mr-1" />
+                    Operação de caixa — teclado 100%
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+R</kbd>
+                      <span className="text-gray-800"><b>Reimprimir</b> última venda (fora de venda)</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+L</kbd>
+                      <span className="text-gray-800"><b>Fechar caixa</b> · encerrar turno</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+M</kbd>
+                      <span className="text-gray-800"><b>Menu</b> · sair do PDV</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Shift+F1 · ?</kbd>
+                      <span className="text-gray-800"><b>Abrir esta ajuda</b></span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+T</kbd>
+                      <span className="text-gray-800"><b>Sair do treinamento</b> (só no modo aluno)</span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Pagamento misto */}
                 <div
                   className="border-2 rounded p-3"
@@ -3205,7 +3294,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </div>
                   <ol className="text-xs text-gray-800 leading-relaxed list-decimal list-inside space-y-0.5">
                     <li>Digite o <b>VALOR DESTA FORMA</b> (ex: <span className="font-mono">50,00</span>).</li>
-                    <li>Escolha a forma (F1/F2/F3 ou clique).</li>
+                    <li>Escolha a forma (<b>F1</b> dinheiro · <b>F2</b> cartão · <b>F3</b> PIX/Vale/Fiado).</li>
                     <li>O <b>RESTANTE</b> aparece — repita o passo 1 para a próxima forma.</li>
                     <li>Quando o restante chegar a zero, a venda finaliza automaticamente.</li>
                   </ol>
