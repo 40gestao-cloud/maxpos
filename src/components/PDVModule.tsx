@@ -11,6 +11,21 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj } from '../lib/masks';
 import { PDFReport } from '../lib/pdfReport';
+import TrainingCoach, { CoachPDVState } from './TrainingCoach';
+
+// Produtos fictícios usados só no Modo Treinamento — não vão pro Supabase.
+// Preços redondos para o operador conseguir contar o troco de cabeça.
+const TRAINING_PRODUCTS: Product[] = [
+  { id: 't1', name: 'Água Mineral 500ml', price: 3,  costPrice: 1, category: 'Bebidas', ref: 'AGUA',  stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000017', controlStock: true },
+  { id: 't2', name: 'Pão Francês',        price: 1,  costPrice: 0, category: 'Padaria', ref: 'PAO',   stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000024', controlStock: true },
+  { id: 't3', name: 'Café Torrado 250g',  price: 12, costPrice: 6, category: 'Mercearia', ref: 'CAFE', stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000031', controlStock: true },
+  { id: 't4', name: 'Refrigerante 2L',    price: 8,  costPrice: 4, category: 'Bebidas', ref: 'REFRI', stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000048', controlStock: true },
+  { id: 't5', name: 'Sabonete',           price: 2,  costPrice: 1, category: 'Higiene', ref: 'SAB',   stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000055', controlStock: true },
+];
+
+const TRAINING_CLIENTS: Client[] = [
+  { id: 'tc1', type: 'PF', name: 'Cliente Treinamento', email: '', document: '00000000000', phone: '', status: 'active', creditLimit: 500, balance: 0 },
+];
 
 // Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
 // Selector cobre input/button/select/textarea/links + qualquer [tabindex] >= 0,
@@ -47,9 +62,11 @@ interface PDVModuleProps {
   currentUser: User;
   onExitToMenu?: () => void;
   onGoToInicio?: () => void;
+  isTraining?: boolean;
+  onExitTraining?: () => void;
 }
 
-export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: PDVModuleProps) {
+export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining }: PDVModuleProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -155,6 +172,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   const [valeAuthDigits, setValeAuthDigits] = useState('');
   // Fix #23 — lista de últimos cupons disponíveis para reimpressão.
   const [reprintList, setReprintList] = useState<Sale[] | null>(null);
+  // Navegação por teclado em listas (fiado, busca F8/F10, reimpressão).
+  const [clientPickerIdx, setClientPickerIdx] = useState(0);
+  const [classicSearchIdx, setClassicSearchIdx] = useState(0);
+  const [reprintListIdx, setReprintListIdx] = useState(0);
+  // Item do carrinho focado para Del/F6 atuarem em item específico (não só o último).
+  // -1 = "sem seleção" → Del/F6 caem no último (comportamento antigo).
+  const [selectedCartIdx, setSelectedCartIdx] = useState<number>(-1);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
@@ -207,6 +231,18 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     return () => clearTimeout(t);
   }, [classicMsg]);
 
+  // Reset dos índices de navegação em listas ao abrir cada modal.
+  useEffect(() => { if (showClientPicker) setClientPickerIdx(0); }, [showClientPicker]);
+  useEffect(() => { if (classicSearchOpen) setClassicSearchIdx(0); }, [classicSearchOpen]);
+  useEffect(() => { if (reprintList) setReprintListIdx(0); }, [reprintList]);
+  useEffect(() => { setClientPickerIdx(0); }, [clientSearch]);
+  useEffect(() => { setClassicSearchIdx(0); }, [classicSearchTerm]);
+  // Fora do intervalo válido → reset. Também zera quando o carrinho fica vazio.
+  useEffect(() => {
+    if (cart.length === 0) { setSelectedCartIdx(-1); return; }
+    if (selectedCartIdx >= cart.length) setSelectedCartIdx(cart.length - 1);
+  }, [cart.length, selectedCartIdx]);
+
   // Ao entrar na tela de fechamento, foca direto no VALOR DESTA FORMA
   useEffect(() => {
     if (!checkoutMode) return;
@@ -247,6 +283,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
     let active = true;
+    if (isTraining) {
+      // Treinamento: nunca busca caixa real. Força fluxo de abertura.
+      setCashSession(null);
+      setOpenCashFundo(maskCurrency(0));
+      setOpenCashModal(true);
+      setCashSessionLoaded(true);
+      return;
+    }
     Storage.getOpenSession(currentUser.id)
       .then(s => {
         if (!active) return;
@@ -262,10 +306,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       })
       .finally(() => { if (active) setCashSessionLoaded(true); });
     return () => { active = false; };
-  }, [currentUser.id]);
+  }, [currentUser.id, isTraining]);
 
   useEffect(() => {
     let active = true;
+    if (isTraining) {
+      // Treinamento: catálogo em memória, sem realtime, sem RPC.
+      setProducts(TRAINING_PRODUCTS);
+      setClients(TRAINING_CLIENTS);
+      setLoading(false);
+      return () => { active = false; };
+    }
     const load = () =>
       Storage.getProducts()
         .then(p => { if (active) setProducts(p); })
@@ -282,7 +333,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [isTraining]);
 
   const addToCart = (product: Product, qty: number = 1) => {
     // Arredonda em 3 casas para conter erro de ponto flutuante em qtd de balança
@@ -579,6 +630,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       showAlert({ title: 'Fundo inválido', message: 'O fundo de troco não pode ser negativo.', variant: 'warning' });
       return;
     }
+    if (isTraining) {
+      const s: CashSession = {
+        id: 'training-session',
+        operadorId: currentUser.id,
+        aberturaAt: new Date().toISOString(),
+        fundoTroco: fundo,
+        status: 'aberto',
+      };
+      setCashSession(s);
+      setOpenCashModal(false);
+      setOpenCashFundo('');
+      return;
+    }
     try {
       const s = await Storage.openCashSession(currentUser.id, fundo);
       setCashSession(s);
@@ -619,6 +683,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       showAlert({ title: 'Motivo obrigatório', message: 'Descreva o motivo da movimentação para o fechamento do caixa.', variant: 'warning' });
       return;
     }
+    if (isTraining) {
+      setSangriaModal(false);
+      setSupModal(false);
+      setMovValor('');
+      setMovMotivo('');
+      return;
+    }
     try {
       await Storage.addCashMovement(cashSession.id, currentUser.id, tipo, valor, motivo);
       setSangriaModal(false);
@@ -642,6 +713,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         message: 'Finalize ou cancele a venda atual antes de fechar o caixa.',
         variant: 'warning',
       });
+      return;
+    }
+    if (isTraining) {
+      setCloseCashExpected({ fundo: cashSession.fundoTroco, vendas: 0, suprimentos: 0, sangrias: 0, total: cashSession.fundoTroco });
+      setCloseCashContado(maskCurrency(Math.round(cashSession.fundoTroco * 100)));
+      setCloseCashObs('');
+      setCloseCashModal(true);
       return;
     }
     try {
@@ -676,6 +754,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     const contado = parseCurrencyToNumber(closeCashContado);
     if (contado < 0) {
       showAlert({ title: 'Valor inválido', message: 'O dinheiro contado não pode ser negativo.', variant: 'warning' });
+      return;
+    }
+    if (isTraining) {
+      // Fecha só localmente. NÃO chama onExitTraining aqui — o Coach detecta
+      // cashSession === null como fim do cenário cash-mgmt, marca completo
+      // e mostra a tela de conclusão como nos outros cenários.
+      setCashSession(null);
+      setCloseCashModal(false);
+      setCloseCashContado('');
+      setCloseCashObs('');
       return;
     }
     try {
@@ -833,6 +921,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
 
   // ─── Reimpressão (Fix #23 — últimas N vendas do operador) ─
   const openReprintModal = async () => {
+    if (isTraining) {
+      showAlert({ title: 'Modo Treinamento', message: 'Reimpressão está desativada aqui — nenhuma venda foi gravada no banco.', variant: 'info' });
+      return;
+    }
     try {
       const list = await Storage.getRecentSalesForReprint(currentUser.id, cashSession?.id ?? null, 10);
       if (list.length === 0) {
@@ -892,6 +984,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
 
       const removeLastItem = () => {
         if (cart.length === 0) return;
+        // Se há item selecionado por seta → age nele (remove por inteiro, sem
+        // decremento por unidade — a intenção do operador é clara). Sem seleção,
+        // comportamento antigo: decrementa/remove o último.
+        if (selectedCartIdx >= 0 && selectedCartIdx < cart.length) {
+          const targetIdx = selectedCartIdx;
+          setCart(prev => prev.filter((_, i) => i !== targetIdx));
+          setSelectedCartIdx(-1);
+          setLastAdded(null);
+          return;
+        }
         setCart(prev => {
           const last = prev[prev.length - 1];
           if (last.quantity > 1) {
@@ -924,9 +1026,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         return;
       }
 
-      // Del / Delete — cancelar último item (fora de input)
+      // Del / Delete — cancelar item.
+      // No PDV o input CÓDIGO fica sempre focado (auto-refoco em blur), então
+      // um Del "puro" nunca sairia do input pro handler global. Deixamos passar
+      // quando o input está VAZIO (intenção clara do operador: apagar item, não
+      // texto). Se ele digitou algo, Del apaga texto como o navegador faz.
       if (e.key === 'Delete') {
-        if (modalOpen || pickerOpen || isEditable) return;
+        if (modalOpen || pickerOpen) return;
+        if (isEditable) {
+          const el = target as HTMLInputElement | HTMLTextAreaElement;
+          const isCode = el === codeInputRef.current;
+          if (!isCode) return;
+          if ((el.value ?? '') !== '') return; // deixa o navegador apagar o texto
+        }
         e.preventDefault();
         removeLastItem();
         return;
@@ -993,7 +1105,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         e.preventDefault();
         if (modalOpen || pickerOpen) return;
         if (checkoutMode) openTotalDiscountModal();
-        else openItemDiscountModal();
+        else {
+          // Item selecionado por seta → desconto naquele item; senão, último.
+          const targetId = (selectedCartIdx >= 0 && selectedCartIdx < cart.length)
+            ? cart[selectedCartIdx]?.id
+            : undefined;
+          openItemDiscountModal(targetId);
+        }
         return;
       }
 
@@ -1026,7 +1144,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -1112,6 +1230,43 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     setCashChange(0);
     setEditingPaymentIdx(null);
     setEditingPaymentValue('');
+  };
+
+  // Reset silencioso da venda em andamento — usado ao trocar de cenário no
+  // Modo Treinamento (senão sobras do cenário anterior fariam o Coach pular
+  // instruções por "cart já tem itens", "checkoutMode já ativo" etc.).
+  const resetSaleState = () => {
+    setCart([]);
+    setPayments([]);
+    setLastAdded(null);
+    setPartialAmount('');
+    setClassicCode('');
+    setCheckoutMode(false);
+    setCashChange(0);
+    setSaleDiscount(0);
+    setCpfNota('');
+    setLinkedClient(null);
+    setSelectedCartIdx(-1);
+    setSuspendedSale(null);
+    setDiscountModal(null);
+    setCpfModalOpen(false);
+    setPriceQueryOpen(false);
+    setClassicSearchOpen(false);
+    setPixModalOpen(false);
+    setCashModalOpen(false);
+    setShowClientPicker(false);
+    setShowInstallments(false);
+    setCardPickerOpen(false);
+    setValePickerOpen(false);
+    setValeAuthModal(null);
+    setConfirmDialog(null);
+    setAlertDialog(null);
+    setPostSaleReceipt(null);
+    setChangeModal(null);
+    setThankYouOpen(false);
+    setReprintSale(null);
+    setReprintList(null);
+    setClassicMsg(null);
   };
 
   const cancelSale = () => {
@@ -1215,14 +1370,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
     const uuid = crypto.randomUUID();
     const payload = `MAX-PIX-${uuid}`;
     try {
-      const { error: insertErr } = await supabase
-        .from('pix_pendentes')
-        .insert({
-          id: uuid,
-          valor: finalAmount,
-          operador_id: currentUser.id,
-        });
-      if (insertErr) throw insertErr;
+      if (!isTraining) {
+        const { error: insertErr } = await supabase
+          .from('pix_pendentes')
+          .insert({
+            id: uuid,
+            valor: finalAmount,
+            operador_id: currentUser.id,
+          });
+        if (insertErr) throw insertErr;
+      }
 
       const dataUrl = await QRCode.toDataURL(payload, { width: 320, margin: 2, errorCorrectionLevel: 'M' });
       setPixAmount(finalAmount);
@@ -1244,6 +1401,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       return;
     }
     pixConfirmedRef.current.add(pixUuid);
+    if (isTraining) {
+      setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
+      setPartialAmount('');
+      setPixModalOpen(false);
+      focusAfterExtraConfirm();
+      return;
+    }
     try {
       await supabase.rpc('confirmar_pix_pendente', { p_id: pixUuid });
     } catch (err: any) {
@@ -1259,7 +1423,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   };
 
   const cancelPixPayment = async () => {
-    if (pixUuid && !pixConfirmedRef.current.has(pixUuid)) {
+    if (pixUuid && !pixConfirmedRef.current.has(pixUuid) && !isTraining) {
       try {
         await supabase
           .from('pix_pendentes')
@@ -1275,6 +1439,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
   // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
   useEffect(() => {
     if (!pixModalOpen || !pixUuid) return;
+    if (isTraining) return;
     const channel = supabase
       .channel(`pix-${pixUuid}`)
       .on(
@@ -1298,7 +1463,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [pixModalOpen, pixUuid, pixAmount]);
+  }, [pixModalOpen, pixUuid, pixAmount, isTraining]);
 
   const confirmFiadoClient = (client: Client) => {
     if (clientPickerMode === 'link') {
@@ -1377,24 +1542,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         cpfCnpjNota: cpfNota || undefined,
       };
 
-      // Finalização atômica: insere sale + items + payments, decrementa
-      // estoque e debita fiado num único bloco transacional no Postgres.
-      const { error: rpcErr } = await supabase.rpc('finalize_sale_atomic', {
-        p_payload: {
-          id: newSale.id,
-          date: newSale.date,
-          total: newSale.total,
-          clientId: newSale.clientId ?? null,
-          vendedorId: newSale.vendedorId,
-          status: newSale.status,
-          sessionId: cashSession?.id ?? null,
-          discount: saleDiscount,
-          cpfCnpjNota: cpfNota || null,
-          items: newSale.items,
-          payments: newSale.payments,
-        },
-      });
-      if (rpcErr) throw rpcErr;
+      if (!isTraining) {
+        // Finalização atômica: insere sale + items + payments, decrementa
+        // estoque e debita fiado num único bloco transacional no Postgres.
+        const { error: rpcErr } = await supabase.rpc('finalize_sale_atomic', {
+          p_payload: {
+            id: newSale.id,
+            date: newSale.date,
+            total: newSale.total,
+            clientId: newSale.clientId ?? null,
+            vendedorId: newSale.vendedorId,
+            status: newSale.status,
+            sessionId: cashSession?.id ?? null,
+            discount: saleDiscount,
+            cpfCnpjNota: cpfNota || null,
+            items: newSale.items,
+            payments: newSale.payments,
+          },
+        });
+        if (rpcErr) throw rpcErr;
+      }
       playBeep('finalize');
 
       const trocoFinal = cashChange;
@@ -1560,6 +1727,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   Fechamento
                 </span>
               )}
+              {isTraining && (
+                <span
+                  className="ml-2 px-3 py-1.5 rounded-md text-sm uppercase font-black tracking-widest shrink-0 border-2 flex items-center gap-1.5"
+                  style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
+                  title="Modo Treinamento — nada é salvo"
+                >
+                  🎓 TREINAMENTO
+                </span>
+              )}
               {cashSession && (
                 <span
                   className="hidden md:inline-flex shrink-0 px-2.5 py-1.5 rounded-md text-xs font-black uppercase tracking-wider border-2 items-center gap-1"
@@ -1633,8 +1809,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                       return (
                         <div
                           key={item.id}
-                          className={`grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b border-gray-200 ${
-                            idx === cart.length - 1 ? 'bg-yellow-50' : ''
+                          className={`grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b ${
+                            idx === selectedCartIdx
+                              ? 'bg-yellow-200 border-yellow-500 ring-2 ring-yellow-500'
+                              : idx === cart.length - 1 && selectedCartIdx < 0
+                                ? 'bg-yellow-50 border-gray-200'
+                                : 'border-gray-200'
                           }`}
                         >
                           <div className="text-gray-500">{String(idx + 1).padStart(3, '0')}</div>
@@ -1749,6 +1929,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   <span className="text-2xl font-bold text-gray-700 shrink-0">CÓDIGO:</span>
                   <div className="relative">
                     <input
+                      data-training-target="code-input"
                       ref={codeInputRef}
                       value={classicCode}
                       onChange={(e) => { setClassicCode(e.target.value); setClassicSuggestionIdx(-1); setSuggestionsHidden(false); }}
@@ -1762,6 +1943,21 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                         } else if (e.key === 'ArrowUp' && classicSuggestions.length > 0) {
                           e.preventDefault();
                           setClassicSuggestionIdx(prev => Math.max(prev - 1, -1));
+                        } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && classicCode === '' && cart.length > 0) {
+                          // CÓDIGO vazio + sem sugestões → setas navegam pelo CARRINHO.
+                          // Del apaga o item selecionado, F6 aplica desconto nele.
+                          e.preventDefault();
+                          if (e.key === 'ArrowUp') {
+                            setSelectedCartIdx(prev => {
+                              const base = prev < 0 ? cart.length - 1 : prev;
+                              return Math.max(base - 1, 0);
+                            });
+                          } else {
+                            setSelectedCartIdx(prev => {
+                              const base = prev < 0 ? cart.length - 1 : prev;
+                              return Math.min(base + 1, cart.length - 1);
+                            });
+                          }
                         } else if (e.key === 'Escape') {
                           e.preventDefault();
                           // Fix #17 — 1º Esc fecha só as sugestões (mantém texto).
@@ -1769,6 +1965,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                           if (classicSuggestions.length > 0) {
                             setSuggestionsHidden(true);
                             setClassicSuggestionIdx(-1);
+                          } else if (selectedCartIdx >= 0) {
+                            // Desfaz seleção do carrinho sem cancelar a venda.
+                            setSelectedCartIdx(-1);
+                            e.stopPropagation();
                           } else {
                             setClassicCode('');
                             setClassicSuggestionIdx(-1);
@@ -1883,7 +2083,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   <span className="opacity-40">·</span>
                   <span><b>F8</b> / <b>F10</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
-                  <span><b>Del</b> Cancelar último item</span>
+                  <span><b>↑↓</b> Escolher item · <b>Del</b> Cancelar</span>
                   <span className="opacity-40">·</span>
                   <span><b>F9</b> / <b>Esc</b> Cancelar venda</span>
                   <span className="opacity-40">·</span>
@@ -2019,21 +2219,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
-                                    tabIndex={-1}
                                     // Em modo edição, preventDefault no mousedown evita o blur
                                     // do input (que agora cancela) — assim o click confirma.
                                     onMouseDown={isEditing ? (e) => e.preventDefault() : undefined}
                                     onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
-                                    className="p-1.5 rounded glass-blue shimmer"
-                                    title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor'}
+                                    className="p-1.5 rounded glass-blue shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                    title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor (Enter)'}
                                   >
                                     <Pencil size={12} className="relative z-[2]" />
                                   </button>
                                   <button
-                                    tabIndex={-1}
                                     onClick={() => removePayment(i)}
-                                    className="p-1.5 rounded glass-red shimmer"
-                                    title="Remover"
+                                    className="p-1.5 rounded glass-red shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                                    title="Remover (Enter / Del)"
                                   >
                                     <Trash2 size={12} className="relative z-[2]" />
                                   </button>
@@ -2395,6 +2593,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             ref={(el) => { if (el && changeModal) el.focus(); }}
           >
             <div
+              data-training-target="change-modal"
               className="w-full max-w-3xl bg-white border-4 shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}
               onClick={(e) => e.stopPropagation()}
@@ -2493,6 +2692,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               ref={(el) => { if (el && postSaleReceipt && !el.contains(document.activeElement)) el.focus(); }}
             >
               <div
+                data-training-target="post-sale-receipt"
                 className="bg-white border-2 max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl"
                 style={{ borderColor: MONEY }}
               >
@@ -2617,7 +2817,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValeAuthModal(null); setValeAuthDigits(''); }
-              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmValeAuth(); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmValeAuth();
+              }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
@@ -2678,7 +2882,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setReprintList(null); }
-              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+              else if (e.key === 'ArrowDown') {
+                e.preventDefault(); e.stopPropagation();
+                setReprintListIdx(i => Math.min(i + 1, (reprintList?.length ?? 1) - 1));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault(); e.stopPropagation();
+                setReprintListIdx(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                const picked = reprintList?.[reprintListIdx];
+                if (picked) {
+                  e.preventDefault(); e.stopPropagation();
+                  setReprintList(null);
+                  setReprintSale(picked);
+                }
+              } else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
             ref={(el) => { if (el && reprintList && !el.contains(document.activeElement)) el.focus(); }}
@@ -2692,8 +2909,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                 {reprintList.map((s, idx) => (
                   <button
                     key={s.id}
+                    tabIndex={-1}
+                    onMouseEnter={() => setReprintListIdx(idx)}
                     onClick={() => { setReprintList(null); setReprintSale(s); }}
-                    className="w-full grid grid-cols-[60px_180px_1fr_140px] gap-3 text-left px-4 py-3 text-sm border-b border-gray-200 hover:bg-yellow-50"
+                    className={`w-full grid grid-cols-[60px_180px_1fr_140px] gap-3 text-left px-4 py-3 text-sm border-b border-gray-200 ${idx === reprintListIdx ? 'bg-yellow-100' : 'hover:bg-yellow-50'}`}
                   >
                     <span className="tabular-nums text-gray-400 text-xs self-center">{String(idx + 1).padStart(2, '0')}</span>
                     <span className="tabular-nums text-gray-700 self-center">{new Date(s.date).toLocaleString('pt-BR')}</span>
@@ -3020,9 +3239,25 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setClassicSearchOpen(false); }
+              else if (e.key === 'ArrowDown' && filteredClassic.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                setClassicSearchIdx(i => Math.min(i + 1, filteredClassic.length - 1));
+              } else if (e.key === 'ArrowUp' && filteredClassic.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                setClassicSearchIdx(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                const picked = filteredClassic[classicSearchIdx];
+                if (picked) {
+                  e.preventDefault(); e.stopPropagation();
+                  addToCart(picked);
+                  setClassicSearchOpen(false);
+                  setClassicMsg(null);
+                }
+              } else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
           >
             <div
+              data-training-target="search-modal"
               className="w-full max-w-4xl mt-12 bg-white border-2 shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}
             >
@@ -3048,11 +3283,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   {filteredClassic.length === 0 ? (
                     <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto.</div>
                   ) : (
-                    filteredClassic.map((p) => (
+                    filteredClassic.map((p, idx) => (
                       <button
                         key={p.id}
+                        tabIndex={-1}
+                        onMouseEnter={() => setClassicSearchIdx(idx)}
                         onClick={() => { addToCart(p); setClassicSearchOpen(false); setClassicMsg(null); }}
-                        className="w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm hover:bg-yellow-50 border-b border-gray-200"
+                        className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${idx === classicSearchIdx ? 'bg-yellow-100' : 'hover:bg-yellow-50'}`}
                       >
                         <span className="tabular-nums text-gray-500">{p.ref || '—'}</span>
                         <span className="truncate font-medium text-gray-900">{(p.name || '').toUpperCase()}</span>
@@ -3060,6 +3297,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                       </button>
                     ))
                   )}
+                </div>
+                <div className="text-[10px] text-gray-500 text-center pt-2 leading-relaxed">
+                  <b>↑↓</b> navegar · <b>Enter</b> selecionar · <b>Esc</b> fechar
                 </div>
               </div>
             </div>
@@ -3075,9 +3315,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPixPayment(); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmPixPayment();
+              }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
           >
-            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
+            <div data-training-target="pix-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                 <span className="font-black tracking-wide text-sm uppercase">PIX · MaxBank</span>
                 <button onClick={cancelPixPayment} className="hover:opacity-70" tabIndex={-1}>
@@ -3145,7 +3391,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                 else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCashModalOpen(false); }
               }}
             >
-              <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
+              <div data-training-target="cash-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
                 <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                   <span className="font-black tracking-wide text-sm uppercase">Pagamento em Dinheiro</span>
                   <button onClick={() => setCashModalOpen(false)} className="text-black hover:opacity-70" tabIndex={-1}>
@@ -3238,6 +3484,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             ref={(el) => { if (el && showInstallments) el.focus(); }}
           >
             <div
+              data-training-target="installments-modal"
               className="bg-white border-2 max-w-sm w-full shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}
               onClick={(e) => e.stopPropagation()}
@@ -3289,15 +3536,32 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
         )}
 
         {/* Cliente fiado — estilo clássico */}
-        {showClientPicker && (
+        {showClientPicker && (() => {
+          const filteredClients = clients.filter(c =>
+            c.status === 'active' && (c.name || '').toLowerCase().includes(clientSearch.toLowerCase())
+          );
+          return (
           <div
             className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40"
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setShowClientPicker(false); }
+              else if (e.key === 'ArrowDown' && filteredClients.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                setClientPickerIdx(i => Math.min(i + 1, filteredClients.length - 1));
+              } else if (e.key === 'ArrowUp' && filteredClients.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                setClientPickerIdx(i => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter') {
+                const picked = filteredClients[clientPickerIdx];
+                if (picked) {
+                  e.preventDefault(); e.stopPropagation();
+                  confirmFiadoClient(picked);
+                }
+              } else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
           >
-            <div className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
+            <div data-training-target="client-picker" className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                 <span className="font-black tracking-wide text-sm uppercase">
                   {clientPickerMode === 'fiado' ? 'Cliente Fiado' : 'Vincular Cliente à Venda'}
@@ -3325,31 +3589,35 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                   style={{ borderColor: '#9ca3af' }}
                 />
                 <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
-                  {clients
-                    .filter(c => c.status === 'active' && (c.name || '').toLowerCase().includes(clientSearch.toLowerCase()))
-                    .map(c => (
-                      <button
-                        key={c.id}
-                        onClick={() => confirmFiadoClient(c)}
-                        className="w-full text-left p-2 border border-gray-200 hover:bg-yellow-50"
-                      >
-                        <p className="font-medium text-sm text-gray-900">{c.name}</p>
-                        <p className="text-[11px] text-gray-500">
-                          Saldo: <span className={c.balance < 0 ? 'text-red-600' : ''} style={c.balance >= 0 ? { color: MONEY } : undefined}>
-                            R$ {c.balance.toFixed(2)}
-                          </span>
-                          {c.creditLimit > 0 && ` · Limite: R$ ${c.creditLimit.toFixed(2)}`}
-                        </p>
-                      </button>
-                    ))}
-                  {clients.filter(c => c.status === 'active' && (c.name || '').toLowerCase().includes(clientSearch.toLowerCase())).length === 0 && (
+                  {filteredClients.map((c, idx) => (
+                    <button
+                      key={c.id}
+                      tabIndex={-1}
+                      onMouseEnter={() => setClientPickerIdx(idx)}
+                      onClick={() => confirmFiadoClient(c)}
+                      className={`w-full text-left p-2 border ${idx === clientPickerIdx ? 'bg-yellow-100 border-yellow-500' : 'border-gray-200 hover:bg-yellow-50'}`}
+                    >
+                      <p className="font-medium text-sm text-gray-900">{c.name}</p>
+                      <p className="text-[11px] text-gray-500">
+                        Saldo: <span className={c.balance < 0 ? 'text-red-600' : ''} style={c.balance >= 0 ? { color: MONEY } : undefined}>
+                          R$ {c.balance.toFixed(2)}
+                        </span>
+                        {c.creditLimit > 0 && ` · Limite: R$ ${c.creditLimit.toFixed(2)}`}
+                      </p>
+                    </button>
+                  ))}
+                  {filteredClients.length === 0 && (
                     <p className="text-center text-xs text-gray-400 py-4">Nenhum cliente ativo encontrado</p>
                   )}
+                </div>
+                <div className="text-[10px] text-gray-500 text-center pt-2 border-t border-gray-200 leading-relaxed">
+                  <b>↑↓</b> navegar · <b>Enter</b> selecionar · <b>Esc</b> fechar
                 </div>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Modal de confirmacao customizado — substitui window.confirm */}
         {confirmDialog && (
@@ -3389,6 +3657,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             ref={(el) => { if (el && confirmDialog) el.focus(); }}
           >
             <div
+              data-training-target="confirm-dialog"
               className="bg-white border-2 max-w-md w-full shadow-2xl"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: confirmDialog.variant === 'danger' ? RED : MONEY }}
               onClick={(e) => e.stopPropagation()}
@@ -3467,13 +3736,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
                 // para sair, ele tem que clicar VOLTAR AO INICIO explicitamente.
                 e.preventDefault(); e.stopPropagation();
               }
-              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmOpenCashSession(); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmOpenCashSession();
+              }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
             ref={(el) => { if (el && openCashModal && !el.contains(document.activeElement)) el.focus(); }}
           >
-            <div className="bg-white border-4 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+            <div data-training-target="open-cash-modal" className="bg-white border-4 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
               <div className="px-5 py-3 text-white" style={{ background: NAVY_DARK }}>
                 <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Início de turno</div>
                 <div className="text-2xl font-black tracking-wide mt-0.5">ABERTURA DE CAIXA</div>
@@ -3531,12 +3804,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSangriaModal(false); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmCashMovement('sangria');
+              }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
             ref={(el) => { if (el && sangriaModal && !el.contains(document.activeElement)) el.focus(); }}
           >
-            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: RED }}>
+            <div data-training-target="sangria-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: RED }}>
               <div className="px-4 py-2.5 flex items-center gap-2 text-white" style={{ background: RED }}>
                 <ArrowUpCircle size={18} />
                 <span className="font-black tracking-wide text-sm uppercase">Sangria — saída de dinheiro</span>
@@ -3594,12 +3872,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSupModal(false); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmCashMovement('suprimento');
+              }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
             ref={(el) => { if (el && supModal && !el.contains(document.activeElement)) el.focus(); }}
           >
-            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}>
+            <div data-training-target="suprimento-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: MONEY }}>
               <div className="px-4 py-2.5 flex items-center gap-2 text-white" style={{ background: MONEY }}>
                 <ArrowDownCircle size={18} />
                 <span className="font-black tracking-wide text-sm uppercase">Suprimento — entrada de dinheiro</span>
@@ -3660,12 +3943,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               onKeyDown={(e) => {
                 if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
                 else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCloseCashModal(false); }
+                else if (e.key === 'Enter') {
+                  const tag = (e.target as HTMLElement)?.tagName;
+                  if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                  e.preventDefault(); e.stopPropagation(); confirmCloseCash();
+                }
                 else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
               }}
               tabIndex={-1}
               ref={(el) => { if (el && closeCashModal && !el.contains(document.activeElement)) el.focus(); }}
             >
-              <div className="bg-white border-4 max-w-lg w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div data-training-target="close-cash-modal" className="bg-white border-4 max-w-lg w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
                 <div className="px-5 py-3 text-white" style={{ background: NAVY_DARK }}>
                   <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Fim de turno</div>
                   <div className="text-2xl font-black tracking-wide mt-0.5">FECHAMENTO DE CAIXA</div>
@@ -3754,13 +4042,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
               else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCpfModalOpen(false); }
-              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmCpf(); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation(); confirmCpf();
+              }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
             tabIndex={-1}
             ref={(el) => { if (el && cpfModalOpen && !el.contains(document.activeElement)) el.focus(); }}
           >
-            <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+            <div data-training-target="cpf-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
               <div className="px-4 py-2.5 text-white" style={{ background: NAVY_DARK }}>
                 <span className="font-black tracking-wide text-sm uppercase">CPF / CNPJ na nota</span>
               </div>
@@ -3815,7 +4107,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               onKeyDown={(e) => {
                 if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
                 else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setDiscountModal(null); }
-                else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); confirmDiscount(); }
+                else if (e.key === 'Enter') {
+                  // Se o foco está num botão (R$/%, CANCELAR, APLICAR), deixa o
+                  // navegador disparar o click nativo — senão o Tab pra "% (Percentual)"
+                  // + Enter fecharia o modal em vez de trocar o modo.
+                  const tag = (e.target as HTMLElement)?.tagName;
+                  if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                  e.preventDefault(); e.stopPropagation();
+                  confirmDiscount();
+                }
                 else if (e.key === '%') { e.preventDefault(); e.stopPropagation(); setDiscountKind('percent'); }
                 else if (e.key === '$') { e.preventDefault(); e.stopPropagation(); setDiscountKind('reais'); }
                 else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
@@ -3823,7 +4123,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               tabIndex={-1}
               ref={(el) => { if (el && discountModal && !el.contains(document.activeElement)) el.focus(); }}
             >
-              <div className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#b8860b' }}>
+              <div data-training-target="discount-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#b8860b' }}>
                 <div className="px-4 py-2.5 text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                   <span className="font-black tracking-wide text-sm uppercase">
                     Desconto — {isItem ? `Item: ${(it?.name ?? '').toUpperCase()}` : 'Total da venda'}
@@ -4053,7 +4353,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
               tabIndex={-1}
               ref={(el) => { if (el && priceQueryOpen && !el.contains(document.activeElement)) el.focus(); }}
             >
-              <div className="w-full max-w-3xl mt-12 bg-white border-2 shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div data-training-target="price-query" className="w-full max-w-3xl mt-12 bg-white border-2 shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
                 <div className="px-4 py-2.5 flex items-center justify-between text-white" style={{ background: NAVY_DARK }}>
                   <span className="font-black tracking-wide text-sm uppercase">F7 · Consulta de Preço</span>
                   <button
@@ -4098,6 +4398,40 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio }: P
             </div>
           );
         })()}
+
+        {/* Camada de treinamento (spotlight + balão) sobre o PDV */}
+        {isTraining && onExitTraining && (
+          <TrainingCoach
+            userId={currentUser.id}
+            state={{
+              cashSession,
+              cart,
+              checkoutMode,
+              cashModalOpen,
+              paymentsCount: payments.length,
+              changeModal,
+              thankYouOpen,
+              cardPickerOpen,
+              valePickerOpen,
+              showInstallments,
+              pixModalOpen,
+              showClientPicker,
+              sangriaModal,
+              supModal,
+              closeCashModal,
+              postSaleReceipt,
+              confirmDialog,
+              discountModal,
+              cpfModalOpen,
+              priceQueryOpen,
+              classicSearchOpen,
+              suspendedSale,
+              selectedCartIdx,
+            } as CoachPDVState}
+            onExit={onExitTraining}
+            onScenarioStart={resetSaleState}
+          />
+        )}
 
         {/* Card de aviso/erro — substitui alert() nativo do navegador */}
         {alertDialog && (() => {

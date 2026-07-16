@@ -4,16 +4,18 @@
  */
 
 import { User } from '../types';
+import { getCompleted, ALL_SCENARIOS } from '../lib/trainingProgress';
 
 interface InicioModuleProps {
   currentUser: User;
+  onStartTraining?: () => void;
 }
 
 const YELLOW = '#FFC107';
 const YELLOW_DARK = '#B8860B';
 const NAVY_DARK = '#172554';
 
-export default function InicioModule({ currentUser }: InicioModuleProps) {
+export default function InicioModule({ currentUser, onStartTraining }: InicioModuleProps) {
   const now = new Date();
   const hora = now.getHours();
   const saudacao =
@@ -97,6 +99,47 @@ export default function InicioModule({ currentUser }: InicioModuleProps) {
             </p>
           </div>
         </div>
+
+        {/* Modo Treinamento — discreto, embaixo dos cards */}
+        {onStartTraining && (() => {
+          const completed = getCompleted(currentUser.id);
+          const isNew = completed.size === 0;
+          const isDone = completed.size >= ALL_SCENARIOS.length;
+          const label = isDone
+            ? 'Praticar Novamente'
+            : isNew
+              ? 'Fazer 1º Treinamento'
+              : `Continuar Treinamento (${completed.size}/${ALL_SCENARIOS.length})`;
+          return (
+            <div className="mt-8 flex justify-center">
+              <button
+                onClick={onStartTraining}
+                className="px-5 py-3 rounded-lg border-2 flex items-center gap-2 text-sm font-black uppercase tracking-wider hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-yellow-400"
+                style={{ borderColor: YELLOW_DARK, color: NAVY_DARK, background: 'white' }}
+                title="Abrir o PDV em modo de treinamento — nada é salvo no banco"
+              >
+                <span className="text-lg">🎓</span>
+                {label}
+                {isNew && (
+                  <span
+                    className="ml-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full"
+                    style={{ background: '#b91c1c', color: 'white' }}
+                  >
+                    NOVO
+                  </span>
+                )}
+                {isDone && (
+                  <span
+                    className="ml-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full"
+                    style={{ background: '#15803d', color: 'white' }}
+                  >
+                    ✓ COMPLETO
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Operador */}
         <div className="mt-10 flex items-center justify-center gap-3 text-sm text-gray-600">

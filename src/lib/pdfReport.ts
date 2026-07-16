@@ -143,26 +143,23 @@ export const PDFReport = {
     center('*** OBRIGADO ***', y, 8, true); y += 4;
     center('Volte sempre!', y, 7); y += 5;
 
-    // Em alguns ambientes (sandbox, popup blocker, browser sem File System Access),
-    // doc.save pode falhar silenciosamente. Fallback: gera blob URL e dispara
-    // download via <a download> simulado. Se ambos falharem, rethrow para o caller.
+    // Sempre baixa via Blob + <a download>. Evita que o navegador abra o PDF
+    // numa aba/janela e tire o operador do PDV — no supermercado o recibo é
+    // impresso na térmica externa, o "PDF" aqui é só backup em disco.
     const filename = `recibo-${sale.id.slice(0, 8)}.pdf`;
-    try {
-      doc.save(filename);
-    } catch (saveErr) {
-      console.warn('[PDFReport] doc.save falhou, tentando fallback via Blob:', saveErr);
-      const blob = doc.output('blob');
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 500);
-    }
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 500);
   },
 
   generateFinancialReport: (accounts: Account[], sales: Sale[] = [], installmentsMap: Record<string, CreditInstallment[]> = {}) => {

@@ -36,6 +36,11 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Modo Treinamento: PDV em memória, nenhum dado real tocado.
+  const [pdvTraining, setPdvTraining] = useState(false);
+  // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
+  // Sem isso, ele voltaria pro treinamento sem querer ao clicar Vendas de novo.
+  useEffect(() => { if (activeTab !== 'pdv' && pdvTraining) setPdvTraining(false); }, [activeTab, pdvTraining]);
 
   useEffect(() => {
     // Fallback: se a sessão demorar mais de 8s, libera o loading e mostra login
@@ -216,14 +221,26 @@ export default function App() {
               transition={{ duration: 0.15 }}
               className={activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'min-h-full'}
             >
-              {activeTab === 'inicio' && <InicioModule currentUser={user} />}
+              {activeTab === 'inicio' && (
+                <InicioModule
+                  currentUser={user}
+                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv'); setIsSidebarOpen(false); }}
+                />
+              )}
               {activeTab === 'pdv' && (
                 <PDVModule
                   currentUser={user}
                   onExitToMenu={() => setIsSidebarOpen(true)}
                   onGoToInicio={() => {
+                    setPdvTraining(false);
                     setActiveTab('inicio');
                     setIsSidebarOpen(false);
+                  }}
+                  isTraining={pdvTraining}
+                  onExitTraining={() => {
+                    setPdvTraining(false);
+                    setActiveTab('inicio');
+                    setIsSidebarOpen(true);
                   }}
                 />
               )}
