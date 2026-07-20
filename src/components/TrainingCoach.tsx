@@ -68,6 +68,12 @@ export type CoachPDVState = {
   // Vendas finalizadas neste turno de treino — usado pelo cenário reprint
   // para diferenciar "cliente novo" de "cliente com venda anterior".
   trainingSalesCount: number;
+  // Recusas sentidas pelo sistema (não é o operador desistindo — é o PDV
+  // bloqueando por regra de negócio). Alimentam passos "pratique a recusa".
+  fiadoRejectionCount: number;
+  stockRejectionCount: number;
+  // Cliente vinculado à venda para fidelidade (sem ser fiado).
+  hasLinkedClient: boolean;
 };
 
 type Step = {
@@ -139,8 +145,9 @@ const goCheckout: Step = {
   target: '[data-training-target="code-input"]',
   title: 'Ir para o fechamento',
   body:
-    'Depois de bipar todos os itens, você vai para a tela de RECEBER (fechamento). Com o campo CÓDIGO vazio, aperte ENTER — ou F4. Padrão supermercado (Bematech/Linx).',
-  hint: 'O botão verde FECHAR VENDA no canto inferior direito faz o mesmo, se você preferir clicar.',
+    'Depois de bipar todos os itens, você vai para a tela de RECEBER (fechamento). Três caminhos, todos equivalentes:\n\n• Enter com o campo CÓDIGO vazio\n• F4 (Subtotal — padrão Bematech/Linx)\n• Clicar no botão verde FECHAR VENDA (canto inferior direito)',
+  hint:
+    'Curiosidade: F5 também vai pro checkout, mas já solta o foco no botão DESCONTO — atalho pra "cliente pediu quebra, vou pra checkout já mirando o desconto".',
   done: (s) => s.checkoutMode,
 };
 
@@ -356,9 +363,16 @@ const TRACK_FIADO: Track = {
   icon: '📒',
   color: '#b8860b',
   description:
-    'Cliente conhecido tem uma "conta na venda". Você lança a venda no nome dele e ele quita depois. Sistema controla o limite de crédito.',
+    'Cliente conhecido tem uma "conta na venda". Você lança a venda no nome dele e ele quita depois. Sistema controla o limite de crédito — vamos praticar a recusa.',
   steps: [
-    scanFirst,
+    {
+      id: 'scan-fiado-total',
+      target: '[data-training-target="code-input"]',
+      title: 'Monta venda de R$ 20',
+      body:
+        'Bipa "cafe" (R$ 12) e "refri" (R$ 8). Total R$ 20 — de propósito acima do limite de um dos clientes cadastrados, pra praticar a recusa.',
+      done: (s) => s.cart.length >= 2,
+    },
     goCheckout,
     {
       id: 'click-fiado',
@@ -369,13 +383,22 @@ const TRACK_FIADO: Track = {
       done: (s) => s.showClientPicker,
     },
     {
-      id: 'pick-client',
+      id: 'pick-ze-curto',
       target: '[data-training-target="client-picker"]',
-      title: 'Escolha o cliente',
+      title: 'Escolha "Zé Curto (limite R$ 5)"',
       body:
-        'Use ↑↓ para percorrer os clientes e ENTER para confirmar. No treinamento só existe "Cliente Treinamento" — no real seriam dezenas ou centenas.\n\nDica: você pode DIGITAR o nome para filtrar rapidamente.',
+        'Use ↑↓ pra achar "Zé Curto" e Enter. O limite dele é R$ 5, mas a venda é R$ 20 — o sistema VAI BLOQUEAR com um alerta amarelo.',
+      hint: 'Você pode filtrar digitando "zé" no campo de busca.',
+      done: (s) => s.fiadoRejectionCount > 0,
+    },
+    {
+      id: 'pick-cli-ok',
+      target: '[data-training-target="client-picker"]',
+      title: 'Feche o alerta e escolha outro cliente',
+      body:
+        'Enter fecha o alerta e você volta pra lista. Agora suba pra "Cliente Treinamento" (limite R$ 500 — sobra pra tudo) e Enter. O fiado é lançado.',
       hint:
-        'No supermercado de verdade: se o cliente estourou o limite de crédito, o sistema BLOQUEIA a venda e você precisa recusar. Nunca "empurre" fiado além do limite — depois vira prejuízo.',
+        'No supermercado real, se ninguém tem limite pra cobrir, você RECUSA a venda no fiado e pede outra forma. Nunca "empurre" fiado além do limite — depois vira prejuízo.',
       done: (s) => s.paymentsCount > 0,
     },
     reviewSaleStep,
@@ -446,6 +469,25 @@ const TRACK_FIX_MISTAKE: Track = {
       // Fechou o dialog sem zerar o carrinho? Foi VOLTAR/Esc por reflexo.
       // Volta ao passo cancel-all para o operador reabrir com F9.
       rewind: (s, prev) => prev !== null && prev.confirmDialog !== null && s.confirmDialog === null && s.cart.length > 0,
+    },
+    // ─── Estoque insuficiente — recusa do próprio PDV ─────────────
+    {
+      id: 'scan-out-of-stock',
+      target: '[data-training-target="code-input"]',
+      title: 'Cliente pede 5 panetones — bipa "5*panetone"',
+      body:
+        'O último item do treino é Panetone, com estoque de só 2 unidades. O cliente pediu 5. Digite "5*panetone" e Enter — o sistema vai RECUSAR com "Estoque Insuficiente" (só 2 disponíveis).',
+      hint:
+        'No supermercado real, é aqui que o operador chama o repositor pra confirmar se sobrou mais no depósito. Nunca digite estoque manual pra "forçar" a venda — o inventário depois não bate.',
+      done: (s) => s.stockRejectionCount > 0,
+    },
+    {
+      id: 'scan-in-stock',
+      target: '[data-training-target="code-input"]',
+      title: 'Ajusta para 2 unidades — bipa "2*panetone"',
+      body:
+        'Enter fecha o alerta. Agora informe ao cliente que só há 2, e bipe "2*panetone". Aceito — panetone entra no carrinho com QTD 2.',
+      done: (s) => s.cart.some(i => (i as { quantity?: number }).quantity === 2) || s.cart.length >= 1,
     },
   ],
 };
@@ -615,7 +657,8 @@ const TRACK_FIX_PAYMENT: Track = {
       title: 'Corrige com o LÁPIS',
       body:
         'No card do pagamento em Dinheiro (à esquerda), clique no ícone LÁPIS (azul). O valor vira editável. Digite 3,00 e Enter — o pagamento cai para R$ 3. Repare que o TOTAL A PAGAR sobe de novo (falta R$ 12).',
-      hint: 'Edição só faz sentido em valores digitados por você (dinheiro, PIX, vale). Cartão parcelado é melhor remover e refazer, senão o número de parcelas fica errado.',
+      hint:
+        'Também dá pra usar só teclado: Tab até focar o lápis, Enter abre a edição, digita o valor, Enter confirma. Edição só faz sentido em valores digitados por você (dinheiro, PIX, vale). Cartão parcelado é melhor remover e refazer, senão o número de parcelas fica errado.',
       done: (s, prev) => prev !== null && s.paymentEditsCount > prev.paymentEditsCount,
     },
     {
@@ -724,6 +767,16 @@ const TRACK_EXTRAS: Track = {
         'Digite qualquer 11 dígitos (ex.: 12345678900). O sistema formata sozinho como 123.456.789-00. Enter confirma.',
       hint: 'Também aceita CNPJ (14 dígitos) para pessoa jurídica.',
       done: (s, prev) => prev !== null && prev.cpfModalOpen && !s.cpfModalOpen && s.cpfSetOnSale,
+    },
+    {
+      id: 'link-fidelidade',
+      target: '[data-extra-action="desconto"]',
+      title: 'Cliente fidelidade (F5 → Tab → Tab → Enter)',
+      body:
+        'Cliente é da rede de fidelidade — quer pontuar sem ser fiado? A ordem dos botões extras é: DESCONTO → CPF NA NOTA → CLIENTE. Já saímos do CPF (Passo anterior). Agora:\n\n1. F5 volta o foco pra DESCONTO.\n2. Tab uma vez → CPF NA NOTA.\n3. Tab de novo → CLIENTE.\n4. Enter abre a lista.\n5. Escolha "Ana Fidelidade" e Enter.\n\nO nome dela aparece grifado no botão CLIENTE — significa vinculado à venda.',
+      hint:
+        'Diferença crítica: FIADO vincula cliente E lança pagamento em nome dele (vira dívida). CLIENTE só marca a venda pro cadastro (fidelidade/pontos) — o pagamento é normal.',
+      done: (s) => s.hasLinkedClient,
     },
     {
       id: 'finish-cash-extras',

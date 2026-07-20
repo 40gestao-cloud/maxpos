@@ -21,10 +21,16 @@ const TRAINING_PRODUCTS: Product[] = [
   { id: 't3', name: 'Café Torrado 250g',  price: 12, costPrice: 6, category: 'Mercearia', ref: 'CAFE', stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000031', controlStock: true },
   { id: 't4', name: 'Refrigerante 2L',    price: 8,  costPrice: 4, category: 'Bebidas', ref: 'REFRI', stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000048', controlStock: true },
   { id: 't5', name: 'Sabonete',           price: 2,  costPrice: 1, category: 'Higiene', ref: 'SAB',   stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000055', controlStock: true },
+  // Estoque BAIXO — usado no cenário fix-mistake para praticar recusa por estoque insuficiente.
+  { id: 't6', name: 'Panetone (últimas 2 uni)', price: 25, costPrice: 12, category: 'Mercearia', ref: 'PANE', stock: 2, minStock: 0, unit: 'UN', ean13: '7891000000062', controlStock: true },
 ];
 
 const TRAINING_CLIENTS: Client[] = [
   { id: 'tc1', type: 'PF', name: 'Cliente Treinamento', email: '', document: '00000000000', phone: '', status: 'active', creditLimit: 500, balance: 0 },
+  // Limite MUITO BAIXO — para praticar a recusa por limite estourado no fiado.
+  { id: 'tc2', type: 'PF', name: 'Zé Curto (limite R$ 5)', email: '', document: '11111111111', phone: '', status: 'active', creditLimit: 5, balance: 0 },
+  // Sem limite de fiado, mas pode ser vinculado à venda para fidelidade.
+  { id: 'tc3', type: 'PF', name: 'Ana Fidelidade', email: '', document: '22222222222', phone: '', status: 'active', creditLimit: 0, balance: 0 },
 ];
 
 // Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
@@ -167,6 +173,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // fechamento refletir a realidade (no prod isso vem do banco).
   const [trainingSuprimentoTotal, setTrainingSuprimentoTotal] = useState(0);
   const [trainingSangriaTotal, setTrainingSangriaTotal] = useState(0);
+  // Rejeições sentidas pelo operador — cada uma alimenta um passo específico
+  // do treino ("pratique a recusa"). Só incrementam quando o sistema realmente
+  // bloqueou a ação (limite estourado / estoque insuficiente).
+  const [fiadoRejectionCount, setFiadoRejectionCount] = useState(0);
+  const [stockRejectionCount, setStockRejectionCount] = useState(0);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -373,6 +384,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           variant: 'warning',
         });
         stockOK = false;
+        setStockRejectionCount(c => c + 1);
         return prev;
       }
       if (existing) {
@@ -659,6 +671,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setTrainingSalesHistory([]);
     setTrainingSuprimentoTotal(0);
     setTrainingSangriaTotal(0);
+    setFiadoRejectionCount(0);
+    setStockRejectionCount(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -1627,6 +1641,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     //   - balance negativo = dívida atual; positivo = crédito (deve a ele).
     //   - creditLimit <= 0  = cliente sem limite cadastrado → bloqueia.
     if (client.creditLimit <= 0) {
+      setFiadoRejectionCount(c => c + 1);
       showAlert({
         title: 'Cliente sem limite de crédito',
         message: `${client.name} não tem limite de crédito cadastrado. Atualize o cadastro do cliente antes de lançar fiado.`,
@@ -1648,6 +1663,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           `Reduza o valor do fiado, escolha outra forma de pagamento, ou aumente o limite no cadastro.`,
         variant: 'warning',
       });
+      setFiadoRejectionCount(c => c + 1);
       return;
     }
     // modo 'fiado'
@@ -4635,6 +4651,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               paymentEditsCount,
               reprintModalOpen: reprintSale !== null || reprintList !== null,
               trainingSalesCount: trainingSalesHistory.length,
+              fiadoRejectionCount,
+              stockRejectionCount,
+              hasLinkedClient: linkedClient !== null,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}
