@@ -156,6 +156,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Conta pagamentos originados de valor PARCIAL (partialAmount preenchido no
   // momento do addPayment/handleCashClick). Usado só para instrumentar treino.
   const [partialPaymentsCount, setPartialPaymentsCount] = useState(0);
+  // Conta edições efetivas em pagamentos já lançados (via commitEditPayment).
+  // Só para instrumentar o cenário fix-payment do treinamento.
+  const [paymentEditsCount, setPaymentEditsCount] = useState(0);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -644,6 +647,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setLastCloseCashDiff(null);
     setCashMovementsCount(0);
     setPartialPaymentsCount(0);
+    setPaymentEditsCount(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -1327,10 +1331,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     const idx = editingPaymentIdx;
+    const prevAmount = payments[idx]?.amount ?? 0;
     setPayments(prev => {
       const otherPaid = prev.reduce((acc, p, i) => i === idx ? acc : acc + p.amount, 0);
       const maxAllowed = parseFloat((total - otherPaid).toFixed(2));
       const finalAmount = parseFloat(Math.min(newAmount, Math.max(maxAllowed, 0)).toFixed(2));
+      if (Math.abs(finalAmount - prevAmount) > 0.001) setPaymentEditsCount(c => c + 1);
       return prev.map((p, i) => i === idx ? { ...p, amount: finalAmount } : p);
     });
     setCashChange(0);
@@ -2288,7 +2294,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                           {payments.length} {payments.length === 1 ? 'forma' : 'formas'}
                         </span>
                       </div>
-                      <div className="p-2 space-y-1.5 bg-white max-h-56 overflow-y-auto custom-scrollbar">
+                      <div data-training-target="payments-list" className="p-2 space-y-1.5 bg-white max-h-56 overflow-y-auto custom-scrollbar">
                         {payments.length === 0 ? (
                           <div className="text-gray-400 text-xs py-3 text-center italic">
                             — nenhum pagamento lançado —
@@ -4585,6 +4591,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               hasMultiQuantityItem: cart.some(i => i.quantity > 1 || !Number.isInteger(i.quantity)),
               lastCloseCashDiff,
               partialPaymentsCount,
+              paymentEditsCount,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}

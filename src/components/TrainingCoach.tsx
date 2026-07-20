@@ -60,6 +60,8 @@ export type CoachPDVState = {
   // Usado pelo passo de pagamento parcial para saber que o operador de fato
   // usou a divisão em vez de pagar o total inteiro.
   partialPaymentsCount: number;
+  // Edições em pagamentos já lançados (commitEditPayment mudou o valor).
+  paymentEditsCount: number;
 };
 
 type Step = {
@@ -160,6 +162,8 @@ const TRACK_CASH_BASIC: Track = {
       title: 'Adicione mais 1 item',
       body:
         'No dia a dia, o operador bipa vários produtos em sequência. Bipa mais um (tente "cafe") — repare que o TOTAL A PAGAR sobe automaticamente no canto direito.',
+      hint:
+        'Bipar o MESMO produto 2 vezes NÃO cria duas linhas — soma na linha existente (agua bipada 2x fica "AGUA · QTD 2"). Se estiver em dúvida, prefira "N*produto".',
       done: (s) => s.cart.length >= 2,
     },
     goCheckout,
@@ -512,6 +516,69 @@ const TRACK_DISCOUNT: Track = {
   ],
 };
 
+// ─── NOVO — Corrigir pagamento já lançado ───────────────────────
+const TRACK_FIX_PAYMENT: Track = {
+  id: 'fix-payment',
+  title: 'Corrigir pagamento errado',
+  icon: '✏️',
+  color: '#0e7490',
+  description:
+    'Lançou pagamento com valor errado? Cliente trocou de ideia sobre a forma? Aqui você aprende a EDITAR (lápis) e REMOVER (lixeira) sem cancelar a venda.',
+  steps: [
+    {
+      id: 'scan-two-fix',
+      target: '[data-training-target="code-input"]',
+      title: 'Monta uma venda de R$ 15',
+      body: 'Bipa "cafe" (R$ 12) e "agua" (R$ 3).',
+      done: (s) => s.cart.length >= 2,
+    },
+    { ...goCheckout, id: 'go-checkout-fix' },
+    {
+      id: 'wrong-partial',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'Digite VALOR PARCIAL 5,00 e F1',
+      body:
+        'Cliente falou R$ 3 em dinheiro, mas você digitou 5,00 no campo VALOR PARCIAL por engano. Faça isso agora: 5,00 no parcial, F1 Enter no modal de dinheiro. Pagamento lançado errado.',
+      done: (s) => s.partialPaymentsCount > 0,
+    },
+    {
+      id: 'edit-payment',
+      target: '[data-training-target="payments-list"]',
+      title: 'Corrige com o LÁPIS',
+      body:
+        'No card do pagamento em Dinheiro (à esquerda), clique no ícone LÁPIS (azul). O valor vira editável. Digite 3,00 e Enter — o pagamento cai para R$ 3. Repare que o TOTAL A PAGAR sobe de novo (falta R$ 12).',
+      hint: 'Edição só faz sentido em valores digitados por você (dinheiro, PIX, vale). Cartão parcelado é melhor remover e refazer, senão o número de parcelas fica errado.',
+      done: (s, prev) => prev !== null && s.paymentEditsCount > prev.paymentEditsCount,
+    },
+    {
+      id: 'wrong-credit',
+      target: '[data-pay-method="credito"]',
+      title: 'Fecha o resto em CRÉDITO 3x (também errado!)',
+      body:
+        'Agora o cliente disse "3x no cartão". F2 → CRÉDITO → 3. Payment lançado. Só que — cliente se confundiu, era DÉBITO. Precisa desfazer.',
+      done: (s) => s.paymentsCount >= 2,
+    },
+    {
+      id: 'remove-payment',
+      target: '[data-training-target="payments-list"]',
+      title: 'Remove o crédito com a LIXEIRA',
+      body:
+        'No card do pagamento em Crédito, clique no ícone LIXEIRA (vermelho). Ele some da lista. Restou só o dinheiro de R$ 3, e o TOTAL A PAGAR volta a mostrar R$ 12 faltando.',
+      hint: 'Lixeira ≠ Cancelar Venda. Lixeira remove SÓ um pagamento; itens do carrinho ficam. F9 é que cancela tudo.',
+      done: (s, prev) => prev !== null && s.paymentsCount < prev.paymentsCount,
+    },
+    {
+      id: 'pay-debit-fix',
+      target: '[data-pay-method="credito"]',
+      title: 'Agora F2 → DÉBITO',
+      body: 'F2, ↓ para DÉBITO, Enter. Pagamento correto lançado.',
+      done: (s) => s.paymentsCount >= 2,
+    },
+    reviewSaleStep,
+    receiptStep,
+  ],
+};
+
 // ─── NOVO — Situações do balcão ──────────────────────────────────
 const TRACK_EXTRAS: Track = {
   id: 'extras',
@@ -667,6 +734,7 @@ const TRACKS: Record<ScenarioId, Track> = {
   'pix': TRACK_PIX,
   'fiado': TRACK_FIADO,
   'fix-mistake': TRACK_FIX_MISTAKE,
+  'fix-payment': TRACK_FIX_PAYMENT,
   'discount': TRACK_DISCOUNT,
   'partial': TRACK_PARTIAL,
   'extras': TRACK_EXTRAS,
@@ -1119,7 +1187,8 @@ function ScenarioMenu({
             );
           })}
           <div className="text-center text-[11px] text-gray-500 pt-2 border-t border-gray-200 leading-relaxed">
-            <b>↑↓</b> navegar · <b>Enter</b> escolher · <b>Esc</b> sair · Nada é salvo no banco real
+            <b>↑↓</b> navegar · <b>Enter</b> escolher · <b>Esc</b> sair · <b>Ctrl+T</b> sair do treino a qualquer momento<br/>
+            Dentro do PDV: <b>Shift+F1</b> abre a ajuda com todos os atalhos · Nada é salvo no banco real
           </div>
         </div>
       </div>
