@@ -242,6 +242,7 @@ export default function App() {
                     setActiveTab('inicio');
                     setIsSidebarOpen(true);
                   }}
+                  onSwapOperator={(newUser) => setUser(newUser)}
                 />
               )}
               {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}

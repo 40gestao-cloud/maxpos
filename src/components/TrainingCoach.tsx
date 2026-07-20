@@ -82,6 +82,13 @@ export type CoachPDVState = {
   reversalsCount: number;
   // Tela bloqueada (Ctrl+Shift+L). Passo "destrave a tela" checa que voltou.
   screenLocked: boolean;
+  // Troca de operador (Ctrl+U). currentOperatorId muda quando efetivada.
+  swapOperatorOpen: boolean;
+  operatorSwapsCount: number;
+  currentOperatorId: string;
+  // Cadastro rápido de cliente para fiado sem cadastro prévio.
+  quickClientOpen: boolean;
+  quickClientsCount: number;
 };
 
 type Step = {
@@ -144,7 +151,7 @@ const scanFirst: Step = {
   body:
     'No balcão de verdade, você aponta o leitor de código de barras para a etiqueta do produto — ele "bipa" e a linha aparece na lista. Aqui não temos leitor: digite "agua" (R$3), "pao" (R$1) ou "cafe" (R$12) no campo CÓDIGO e aperte ENTER.',
   hint:
-    'Dica: para lançar QUANTIDADE, digite "2*agua" (2 unidades) ou "0,5*cafe" (meio kg em produto por peso). O * multiplica.',
+    '"agua", "pao", "cafe" são apelidos (PLU/ref) que funcionam como códigos curtos — padrão de supermercado para produtos sem etiqueta com código de barras (hortifruti, padaria). No real seriam códigos tipo "4011" (banana), "5041" (alface). Para QUANTIDADE, use "2*agua" (2 unidades) ou "0,5*cafe" (meio kg em produto por peso).',
   done: (s) => s.cart.length >= 1,
 };
 
@@ -572,6 +579,68 @@ const TRACK_DISCOUNT: Track = {
   ],
 };
 
+// ─── NOVO — Cadastro rápido de cliente (fiado sem cadastro prévio) ─
+const TRACK_QUICK_CLIENT: Track = {
+  id: 'quick-client',
+  title: 'Fiado com cliente novo (cadastro rápido)',
+  icon: '🆕',
+  color: '#065f46',
+  description:
+    'Cliente conhecido do dono, ainda não está no sistema? Fluxo de cadastro relâmpago dentro do próprio picker de fiado — precisa de PIN de supervisor pra evitar cadastro falso.',
+  steps: [
+    {
+      id: 'scan-qc',
+      target: '[data-training-target="code-input"]',
+      title: 'Bipa "cafe" (R$ 12)',
+      body: 'Uma venda simples pra praticar. Bipa "cafe" e Enter.',
+      done: (s) => s.cart.length >= 1,
+    },
+    { ...goCheckout, id: 'go-checkout-qc' },
+    {
+      id: 'open-fiado-picker',
+      target: '[data-pay-method="fiado"]',
+      title: 'F3 → ↓↓ → Enter em FIADO',
+      body: 'Abre o picker de fiado (F3 depois ↓↓ Enter).',
+      done: (s) => s.showClientPicker,
+    },
+    {
+      id: 'click-new-client',
+      target: '[data-training-target="quick-client-btn"]',
+      title: 'Clique em "+ NOVO CLIENTE"',
+      body:
+        'No topo da lista aparece um botão tracejado amarelo "+ NOVO CLIENTE (cadastro rápido)". Clique nele — abre um formulário mínimo.',
+      hint:
+        'No supermercado real, esse fluxo aparece quando alguém trouxe cliente novo direto no balcão. Nome basta pra registrar a venda; documento e limite podem ser preenchidos depois.',
+      done: (s) => s.quickClientOpen,
+    },
+    {
+      id: 'fill-new-client',
+      target: '[data-training-target="quick-client-modal"]',
+      title: 'Preencha nome + Cadastrar',
+      body:
+        'Nome: "Cliente Novo Balcão" (ou o que preferir). CPF/CNPJ pode ficar vazio. Deixe o limite em R$ 100,00 sugerido. Clique CADASTRAR — vai pedir PIN de supervisor.',
+      hint: 'Cadastros rápidos SEM CPF/CNPJ e sem limite viram fila pra o gerente completar depois.',
+      done: (s) => s.supervisorAuthOpen,
+    },
+    {
+      id: 'auth-quick-client',
+      target: '[data-training-target="supervisor-modal"]',
+      title: 'PIN 1234 → Enter',
+      body: 'Digite "1234" e Enter. Cliente cadastrado; volta pro picker.',
+      done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.quickClientsCount > 0,
+    },
+    {
+      id: 'pick-new-client',
+      target: '[data-training-target="client-picker"]',
+      title: 'Selecione o novo cliente',
+      body: 'O nome já veio pré-filtrado. ↑↓ pra escolhê-lo e Enter — o fiado é lançado.',
+      done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    receiptStep,
+  ],
+};
+
 // ─── NOVO — Balança e sacola (produtos de supermercado real) ────
 const TRACK_WEIGH: Track = {
   id: 'weigh',
@@ -730,9 +799,9 @@ const TRACK_REVERSAL: Track = {
       target: '[data-training-target="reverse-sale-btn"]',
       title: 'Clique em ESTORNAR (vermelho)',
       body:
-        'No rodapé do modal aparecem 3 botões: FECHAR, ESTORNAR (vermelho — só no treino), RECIBO PDF. Clique em ESTORNAR. O modal de PIN de supervisor abre.',
+        'No rodapé do modal aparecem 3 botões: FECHAR, ESTORNAR (vermelho), RECIBO PDF. Clique em ESTORNAR. O modal de PIN de supervisor abre.',
       hint:
-        'ESTORNAR aparece só no modo treinamento porque a operação em prod exige uma RPC transacional (que devolve estoque, cancela pagamentos, gera evento de auditoria). Por enquanto, praticar aqui é o mais próximo do fluxo real.',
+        'Em prod, ESTORNAR chama a RPC reverse_sale_atomic: devolve estoque, cancela dívida em fiado, marca a venda como reversed. Idempotente e transacional.',
       done: (s) => s.supervisorAuthOpen,
     },
     {
@@ -869,6 +938,46 @@ const TRACK_FIX_PAYMENT: Track = {
     },
     reviewSaleStep,
     receiptStep,
+  ],
+};
+
+// ─── NOVO — Troca de operador sem fechar caixa (Ctrl+U) ─────────
+const TRACK_SWAP_OPERATOR: Track = {
+  id: 'swap-operator',
+  title: 'Trocar operador (sem fechar caixa)',
+  icon: '🔁',
+  color: '#0369a1',
+  description:
+    'Turno da manhã passa pra tarde no mesmo caixa. Ctrl+U troca o operador atual, o caixa segue ABERTO — quem abriu segue como responsável até o fechamento.',
+  steps: [
+    {
+      id: 'press-ctrl-u',
+      target: '[data-training-target="code-input"]',
+      title: 'Ctrl+U — abre picker de operador',
+      body:
+        'Fora de venda (carrinho vazio, sem checkout), aperte Ctrl+U. O picker mostra todos os operadores cadastrados. No treino, aparecem 2 fictícios (Júlia e Marcos) além de você.',
+      hint:
+        'Ctrl+U diferente de Ctrl+L (fechar caixa) e Ctrl+Shift+L (bloquear tela). Aqui NADA fecha — só troca quem opera.',
+      done: (s) => s.swapOperatorOpen,
+    },
+    {
+      id: 'pick-new-operator',
+      target: '[data-training-target="swap-operator-modal"]',
+      title: 'Escolha "Júlia (turno tarde)"',
+      body:
+        '↑↓ até "Júlia" e Enter. O modal de PIN de supervisor aparece — quem autoriza a troca é sempre supervisor.',
+      hint:
+        'Padrão de supermercado: operador não troca operador. Precisa de alguém com autoridade (gerente/fiscal de caixa) pra registrar a passagem de turno.',
+      done: (s) => s.supervisorAuthOpen,
+    },
+    {
+      id: 'auth-swap',
+      target: '[data-training-target="supervisor-modal"]',
+      title: 'PIN 1234 → Enter',
+      body:
+        'Digite "1234" e Enter. A tela recarrega com a Júlia como operadora ativa. Se você olhar no topo do PDV, o nome ao lado de "OP:" mudou.',
+      done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.operatorSwapsCount > 0,
+    },
   ],
 };
 
@@ -1041,9 +1150,11 @@ const TRACKS: Record<ScenarioId, Track> = {
   'discount': TRACK_DISCOUNT,
   'partial': TRACK_PARTIAL,
   'weigh': TRACK_WEIGH,
+  'quick-client': TRACK_QUICK_CLIENT,
   'reprint': TRACK_REPRINT,
   'reversal': TRACK_REVERSAL,
   'security': TRACK_SECURITY,
+  'swap-operator': TRACK_SWAP_OPERATOR,
   'extras': TRACK_EXTRAS,
   'cash-mgmt': TRACK_CASH_MGMT,
 };

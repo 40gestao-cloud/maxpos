@@ -84,9 +84,12 @@ interface PDVModuleProps {
   onGoToInicio?: () => void;
   isTraining?: boolean;
   onExitTraining?: () => void;
+  // Troca de operador sem fechar caixa (Ctrl+U). O parent atualiza o
+  // currentUser via setUser. Se não for passado, o atalho é ignorado.
+  onSwapOperator?: (user: User) => void;
 }
 
-export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining }: PDVModuleProps) {
+export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining, onSwapOperator }: PDVModuleProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -205,10 +208,106 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [screenLockPin, setScreenLockPin] = useState('');
   // Estornos concluídos no treino — pra alimentar o passo "praticar estorno".
   const [reversalsCount, setReversalsCount] = useState(0);
+  // Troca de operador (Ctrl+U). Lista todos usuários; PIN de supervisor autoriza.
+  // Não fecha o caixa — quem abriu continua responsável, mas quem opera muda.
+  const [swapOperatorModal, setSwapOperatorModal] = useState(false);
+  const [swapOperatorList, setSwapOperatorList] = useState<User[]>([]);
+  const [swapOperatorIdx, setSwapOperatorIdx] = useState(0);
+  const [swapOperatorFilter, setSwapOperatorFilter] = useState('');
+  const [operatorSwapsCount, setOperatorSwapsCount] = useState(0);
+  // Cadastro rápido de cliente (fiado sem cadastro prévio).
+  const [quickClientModal, setQuickClientModal] = useState(false);
+  const [quickClientName, setQuickClientName] = useState('');
+  const [quickClientDoc, setQuickClientDoc] = useState('');
+  const [quickClientLimit, setQuickClientLimit] = useState('');
+  const [quickClientsCount, setQuickClientsCount] = useState(0);
+  // Reimpressão por número de cupom (busca livre no modal reprintList).
+  const [reprintSearch, setReprintSearch] = useState('');
 
   const askSupervisorAuth = (title: string, message: string, onOk: () => void) => {
     setSupervisorAuthPin('');
     setSupervisorAuthModal({ title, message, onOk });
+  };
+
+  const openSwapOperatorModal = async () => {
+    if (!onSwapOperator) return;
+    setSwapOperatorFilter('');
+    setSwapOperatorIdx(0);
+    try {
+      if (isTraining) {
+        // No treino, apresentamos 2 usuários fictícios além do atual pra
+        // simular o picker (não temos acesso ao user_profiles real).
+        setSwapOperatorList([
+          currentUser,
+          { id: 'trainer-op-1', email: 'julia@treino.local', name: 'Júlia (turno tarde)', role: 'operador_geral' } as User,
+          { id: 'trainer-op-2', email: 'marcos@treino.local', name: 'Marcos (turno noite)', role: 'operador_geral' } as User,
+        ]);
+      } else {
+        const users = await Storage.getUsers();
+        setSwapOperatorList(users);
+      }
+      setSwapOperatorModal(true);
+    } catch (err: any) {
+      showAlert({ title: 'Erro ao carregar usuários', message: err?.message ?? String(err), variant: 'error' });
+    }
+  };
+
+  const confirmSwapOperator = (target: User) => {
+    if (!onSwapOperator || target.id === currentUser.id) {
+      setSwapOperatorModal(false);
+      return;
+    }
+    askSupervisorAuth(
+      'Trocar operador',
+      `O operador atual (${currentUser.name}) sai. Novo operador: ${target.name}.\n\nO caixa continua ABERTO — quem abriu segue como responsável pelo fechamento. Peça ao supervisor para digitar o PIN.`,
+      () => {
+        setSwapOperatorModal(false);
+        setOperatorSwapsCount(c => c + 1);
+        onSwapOperator(target);
+      },
+    );
+  };
+
+  const confirmQuickClient = () => {
+    const name = quickClientName.trim();
+    if (name.length < 2) {
+      showAlert({ title: 'Nome obrigatório', message: 'Informe o nome do cliente (mínimo 2 caracteres).', variant: 'warning' });
+      return;
+    }
+    const doc = quickClientDoc.replace(/\D/g, '');
+    if (doc.length > 0 && doc.length !== 11 && doc.length !== 14) {
+      showAlert({ title: 'CPF/CNPJ inválido', message: 'Se preenchido, o documento deve ter 11 (CPF) ou 14 dígitos (CNPJ). Deixe vazio para pular.', variant: 'warning' });
+      return;
+    }
+    const limit = parseCurrencyToNumber(quickClientLimit || maskCurrency(0));
+    askSupervisorAuth(
+      'Cadastrar cliente (rápido)',
+      `Nome: ${name}\nCPF/CNPJ: ${doc || '—'}\nLimite fiado: R$ ${limit.toFixed(2).replace('.', ',')}\n\nCadastro rápido no balcão. O supervisor autoriza pra evitar cliente inventado só pra estourar fiado.`,
+      async () => {
+        const novo: Client = {
+          id: crypto.randomUUID(),
+          type: doc.length === 14 ? 'PJ' : 'PF',
+          name,
+          email: '',
+          document: doc,
+          phone: '',
+          status: 'active',
+          creditLimit: limit,
+          balance: 0,
+        };
+        try {
+          if (!isTraining) await Storage.upsertClient(novo);
+          setClients(prev => [...prev, novo]);
+          setQuickClientsCount(c => c + 1);
+          setQuickClientModal(false);
+          setQuickClientName(''); setQuickClientDoc(''); setQuickClientLimit('');
+          // Já pré-seleciona esse cliente no picker que continua aberto.
+          setClientSearch(novo.name);
+        } catch (err: any) {
+          showAlert({ title: 'Erro ao cadastrar', message: err?.message ?? String(err), variant: 'error' });
+        }
+      },
+    );
   };
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
@@ -707,6 +806,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setStockRejectionCount(0);
     setSupervisorAuthCount(0);
     setReversalsCount(0);
+    setOperatorSwapsCount(0);
+    setQuickClientsCount(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -1052,6 +1153,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   // ─── Reimpressão (Fix #23 — últimas N vendas do operador) ─
   const openReprintModal = async () => {
+    setReprintSearch('');
     if (isTraining) {
       const list = trainingSalesHistory;
       if (list.length === 0) {
@@ -1239,6 +1341,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
+      // Ctrl+U — trocar de operador SEM fechar caixa. Cai num picker de
+      // usuários; PIN de supervisor autoriza a troca.
+      if ((e.key === 'u' || e.key === 'U') && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (!onSwapOperator) return;
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        openSwapOperatorModal();
+        return;
+      }
+
       // Ctrl+T — sair do modo treinamento (só quando ativo)
       if ((e.key === 't' || e.key === 'T') && e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
@@ -1369,7 +1481,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, isTraining, onExitToMenu, onExitTraining]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, swapOperatorModal, quickClientModal, isTraining, onExitToMenu, onExitTraining, onSwapOperator]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -1473,6 +1585,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSupervisorAuthPin('');
     setScreenLocked(false);
     setScreenLockPin('');
+    setSwapOperatorModal(false);
+    setQuickClientModal(false);
+    setReprintSearch('');
     setCart([]);
     setPayments([]);
     setLastAdded(null);
@@ -3160,8 +3275,31 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <span className="font-black tracking-wide text-sm uppercase">Reimprimir · Últimas {reprintList.length} vendas</span>
                 <button onClick={() => setReprintList(null)} className="text-xs font-bold px-2 py-1 border border-white/40 hover:bg-white/10">FECHAR (Esc)</button>
               </div>
+              {/* Busca por número de cupom — 4+ chars dispara query no banco.
+                  Em treino a lista já é curta e o filtro é local. */}
+              <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
+                <input
+                  value={reprintSearch}
+                  onChange={async (e) => {
+                    const v = e.target.value.trim();
+                    setReprintSearch(v);
+                    if (v.length >= 4 && !isTraining) {
+                      try {
+                        const results = await Storage.getSalesByIdPrefix(v);
+                        if (results.length > 0) setReprintList(results);
+                      } catch { /* silêncio: mantém a lista atual */ }
+                    }
+                  }}
+                  placeholder="Buscar por número do cupom (4+ caracteres)…"
+                  className="w-full bg-white border-2 outline-none px-3 py-2 text-sm focus:border-blue-700"
+                  style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  tabIndex={-1}
+                />
+              </div>
               <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
-                {reprintList.map((s, idx) => (
+                {reprintList
+                  .filter(s => !reprintSearch || s.id.toLowerCase().startsWith(reprintSearch.toLowerCase()))
+                  .map((s, idx) => (
                   <button
                     key={s.id}
                     tabIndex={-1}
@@ -3895,12 +4033,177 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     <p className="text-center text-xs text-gray-400 py-4">Nenhum cliente ativo encontrado</p>
                   )}
                 </div>
+                {clientPickerMode === 'fiado' && (
+                  <button
+                    data-training-target="quick-client-btn"
+                    tabIndex={-1}
+                    onClick={() => {
+                      setQuickClientName(clientSearch.trim()); // pré-preenche com o filtro
+                      setQuickClientDoc('');
+                      setQuickClientLimit(maskCurrency(10000)); // default R$ 100,00
+                      setQuickClientModal(true);
+                    }}
+                    className="w-full text-left p-2 border-2 border-dashed hover:bg-yellow-50 text-sm font-bold uppercase tracking-wide"
+                    style={{ borderColor: YELLOW_DARK, color: YELLOW_DARK }}
+                    title="Cadastro rápido de cliente novo"
+                  >
+                    + NOVO CLIENTE (cadastro rápido)
+                  </button>
+                )}
                 <div className="text-[10px] text-gray-500 text-center pt-2 border-t border-gray-200 leading-relaxed">
                   <b>↑↓</b> navegar · <b>Enter</b> selecionar · <b>Esc</b> fechar
                 </div>
               </div>
             </div>
           </div>
+          );
+        })()}
+
+        {/* ─── Cadastro rápido de cliente (fiado sem cadastro prévio) ─── */}
+        {quickClientModal && (
+          <div
+            className="fixed inset-0 z-[380] flex items-center justify-center p-4 bg-black/60"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setQuickClientModal(false); }
+              else if (e.key === 'Enter') {
+                const tag = (e.target as HTMLElement)?.tagName;
+                if (tag === 'BUTTON') { e.stopPropagation(); return; }
+                e.preventDefault(); e.stopPropagation();
+                confirmQuickClient();
+              }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && quickClientModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div data-training-target="quick-client-modal" className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: YELLOW_DARK }}>
+              <div className="px-4 py-2.5 text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
+                <span className="font-black tracking-wide text-sm uppercase">Cadastro rápido de cliente</span>
+              </div>
+              <div className="p-5 space-y-3">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">NOME <span className="text-red-500">*</span></label>
+                  <input
+                    autoFocus
+                    value={quickClientName}
+                    onChange={(e) => setQuickClientName(e.target.value)}
+                    placeholder="Ex.: Maria Silva"
+                    className="w-full bg-white border-2 text-base font-medium text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af' }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">CPF/CNPJ (opcional)</label>
+                  <input
+                    value={quickClientDoc}
+                    onChange={(e) => setQuickClientDoc(maskCpfCnpj(e.target.value))}
+                    placeholder="Deixe vazio para pular"
+                    inputMode="numeric"
+                    className="w-full bg-white border-2 text-base font-medium text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">LIMITE DE FIADO (R$)</label>
+                  <input
+                    value={quickClientLimit}
+                    onChange={(e) => setQuickClientLimit(maskCurrency(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    inputMode="numeric"
+                    className="w-full bg-white border-2 text-base font-medium text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  <div className="mt-1 text-[11px] text-gray-500 italic">
+                    Deixe R$ 0,00 se o cadastro for só pra vincular (sem fiado ainda).
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setQuickClientModal(false)}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={confirmQuickClient}
+                    className="flex-1 px-4 py-3 text-white font-bold"
+                    style={{ background: NAVY_DARK }}
+                  >
+                    CADASTRAR
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Troca de operador (Ctrl+U) ─── */}
+        {swapOperatorModal && (() => {
+          const filtered = swapOperatorList.filter(u =>
+            u.id !== currentUser.id && (
+              !swapOperatorFilter ||
+              u.name.toLowerCase().includes(swapOperatorFilter.toLowerCase()) ||
+              (u.email || '').toLowerCase().includes(swapOperatorFilter.toLowerCase())
+            )
+          );
+          return (
+            <div
+              className="fixed inset-0 z-[380] flex items-center justify-center p-4 bg-black/60"
+              onKeyDown={(e) => {
+                if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSwapOperatorModal(false); }
+                else if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setSwapOperatorIdx(i => Math.min(i + 1, Math.max(filtered.length - 1, 0))); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setSwapOperatorIdx(i => Math.max(i - 1, 0)); }
+                else if (e.key === 'Enter') {
+                  const picked = filtered[swapOperatorIdx];
+                  if (picked) { e.preventDefault(); e.stopPropagation(); confirmSwapOperator(picked); }
+                }
+                else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+              }}
+              tabIndex={-1}
+              ref={(el) => { if (el && swapOperatorModal && !el.contains(document.activeElement)) el.focus(); }}
+            >
+              <div data-training-target="swap-operator-modal" className="bg-white border-2 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+                <div className="px-4 py-2.5 text-white" style={{ background: NAVY_DARK }}>
+                  <span className="font-black tracking-wide text-sm uppercase">🔁 Trocar operador (Ctrl+U)</span>
+                </div>
+                <div className="p-4 space-y-3">
+                  <p className="text-sm text-gray-600">
+                    Atual: <span className="font-bold text-gray-900">{currentUser.name}</span>. Escolha o novo operador — o caixa segue ABERTO.
+                  </p>
+                  <input
+                    autoFocus
+                    value={swapOperatorFilter}
+                    onChange={(e) => { setSwapOperatorFilter(e.target.value); setSwapOperatorIdx(0); }}
+                    placeholder="Filtrar por nome ou email..."
+                    className="w-full bg-white border-2 outline-none px-3 py-2 text-sm focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af' }}
+                  />
+                  <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
+                    {filtered.map((u, idx) => (
+                      <button
+                        key={u.id}
+                        tabIndex={-1}
+                        onMouseEnter={() => setSwapOperatorIdx(idx)}
+                        onClick={() => confirmSwapOperator(u)}
+                        className={`w-full text-left p-2 border ${idx === swapOperatorIdx ? 'bg-yellow-100 border-yellow-500' : 'border-gray-200 hover:bg-yellow-50'}`}
+                      >
+                        <p className="font-medium text-sm text-gray-900">{u.name}</p>
+                        <p className="text-[11px] text-gray-500">{u.email} · <span className="uppercase">{u.role}</span></p>
+                      </button>
+                    ))}
+                    {filtered.length === 0 && (
+                      <p className="text-center text-xs text-gray-400 py-4">Nenhum outro operador encontrado</p>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-gray-500 text-center pt-2 border-t border-gray-200 leading-relaxed">
+                    <b>↑↓</b> navegar · <b>Enter</b> escolher (pede PIN de supervisor) · <b>Esc</b> fechar
+                  </div>
+                </div>
+              </div>
+            </div>
           );
         })()}
 
@@ -4607,34 +4910,44 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     >
                       FECHAR
                     </button>
-                    {isTraining && (
-                      <button
-                        data-training-target="reverse-sale-btn"
-                        onClick={() => {
-                          const target = reprintSale;
-                          if (!target) return;
-                          askSupervisorAuth(
-                            'Estornar venda',
-                            `Cupom ${target.id.slice(0, 8).toUpperCase()} — R$ ${fmt(target.total)}\n\nEssa operação REMOVE a venda do relatório do turno (afeta o fechamento de caixa). Peça ao supervisor para digitar o PIN.`,
-                            () => {
-                              setTrainingSalesHistory(prev => prev.filter(x => x.id !== target.id));
+                    <button
+                      data-training-target="reverse-sale-btn"
+                      onClick={() => {
+                        const target = reprintSale;
+                        if (!target) return;
+                        askSupervisorAuth(
+                          'Estornar venda',
+                          `Cupom ${target.id.slice(0, 8).toUpperCase()} — R$ ${fmt(target.total)}\n\nEssa operação devolve o estoque, cancela dívida em fiado (se houver) e marca a venda como REVERTIDA. Afeta o fechamento de caixa. Peça ao supervisor para digitar o PIN.`,
+                          async () => {
+                            try {
+                              if (isTraining) {
+                                setTrainingSalesHistory(prev => prev.filter(x => x.id !== target.id));
+                              } else {
+                                await Storage.reverseSale(target.id);
+                              }
                               setReversalsCount(c => c + 1);
                               setReprintSale(null);
                               showAlert({
                                 title: 'Venda estornada',
-                                message: `Cupom ${target.id.slice(0, 8).toUpperCase()} removido do turno. Total de R$ ${fmt(target.total)} debitado das vendas.`,
+                                message: `Cupom ${target.id.slice(0, 8).toUpperCase()} revertida. Total de R$ ${fmt(target.total)} debitado das vendas.`,
                                 variant: 'info',
                               });
-                            },
-                          );
-                        }}
-                        className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
-                        style={{ background: RED }}
-                        title="Estornar venda (exige PIN de supervisor)"
-                      >
-                        ESTORNAR
-                      </button>
-                    )}
+                            } catch (err: any) {
+                              showAlert({
+                                title: 'Erro ao estornar',
+                                message: err?.message ?? String(err),
+                                variant: 'error',
+                              });
+                            }
+                          },
+                        );
+                      }}
+                      className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
+                      style={{ background: RED }}
+                      title="Estornar venda (exige PIN de supervisor)"
+                    >
+                      ESTORNAR
+                    </button>
                     <button
                       onClick={printReprint}
                       className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
@@ -4895,6 +5208,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               supervisorAuthCount,
               reversalsCount,
               screenLocked,
+              swapOperatorOpen: swapOperatorModal,
+              operatorSwapsCount,
+              quickClientOpen: quickClientModal,
+              quickClientsCount,
+              currentOperatorId: currentUser.id,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}

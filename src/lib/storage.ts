@@ -444,6 +444,59 @@ export const Storage = {
   // Última venda concluída pelo operador (preferindo a sessão atual, se houver)
   // Últimas N vendas do operador (na sessão atual, se informada) — usada na
   // tela de reimpressão para o operador escolher qual cupom reimprimir.
+  // Estorna uma venda finalizada: devolve estoque, cancela dívida em fiado,
+  // marca status='reversed'. Backend: reverse_sale_atomic RPC (patch
+  // 2026-07-20_reverse_sale_atomic.sql). Idempotente na server-side.
+  reverseSale: async (saleId: string): Promise<void> => {
+    const { error } = await supabase.rpc('reverse_sale_atomic', { p_sale_id: saleId });
+    if (error) throw error;
+  },
+
+  // Busca vendas por prefixo do id (uso: reimpressão por número de cupom).
+  // Case-insensitive. Retorna no máximo 10 matches, mais recentes primeiro.
+  getSalesByIdPrefix: async (prefix: string, limit: number = 10): Promise<Sale[]> => {
+    const p = prefix.trim();
+    if (p.length < 4) return [];
+    const { data, error } = await supabase
+      .from('sales')
+      .select('*, sale_items(*), sale_payments(*)')
+      .ilike('id', `${p.toLowerCase()}%`)
+      .order('date', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      date: row.date,
+      total: Number(row.total),
+      clientId: row.clientId ?? undefined,
+      vendedorId: row.vendedorId ?? undefined,
+      status: row.status,
+      discount: Number(row.discount ?? 0),
+      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
+      items: (row.sale_items ?? []).map((item: any) => ({
+        id: item.productId ?? item.id,
+        name: item.name,
+        price: Number(item.price),
+        quantity: Number(item.quantity),
+        costPrice: Number(item.costPrice ?? 0),
+        category: item.category ?? '',
+        ref: item.ref ?? '',
+        unit: item.unit ?? 'UN',
+        ean13: item.ean13,
+        controlStock: item.controlStock ?? true,
+        stock: Number(item.stock ?? 0),
+        minStock: item.minStock ?? 0,
+        discount: Number(item.discount ?? 0),
+      })),
+      payments: (row.sale_payments ?? []).map((p: any) => ({
+        method: p.method,
+        amount: Number(p.amount),
+        installments: p.installments ?? undefined,
+        clientId: p.clientId ?? undefined,
+      })),
+    })) as Sale[];
+  },
+
   getRecentSalesForReprint: async (
     operadorId: string,
     sessionId?: string | null,
