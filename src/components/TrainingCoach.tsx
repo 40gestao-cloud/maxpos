@@ -74,6 +74,14 @@ export type CoachPDVState = {
   stockRejectionCount: number;
   // Cliente vinculado à venda para fidelidade (sem ser fiado).
   hasLinkedClient: boolean;
+  // Autorização de supervisor: se o modal está aberto agora e quantas vezes
+  // já foi autorizada neste turno (pra passos "peça o PIN ao supervisor").
+  supervisorAuthOpen: boolean;
+  supervisorAuthCount: number;
+  // Estornos realizados neste turno de treino.
+  reversalsCount: number;
+  // Tela bloqueada (Ctrl+Shift+L). Passo "destrave a tela" checa que voltou.
+  screenLocked: boolean;
 };
 
 type Step = {
@@ -383,12 +391,12 @@ const TRACK_FIADO: Track = {
       done: (s) => s.showClientPicker,
     },
     {
-      id: 'pick-ze-curto',
+      id: 'pick-jose-fagundes',
       target: '[data-training-target="client-picker"]',
-      title: 'Escolha "Zé Curto (limite R$ 5)"',
+      title: 'Escolha "José Fagundes"',
       body:
-        'Use ↑↓ pra achar "Zé Curto" e Enter. O limite dele é R$ 5, mas a venda é R$ 20 — o sistema VAI BLOQUEAR com um alerta amarelo.',
-      hint: 'Você pode filtrar digitando "zé" no campo de busca.',
+        'Use ↑↓ pra achar "José Fagundes" e Enter. O limite dele é R$ 5, mas a venda é R$ 20 — o sistema VAI BLOQUEAR com um alerta amarelo.',
+      hint: 'Você pode filtrar digitando "josé" no campo de busca.',
       done: (s) => s.fiadoRejectionCount > 0,
     },
     {
@@ -561,6 +569,180 @@ const TRACK_DISCOUNT: Track = {
     },
     reviewSaleStep,
     receiptStep,
+  ],
+};
+
+// ─── NOVO — Balança e sacola (produtos de supermercado real) ────
+const TRACK_WEIGH: Track = {
+  id: 'weigh',
+  title: 'Balança e sacola',
+  icon: '⚖️',
+  color: '#365314',
+  description:
+    'Produto por PESO (queijo, frutas, frios) e SACOLA cobrada — dois itens que aparecem em toda venda de supermercado.',
+  steps: [
+    {
+      id: 'weigh-scan',
+      target: '[data-training-target="code-input"]',
+      title: 'Bipa Queijo por peso (0,350 kg)',
+      body:
+        'Balança pesou 350g de queijo. Duas formas de lançar:\n\n• Manual: "0,350*queijo" — informa a quantidade em kg.\n• Balança real: a etiqueta tem EAN-13 começando com "2..." que já traz o peso embutido — o operador só bipa a etiqueta.\n\nUse "0,350*queijo" agora — o parser aceita o mesmo formato para qualquer produto KG/G.',
+      hint:
+        'Etiqueta de balança segue o padrão EAN-13 "2 + código(6) + peso-em-gramas(5) + DV(1)". Se você bipar 2000123003500 (350 g de Queijo Mussarela), o sistema entende como 0,350 kg automaticamente.',
+      done: (s) => s.cart.some(i => !Number.isInteger((i as { quantity: number }).quantity)),
+    },
+    {
+      id: 'weigh-sacola',
+      target: '[data-training-target="code-input"]',
+      title: 'Cliente pediu sacola — bipa "sacola"',
+      body:
+        'Antes de fechar, o cliente pediu 2 sacolas (R$ 0,15 cada). Digite "2*sacola" e Enter. No supermercado real, a sacola é cobrada por lei em vários estados — vira produto normal no cupom.',
+      hint:
+        'Alguns PDVs perguntam "quantas sacolas?" antes de fechar. Aqui o operador bipa manual — mesma lógica, um passo a mais.',
+      done: (s) => s.cart.some(i => {
+        const it = i as { name?: string; quantity: number };
+        return typeof it.name === 'string' && /sacola/i.test(it.name) && it.quantity >= 1;
+      }),
+    },
+    { ...goCheckout, id: 'go-checkout-weigh' },
+    {
+      id: 'finish-cash-weigh',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'Fecha em dinheiro',
+      body: 'F1 + Enter no valor exato pré-preenchido.',
+      done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    receiptStep,
+  ],
+};
+
+// ─── NOVO — Segurança: bloqueio de tela + desconto autorizado ───
+const TRACK_SECURITY: Track = {
+  id: 'security',
+  title: 'Segurança: bloqueio e autorização',
+  icon: '🔒',
+  color: '#7f1d1d',
+  description:
+    'Bloqueio de tela quando você se ausenta (Ctrl+Shift+L) e autorização de supervisor para descontos acima do teto (20% do valor). PIN de treino: 1234.',
+  steps: [
+    {
+      id: 'lock-screen',
+      target: '[data-training-target="code-input"]',
+      title: 'Bloqueia a tela: Ctrl+Shift+L',
+      body:
+        'Cliente foi buscar mais um produto, você precisa se afastar do caixa. Aperte Ctrl+Shift+L — a tela é coberta por um overlay escuro pedindo PIN. Sem PIN, ninguém opera.',
+      hint: 'Diferente de Ctrl+L (que FECHA o caixa). Ctrl+Shift+L é só travar; caixa segue aberto por baixo.',
+      done: (s) => s.screenLocked,
+    },
+    {
+      id: 'unlock-screen',
+      target: '[data-training-target="screen-lock"]',
+      title: 'Destrave com o PIN 1234',
+      body:
+        'Digite "1234" no campo e Enter. A tela destrava e você volta exatamente onde parou.',
+      hint: 'Errar 3 vezes num PDV de verdade geralmente notifica o gerente e trava por 5 min. Aqui é mais tolerante.',
+      done: (s) => !s.screenLocked,
+    },
+    {
+      id: 'scan-security',
+      target: '[data-training-target="code-input"]',
+      title: 'Agora bipa "cafe" (R$ 12)',
+      body: 'Para praticar o desconto autorizado, precisamos de um item. Bipa "cafe".',
+      done: (s) => s.cart.length >= 1,
+    },
+    {
+      id: 'discount-over-limit',
+      target: '[data-training-target="code-input"]',
+      title: 'F6 → % → digite 30 → Enter',
+      body:
+        'Cliente pediu 30% de desconto no café. Aperte F6 (item), tecla % pra mudar pra percentual, digite 30 e Enter. Como 30% > 20% (teto do operador), o SISTEMA vai pedir PIN de supervisor.',
+      hint:
+        'O teto de 20% é padrão comum de supermercado — evita "quebra do troco" virando desconto agressivo sem controle. Descontos abaixo do teto passam direto, sem PIN.',
+      done: (s) => s.supervisorAuthOpen,
+    },
+    {
+      id: 'auth-discount',
+      target: '[data-training-target="supervisor-modal"]',
+      title: 'Autorize com o PIN 1234',
+      body: 'Digite "1234" e Enter. O desconto é gravado e o modal de desconto fecha.',
+      done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.itemDiscountCount > 0,
+    },
+    { ...goCheckout, id: 'go-checkout-security' },
+    {
+      id: 'finish-cash-security',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'Fecha em dinheiro',
+      body: 'F1 + Enter no valor exato (R$ 8,40 depois do desconto).',
+      done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    receiptStep,
+  ],
+};
+
+// ─── NOVO — Estorno de venda finalizada ────────────────────────
+const TRACK_REVERSAL: Track = {
+  id: 'reversal',
+  title: 'Estornar venda (com supervisor)',
+  icon: '↺',
+  color: '#831843',
+  description:
+    'Cliente voltou reclamando de item errado no cupom já fechado? Você abre a reimpressão, e com PIN de supervisor ESTORNA a venda — some do relatório do turno.',
+  steps: [
+    {
+      id: 'scan-quick-rev',
+      target: '[data-training-target="code-input"]',
+      title: 'Faça uma venda rápida — bipa "agua"',
+      body: 'Vamos criar uma venda pra depois estornar. Bipa "agua" (R$ 3).',
+      done: (s) => s.cart.length >= 1,
+    },
+    { ...goCheckout, id: 'go-checkout-rev' },
+    {
+      id: 'quick-cash-rev',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'F1 + Enter — valor exato',
+      body: 'F1 abre o modal com R$ 3,00. Enter confirma.',
+      done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    {
+      ...receiptStep,
+      id: 'receipt-rev',
+      body: 'Enter para continuar. Venda registrada — agora vamos estorná-la.',
+    },
+    {
+      id: 'close-thankyou-rev',
+      target: '[data-training-target="code-input"]',
+      title: 'Feche a tela de agradecimento',
+      body: 'Enter fecha o "OBRIGADO". O cursor volta pro campo CÓDIGO.',
+      done: (s) => !s.thankYouOpen && !s.checkoutMode && s.cart.length === 0,
+    },
+    {
+      id: 'open-reprint-rev',
+      target: '[data-training-target="code-input"]',
+      title: 'Ctrl+R — abre a venda pra estornar',
+      body: 'Ctrl+R busca a última venda do turno.',
+      done: (s) => s.reprintModalOpen,
+    },
+    {
+      id: 'click-estornar',
+      target: '[data-training-target="reverse-sale-btn"]',
+      title: 'Clique em ESTORNAR (vermelho)',
+      body:
+        'No rodapé do modal aparecem 3 botões: FECHAR, ESTORNAR (vermelho — só no treino), RECIBO PDF. Clique em ESTORNAR. O modal de PIN de supervisor abre.',
+      hint:
+        'ESTORNAR aparece só no modo treinamento porque a operação em prod exige uma RPC transacional (que devolve estoque, cancela pagamentos, gera evento de auditoria). Por enquanto, praticar aqui é o mais próximo do fluxo real.',
+      done: (s) => s.supervisorAuthOpen,
+    },
+    {
+      id: 'auth-reversal',
+      target: '[data-training-target="supervisor-modal"]',
+      title: 'PIN 1234 → Enter',
+      body:
+        'Digite "1234" e Enter. A venda some do histórico do turno — se você fechar o caixa agora, o total esperado NÃO inclui esses R$ 3.',
+      done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.reversalsCount > 0,
+    },
   ],
 };
 
@@ -773,7 +955,7 @@ const TRACK_EXTRAS: Track = {
       target: '[data-extra-action="desconto"]',
       title: 'Cliente fidelidade (F5 → Tab → Tab → Enter)',
       body:
-        'Cliente é da rede de fidelidade — quer pontuar sem ser fiado? A ordem dos botões extras é: DESCONTO → CPF NA NOTA → CLIENTE. Já saímos do CPF (Passo anterior). Agora:\n\n1. F5 volta o foco pra DESCONTO.\n2. Tab uma vez → CPF NA NOTA.\n3. Tab de novo → CLIENTE.\n4. Enter abre a lista.\n5. Escolha "Ana Fidelidade" e Enter.\n\nO nome dela aparece grifado no botão CLIENTE — significa vinculado à venda.',
+        'Cliente é da rede de fidelidade — quer pontuar sem ser fiado? A ordem dos botões extras é: DESCONTO → CPF NA NOTA → CLIENTE. Já saímos do CPF (Passo anterior). Agora:\n\n1. F5 volta o foco pra DESCONTO.\n2. Tab uma vez → CPF NA NOTA.\n3. Tab de novo → CLIENTE.\n4. Enter abre a lista.\n5. Escolha "Faride Pontes" e Enter.\n\nO nome dela aparece grifado no botão CLIENTE — significa vinculado à venda.',
       hint:
         'Diferença crítica: FIADO vincula cliente E lança pagamento em nome dele (vira dívida). CLIENTE só marca a venda pro cadastro (fidelidade/pontos) — o pagamento é normal.',
       done: (s) => s.hasLinkedClient,
@@ -858,7 +1040,10 @@ const TRACKS: Record<ScenarioId, Track> = {
   'fix-payment': TRACK_FIX_PAYMENT,
   'discount': TRACK_DISCOUNT,
   'partial': TRACK_PARTIAL,
+  'weigh': TRACK_WEIGH,
   'reprint': TRACK_REPRINT,
+  'reversal': TRACK_REVERSAL,
+  'security': TRACK_SECURITY,
   'extras': TRACK_EXTRAS,
   'cash-mgmt': TRACK_CASH_MGMT,
 };

@@ -23,14 +23,28 @@ const TRAINING_PRODUCTS: Product[] = [
   { id: 't5', name: 'Sabonete',           price: 2,  costPrice: 1, category: 'Higiene', ref: 'SAB',   stock: 999, minStock: 0, unit: 'UN', ean13: '7891000000055', controlStock: true },
   // Estoque BAIXO — usado no cenário fix-mistake para praticar recusa por estoque insuficiente.
   { id: 't6', name: 'Panetone (últimas 2 uni)', price: 25, costPrice: 12, category: 'Mercearia', ref: 'PANE', stock: 2, minStock: 0, unit: 'UN', ean13: '7891000000062', controlStock: true },
+  // Produto por PESO — EAN-13 com prefixo "2" (padrão de etiqueta impressa por balança).
+  //   2|999999|09999|0  =  prefixo | código produto (6) | valor em centavos (5) | DV
+  //   Os 5 dígitos entre pos 8-12 do EAN carregam peso (g) ou valor (centavos) — o
+  //   parser em handleClassicSubmit lê esses dígitos e calcula qty pra unit KG/G.
+  { id: 't7', name: 'Queijo Mussarela (kg)', price: 45, costPrice: 25, category: 'Frios', ref: 'QUEIJO', stock: 50, minStock: 0, unit: 'KG', ean13: '2000123000000', controlStock: true },
+  // Sacola plástica — cobrada por unidade. Uso típico em supermercado.
+  { id: 't8', name: 'Sacola Plástica', price: 0.15, costPrice: 0.05, category: 'Embalagem', ref: 'SACO', stock: 9999, minStock: 0, unit: 'UN', ean13: '7891000000079', controlStock: true },
 ];
+
+// PIN de autorização de supervisor no treinamento (e default em prod até
+// existirem PINs por usuário). Qualquer operação que exige autorização acima
+// do papel do operador — desconto acima do teto, estorno de venda — passa
+// por este PIN.
+const SUPERVISOR_PIN = '1234';
+const DISCOUNT_SUPERVISOR_THRESHOLD_PCT = 20; // > 20% do valor base exige PIN
 
 const TRAINING_CLIENTS: Client[] = [
   { id: 'tc1', type: 'PF', name: 'Cliente Treinamento', email: '', document: '00000000000', phone: '', status: 'active', creditLimit: 500, balance: 0 },
   // Limite MUITO BAIXO — para praticar a recusa por limite estourado no fiado.
-  { id: 'tc2', type: 'PF', name: 'Zé Curto (limite R$ 5)', email: '', document: '11111111111', phone: '', status: 'active', creditLimit: 5, balance: 0 },
+  { id: 'tc2', type: 'PF', name: 'José Fagundes', email: '', document: '11111111111', phone: '', status: 'active', creditLimit: 5, balance: 0 },
   // Sem limite de fiado, mas pode ser vinculado à venda para fidelidade.
-  { id: 'tc3', type: 'PF', name: 'Ana Fidelidade', email: '', document: '22222222222', phone: '', status: 'active', creditLimit: 0, balance: 0 },
+  { id: 'tc3', type: 'PF', name: 'Faride Pontes', email: '', document: '22222222222', phone: '', status: 'active', creditLimit: 0, balance: 0 },
 ];
 
 // Mantém o Tab/Shift+Tab ciclando dentro do modal — sem vazar pros botões/navegador atrás.
@@ -178,6 +192,24 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // bloqueou a ação (limite estourado / estoque insuficiente).
   const [fiadoRejectionCount, setFiadoRejectionCount] = useState(0);
   const [stockRejectionCount, setStockRejectionCount] = useState(0);
+  // Autorização de supervisor — modal genérico pra ações que exigem PIN.
+  // onOk roda ao aceitar; onCancel opcional (default = fecha silencioso).
+  const [supervisorAuthModal, setSupervisorAuthModal] = useState<null | {
+    title: string; message: string; onOk: () => void;
+  }>(null);
+  const [supervisorAuthPin, setSupervisorAuthPin] = useState('');
+  const [supervisorAuthCount, setSupervisorAuthCount] = useState(0); // pra treino
+  // Bloqueio de tela (Ctrl+Shift+L). Enquanto travada, toda interação passa
+  // pelo overlay do lock — nada vaza pra baixo. Só PIN correto destrava.
+  const [screenLocked, setScreenLocked] = useState(false);
+  const [screenLockPin, setScreenLockPin] = useState('');
+  // Estornos concluídos no treino — pra alimentar o passo "praticar estorno".
+  const [reversalsCount, setReversalsCount] = useState(0);
+
+  const askSupervisorAuth = (title: string, message: string, onOk: () => void) => {
+    setSupervisorAuthPin('');
+    setSupervisorAuthModal({ title, message, onOk });
+  };
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -673,6 +705,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setTrainingSangriaTotal(0);
     setFiadoRejectionCount(0);
     setStockRejectionCount(0);
+    setSupervisorAuthCount(0);
+    setReversalsCount(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -915,18 +949,46 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const confirmDiscount = () => {
     if (!discountModal) return;
     const raw = discountKind === 'percent' ? parsePercentToNumber(discountInput) : parseCurrencyToNumber(discountInput);
+
+    // Calcula base + valor efetivo do desconto, para poder testar o teto de
+    // supervisor ANTES de gravar. base = valor bruto do item ou subtotal.
+    let base = 0;
+    let desc = 0;
+    if (discountModal.scope === 'item' && discountModal.itemId) {
+      const it = cart.find(c => c.id === discountModal.itemId);
+      if (!it) { setDiscountModal(null); return; }
+      base = it.price * it.quantity;
+    } else if (discountModal.scope === 'total') {
+      base = subtotal;
+    }
+    desc = discountKind === 'percent' ? parseFloat((base * (raw / 100)).toFixed(2)) : raw;
+
+    // Teto de operador: acima de DISCOUNT_SUPERVISOR_THRESHOLD_PCT do bruto,
+    // exige PIN de supervisor. Padrão de supermercado (evita operador dar
+    // "50% na cara" sem autorização).
+    if (base > 0 && (desc / base) * 100 > DISCOUNT_SUPERVISOR_THRESHOLD_PCT + 0.001) {
+      askSupervisorAuth(
+        'Desconto acima do limite',
+        `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} (${((desc / base) * 100).toFixed(1)}%) excede o limite de ${DISCOUNT_SUPERVISOR_THRESHOLD_PCT}% permitido ao operador. Peça ao supervisor para digitar o PIN.`,
+        () => { applyDiscountValidated(desc); },
+      );
+      return;
+    }
+    applyDiscountValidated(desc);
+  };
+
+  const applyDiscountValidated = (desc: number) => {
+    if (!discountModal) return;
     if (discountModal.scope === 'item' && discountModal.itemId) {
       const it = cart.find(c => c.id === discountModal.itemId);
       if (!it) { setDiscountModal(null); return; }
       const bruto = it.price * it.quantity;
-      const desc = discountKind === 'percent' ? parseFloat((bruto * (raw / 100)).toFixed(2)) : raw;
       if (desc > bruto) {
         showAlert({ title: 'Desconto maior que o item', message: `Máximo permitido: R$ ${bruto.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
         return;
       }
       setCart(prev => prev.map(c => c.id === it.id ? { ...c, discount: desc } : c));
     } else if (discountModal.scope === 'total') {
-      const desc = discountKind === 'percent' ? parseFloat((subtotal * (raw / 100)).toFixed(2)) : raw;
       if (desc > subtotal) {
         showAlert({ title: 'Desconto maior que o subtotal', message: `Máximo permitido: R$ ${subtotal.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
         return;
@@ -947,9 +1009,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     const wasTotalScope = discountModal.scope === 'total';
     setDiscountModal(null);
-    // Apos aplicar desconto no total durante o checkout, mandar foco direto pra
-    // FECHAR VENDA (CONFIRMAR VENDA). focusAfterExtraConfirm volta pra
-    // partialAmountRef se o botao estiver desabilitado (venda ainda nao paga).
     if (wasTotalScope && checkoutMode) {
       focusAfterExtraConfirm();
     }
@@ -1036,7 +1095,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null || postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null;
+      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null || postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null || supervisorAuthModal !== null || screenLocked;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
@@ -1189,6 +1248,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
+      // Ctrl+Shift+L — bloqueia a tela. Operador se ausenta rápido sem
+      // fechar caixa. Reaberto com PIN de supervisor. Ignora se já travada.
+      if ((e.key === 'l' || e.key === 'L') && e.ctrlKey && e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (screenLocked) return;
+        if (modalOpen || pickerOpen) return;
+        setScreenLockPin('');
+        setScreenLocked(true);
+        return;
+      }
+
       // Ctrl+G — Gancheira (suspender venda atual ou recuperar a suspensa).
       // Só na leitura, fora de modal/picker: em checkout o operador está a um
       // Enter da venda, atalho ali seria perigoso.
@@ -1299,7 +1369,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, isTraining, onExitToMenu, onExitTraining]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, isTraining, onExitToMenu, onExitTraining]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -1399,6 +1469,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Modo Treinamento (senão sobras do cenário anterior fariam o Coach pular
   // instruções por "cart já tem itens", "checkoutMode já ativo" etc.).
   const resetSaleState = () => {
+    setSupervisorAuthModal(null);
+    setSupervisorAuthPin('');
+    setScreenLocked(false);
+    setScreenLockPin('');
     setCart([]);
     setPayments([]);
     setLastAdded(null);
@@ -4525,7 +4599,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       *** OBRIGADO ***
                     </div>
                   </div>
-                  <div className="px-4 py-3 flex gap-3 border-t border-gray-300 bg-gray-50 no-print">
+                  <div className="px-4 py-3 flex gap-2 border-t border-gray-300 bg-gray-50 no-print">
                     <button
                       onClick={() => setReprintSale(null)}
                       className="flex-1 px-4 py-2 border-2 text-gray-700 font-bold hover:bg-gray-100"
@@ -4533,6 +4607,34 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     >
                       FECHAR
                     </button>
+                    {isTraining && (
+                      <button
+                        data-training-target="reverse-sale-btn"
+                        onClick={() => {
+                          const target = reprintSale;
+                          if (!target) return;
+                          askSupervisorAuth(
+                            'Estornar venda',
+                            `Cupom ${target.id.slice(0, 8).toUpperCase()} — R$ ${fmt(target.total)}\n\nEssa operação REMOVE a venda do relatório do turno (afeta o fechamento de caixa). Peça ao supervisor para digitar o PIN.`,
+                            () => {
+                              setTrainingSalesHistory(prev => prev.filter(x => x.id !== target.id));
+                              setReversalsCount(c => c + 1);
+                              setReprintSale(null);
+                              showAlert({
+                                title: 'Venda estornada',
+                                message: `Cupom ${target.id.slice(0, 8).toUpperCase()} removido do turno. Total de R$ ${fmt(target.total)} debitado das vendas.`,
+                                variant: 'info',
+                              });
+                            },
+                          );
+                        }}
+                        className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
+                        style={{ background: RED }}
+                        title="Estornar venda (exige PIN de supervisor)"
+                      >
+                        ESTORNAR
+                      </button>
+                    )}
                     <button
                       onClick={printReprint}
                       className="flex-1 px-4 py-2 text-white font-bold flex items-center justify-center gap-2"
@@ -4613,6 +4715,141 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           );
         })()}
 
+        {/* ─── PIN de supervisor (autorização de ações sensíveis) ─── */}
+        {supervisorAuthModal && (
+          <div
+            data-training-target="supervisor-modal"
+            className="fixed inset-0 z-[350] flex items-center justify-center p-4 bg-black/60"
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSupervisorAuthModal(null); }
+              else if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                if (supervisorAuthPin === SUPERVISOR_PIN) {
+                  const cb = supervisorAuthModal.onOk;
+                  setSupervisorAuthModal(null);
+                  setSupervisorAuthCount(c => c + 1);
+                  cb();
+                } else {
+                  showAlert({ title: 'PIN incorreto', message: 'Digite o PIN de 4 dígitos do supervisor.', variant: 'warning' });
+                }
+              }
+              else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && supervisorAuthModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-4 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: RED }}>
+              <div className="px-4 py-2.5 text-white" style={{ background: RED }}>
+                <span className="font-black tracking-wide text-sm uppercase">🔒 {supervisorAuthModal.title}</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-gray-800 whitespace-pre-line leading-relaxed">
+                  {supervisorAuthModal.message}
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">PIN DO SUPERVISOR (4 dígitos)</label>
+                  <input
+                    autoFocus
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={supervisorAuthPin}
+                    onChange={(e) => setSupervisorAuthPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums text-center tracking-[0.6em] focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  {isTraining && (
+                    <div className="mt-2 text-[11px] text-gray-500 italic border-l-2 pl-2" style={{ borderColor: RED }}>
+                      No treino, o PIN é <b>1234</b>. Em prod, cada supervisor tem o seu.
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setSupervisorAuthModal(null)}
+                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (supervisorAuthPin === SUPERVISOR_PIN) {
+                        const cb = supervisorAuthModal.onOk;
+                        setSupervisorAuthModal(null);
+                        setSupervisorAuthCount(c => c + 1);
+                        cb();
+                      } else {
+                        showAlert({ title: 'PIN incorreto', message: 'Digite o PIN de 4 dígitos do supervisor.', variant: 'warning' });
+                      }
+                    }}
+                    disabled={supervisorAuthPin.length !== 4}
+                    className="flex-1 px-4 py-3 text-white font-bold disabled:opacity-30"
+                    style={{ background: RED }}
+                  >
+                    AUTORIZAR
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Bloqueio de tela (Ctrl+Shift+L) ─── */}
+        {screenLocked && (
+          <div
+            data-training-target="screen-lock"
+            className="fixed inset-0 z-[400] flex items-center justify-center p-4"
+            style={{ background: 'rgba(15,23,42,0.96)' }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                if (screenLockPin === SUPERVISOR_PIN) {
+                  setScreenLocked(false);
+                  setScreenLockPin('');
+                } else {
+                  showAlert({ title: 'PIN incorreto', message: 'Digite o PIN de 4 dígitos.', variant: 'warning' });
+                }
+              } else {
+                // Bloqueia qualquer atalho vazando pro PDV atrás
+                e.stopPropagation();
+              }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && screenLocked && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div className="bg-white border-4 max-w-sm w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
+              <div className="px-4 py-2.5 text-white" style={{ background: NAVY_DARK }}>
+                <span className="font-black tracking-wide text-sm uppercase">🔒 Tela Bloqueada</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-gray-800 leading-relaxed">
+                  A tela foi bloqueada por Ctrl+Shift+L. Ninguém pode operar sem o PIN. Digite o PIN de 4 dígitos para destravar.
+                </p>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 block mb-1.5">PIN</label>
+                  <input
+                    autoFocus
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={screenLockPin}
+                    onChange={(e) => setScreenLockPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums text-center tracking-[0.6em] focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  {isTraining && (
+                    <div className="mt-2 text-[11px] text-gray-500 italic border-l-2 pl-2" style={{ borderColor: NAVY_DARK }}>
+                      No treino, o PIN é <b>1234</b> (mesmo do supervisor).
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Camada de treinamento (spotlight + balão) sobre o PDV */}
         {isTraining && onExitTraining && (
           <TrainingCoach
@@ -4654,6 +4891,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               fiadoRejectionCount,
               stockRejectionCount,
               hasLinkedClient: linkedClient !== null,
+              supervisorAuthOpen: supervisorAuthModal !== null,
+              supervisorAuthCount,
+              reversalsCount,
+              screenLocked,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}
