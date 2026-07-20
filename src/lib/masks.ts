@@ -67,6 +67,34 @@ export const parseCurrencyToNumber = (value: string): number => {
   return parseFloat(rawValue) / 100 || 0;
 };
 
+/**
+ * Máscara para percentual (0–100 com até 2 casas decimais, separador vírgula).
+ * Diferente de maskCurrency: NÃO divide por 100 — o que o usuário digita é o
+ * valor. Ex.: "10" → "10", "10,5" → "10,5", "1005" → "100" (teto),
+ * "0,,5" → "0,5", "1,234" → "1,23".
+ */
+export const maskPercent = (value: string | number): string => {
+  if (value === undefined || value === null) return '';
+  let v = String(value).replace(/[^\d,]/g, '');
+  const firstComma = v.indexOf(',');
+  if (firstComma !== -1) {
+    v = v.slice(0, firstComma + 1) + v.slice(firstComma + 1).replace(/,/g, '');
+  }
+  const parts = v.split(',');
+  let intPart = parts[0].replace(/^0+(?=\d)/, '');
+  if (intPart === '') intPart = '0';
+  const asInt = parseInt(intPart, 10);
+  if (asInt > 100) return '100';
+  if (parts.length === 1) return intPart;
+  return `${intPart},${parts[1].slice(0, 2)}`;
+};
+
+export const parsePercentToNumber = (value: string): number => {
+  if (!value) return 0;
+  const n = parseFloat(value.replace(',', '.'));
+  return isFinite(n) ? n : 0;
+};
+
 /** Formata um número como moeda BR: "R$ 1.234,56" */
 export const formatBRL = (n: number | null | undefined): string => {
   const v = typeof n === 'number' && !isNaN(n) ? n : 0;

@@ -14,7 +14,7 @@
  * (via trainingProgress) para o Início mostrar badge "novo" quando ainda houver
  * cenários pendentes.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { markCompleted, getCompleted, ScenarioId, ALL_SCENARIOS } from '../lib/trainingProgress';
 
 export type CoachPDVState = {
@@ -43,6 +43,12 @@ export type CoachPDVState = {
   classicSearchOpen: boolean;
   suspendedSale: unknown | null;
   selectedCartIdx: number; // -1 = sem seleção; >=0 = índice do item selecionado
+  // Campos usados por passos que precisam distinguir "confirmou" de "cancelou".
+  // Sem eles, done: (s) => !s.xModalOpen dispara igual em Enter e em Esc.
+  saleDiscount: number;         // > 0 = desconto no total aplicado
+  itemDiscountCount: number;    // qtd de itens com discount > 0
+  cashMovementsCount: number;   // sangrias + suprimentos EFETIVADOS neste turno
+  cpfSetOnSale: boolean;        // cpfNota preenchido na venda atual
 };
 
 type Step = {
@@ -376,7 +382,9 @@ const TRACK_DISCOUNT: Track = {
       body:
         'O foco já está no campo VALOR. Para trocar de R$ para percentual, aperte a tecla % (ou $ para voltar a reais).\n\nDepois digite 10 e Enter. O café cai de R$ 12 para R$ 10,80 (12 − 10%).',
       hint: 'Prefere valor em reais? Não troque — só digite 2,00 e Enter para tirar exatos R$ 2 (o modo padrão é R$).',
-      done: (s) => s.discountModal === null,
+      // Só avança se o modal fechou E o desconto foi realmente aplicado
+      // (Esc/CANCELAR fecha o modal mas não incrementa itemDiscountCount).
+      done: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.itemDiscountCount > prev.itemDiscountCount,
     },
     {
       id: 'scan-more',
@@ -400,7 +408,7 @@ const TRACK_DISCOUNT: Track = {
       title: 'Digite R$ 0,80 de desconto',
       body: 'Deixe em "R$ (Reais)", digite 0,80 e Enter. O total cai.',
       hint: 'O sistema não deixa você aplicar desconto MAIOR que o valor — evita venda com total negativo.',
-      done: (s) => s.discountModal === null,
+      done: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.saleDiscount > 0,
     },
     {
       id: 'finish-cash-f1',
@@ -490,7 +498,7 @@ const TRACK_EXTRAS: Track = {
       body:
         'Digite qualquer 11 dígitos (ex.: 12345678900). O sistema formata sozinho como 123.456.789-00. Enter confirma.',
       hint: 'Também aceita CNPJ (14 dígitos) para pessoa jurídica.',
-      done: (s) => !s.cpfModalOpen,
+      done: (s, prev) => prev !== null && prev.cpfModalOpen && !s.cpfModalOpen && s.cpfSetOnSale,
     },
     {
       id: 'finish-cash-extras',
@@ -523,7 +531,7 @@ const TRACK_CASH_MGMT: Track = {
       target: '[data-training-target="suprimento-modal"]',
       title: 'Preencha e confirme',
       body: 'Digite um valor qualquer (ex.: R$ 30,00), Tab, digite um motivo curto (ex.: "reforço de troco") e aperte ENTER.',
-      done: (s, prev) => prev !== null && prev.supModal && !s.supModal,
+      done: (s, prev) => prev !== null && prev.supModal && !s.supModal && s.cashMovementsCount > prev.cashMovementsCount,
     },
     {
       id: 'press-f12',
@@ -537,7 +545,7 @@ const TRACK_CASH_MGMT: Track = {
       target: '[data-training-target="sangria-modal"]',
       title: 'Preencha e confirme',
       body: 'Mesmo esquema: valor, Tab, motivo (ex.: "levado ao cofre"), ENTER.',
-      done: (s, prev) => prev !== null && prev.sangriaModal && !s.sangriaModal,
+      done: (s, prev) => prev !== null && prev.sangriaModal && !s.sangriaModal && s.cashMovementsCount > prev.cashMovementsCount,
     },
     {
       id: 'click-close',
@@ -594,6 +602,11 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
   // de auto-advance com prev = state atual — o clearTimeout do cleanup cancelaria
   // o setTimeout já agendado, e o passo travaria.
   const prevStateRef = useRef<CoachPDVState | null>(null);
+  // Trava re-entrada: uma vez que done=true dispara o timeout, marcamos este
+  // stepIdx e não cancelamos mesmo que o state flutue antes dos 350ms (ex.: modal
+  // fecha por Esc logo após abrir). Sem isso, o cleanup do useEffect cancela o
+  // timeout e o passo trava. É resetado ao mudar de step ou cenário.
+  const advanceScheduledForStepRef = useRef<number>(-1);
 
   const track = scenarioId ? TRACKS[scenarioId] : null;
   const step = track ? track.steps[stepIdx] : null;
@@ -611,20 +624,44 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
       setStepIdx(i => Math.max(0, i - 1));
       return;
     }
+    // Já agendou avanço para este step → não reagendar nem cancelar.
+    if (advanceScheduledForStepRef.current === stepIdx) return;
     if (step.done(state, prev)) {
-      const t = setTimeout(() => {
-        if (stepIdx < track.steps.length - 1) {
-          setStepIdx(i => i + 1);
-        } else {
-          // Último passo cumprido → cenário completo.
-          markCompleted(userId, track.id);
+      advanceScheduledForStepRef.current = stepIdx;
+      const total = track.steps.length;
+      const isLast = stepIdx >= total - 1;
+      const trackId = track.id;
+      setTimeout(() => {
+        if (isLast) {
+          markCompleted(userId, trackId);
           setCompletedSet(new Set(getCompleted(userId)));
           setShowingDone(true);
+        } else {
+          setStepIdx(i => i + 1);
         }
       }, 350);
-      return () => clearTimeout(t);
     }
   }, [state, step, track, stepIdx, showingDone, userId]);
+
+  // Reset da trava ao mudar de step / cenário.
+  useEffect(() => {
+    advanceScheduledForStepRef.current = -1;
+  }, [stepIdx, scenarioId]);
+
+  const pickScenario = useCallback((id: ScenarioId) => {
+    onScenarioStart?.();
+    setScenarioId(id);
+    setStepIdx(0);
+    setShowingDone(false);
+    prevStateRef.current = null; // será reatualizado no 1º render após o reset
+  }, [onScenarioStart]);
+
+  const backToMenu = useCallback(() => {
+    onScenarioStart?.();
+    setScenarioId(null);
+    setStepIdx(0);
+    setShowingDone(false);
+  }, [onScenarioStart]);
 
   // ENTER na tela de conclusão de cenário. (O menu de cenários tem seu próprio
   // handler dentro de ScenarioMenu — evita registro duplo do mesmo shortcut.)
@@ -640,27 +677,16 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [track, showingDone]);
+  }, [track, showingDone, onExit, backToMenu]);
 
-  const pickScenario = (id: ScenarioId) => {
-    onScenarioStart?.();
-    setScenarioId(id);
-    setStepIdx(0);
-    setShowingDone(false);
-    prevStateRef.current = null; // será reatualizado no 1º render após o reset
-  };
-
-  const backToMenu = () => {
-    onScenarioStart?.();
-    setScenarioId(null);
-    setStepIdx(0);
-    setShowingDone(false);
-  };
-
-  const targetRect = useTargetRect(step?.target ?? null, [stepIdx, scenarioId, state]);
+  // Deps do useTargetRect: só o que muda o layout do alvo. Passar `state` inteiro
+  // faz JSON.stringify do carrinho a cada teclada — desperdício. O hook já ouve
+  // resize+scroll+MutationObserver-like via polling, então state em si não
+  // precisa entrar.
+  const targetRect = useTargetRect(step?.target ?? null, [stepIdx, scenarioId]);
   const preludeRect = useTargetRect(
     (!track && !state.cashSession) ? '[data-training-target="open-cash-modal"]' : null,
-    [state.cashSession]
+    [!!state.cashSession]
   );
 
   // ─── Preludio: precisa abrir o caixa antes de escolher cenário ──
@@ -1009,7 +1035,6 @@ function ScenarioMenu({
 // render em que o alvo aparece (modal ainda montando).
 function useTargetRect(selector: string | null, deps: unknown[]) {
   const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const depsKey = useMemo(() => JSON.stringify(deps), [deps]);
 
   useEffect(() => {
     if (!selector) { setRect(null); return; }
@@ -1036,7 +1061,8 @@ function useTargetRect(selector: string | null, deps: unknown[]) {
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', measure, true);
     };
-  }, [selector, depsKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selector, ...deps]);
 
   return rect;
 }

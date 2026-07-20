@@ -9,7 +9,7 @@ import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCurrency, parseCurrencyToNumber, maskCpfCnpj } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber, maskCpfCnpj } from '../lib/masks';
 import { PDFReport } from '../lib/pdfReport';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
 
@@ -145,6 +145,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [discountKind, setDiscountKind] = useState<'reais' | 'percent'>('reais');
   const [cpfModalOpen, setCpfModalOpen] = useState(false);
   const [cpfInput, setCpfInput] = useState('');
+  // Contador de sangrias+suprimentos efetivamente confirmados neste turno.
+  // Usado pelo Modo Treinamento para distinguir "operador confirmou" de
+  // "operador abriu e cancelou" (ambos fecham o modal).
+  const [cashMovementsCount, setCashMovementsCount] = useState(0);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -688,6 +692,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setSupModal(false);
       setMovValor('');
       setMovMotivo('');
+      setCashMovementsCount(c => c + 1);
       return;
     }
     try {
@@ -696,6 +701,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setSupModal(false);
       setMovValor('');
       setMovMotivo('');
+      setCashMovementsCount(c => c + 1);
     } catch (err: any) {
       showAlert({
         title: 'Erro ao gravar movimento',
@@ -838,11 +844,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   const confirmDiscount = () => {
     if (!discountModal) return;
-    const raw = parseCurrencyToNumber(discountInput);
-    if (raw < 0) {
-      showAlert({ title: 'Valor inválido', message: 'Desconto não pode ser negativo.', variant: 'warning' });
-      return;
-    }
+    const raw = discountKind === 'percent' ? parsePercentToNumber(discountInput) : parseCurrencyToNumber(discountInput);
     if (discountModal.scope === 'item' && discountModal.itemId) {
       const it = cart.find(c => c.id === discountModal.itemId);
       if (!it) { setDiscountModal(null); return; }
@@ -1205,7 +1207,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         // VOLTAR, etc.), deixa o navegador disparar o click nativo. Senão o
         // Enter sequestrava a venda fechando sozinho quando ela já estava paga.
         if (target && target.tagName === 'BUTTON') return;
-        const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
+        const sub = cart.reduce((a, it) => a + it.price * it.quantity - (it.discount ?? 0), 0);
+        const tot = Math.max(0, parseFloat((sub - saleDiscount).toFixed(2)));
         const pd = payments.reduce((a, p) => a + p.amount, 0);
         if (tot > 0 && pd >= tot - 0.001) {
           e.preventDefault();
@@ -1216,7 +1219,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, isTraining, onExitToMenu, onExitTraining]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, isTraining, onExitToMenu, onExitTraining]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -4214,7 +4217,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           const isItem = discountModal.scope === 'item';
           const it = isItem && discountModal.itemId ? cart.find(c => c.id === discountModal.itemId) : null;
           const base = isItem ? (it ? it.price * it.quantity : 0) : subtotal;
-          const raw = parseCurrencyToNumber(discountInput);
+          const raw = discountKind === 'percent' ? parsePercentToNumber(discountInput) : parseCurrencyToNumber(discountInput);
           const calc = discountKind === 'percent' ? parseFloat((base * (raw / 100)).toFixed(2)) : raw;
           const newSubtotal = Math.max(0, base - calc);
           return (
@@ -4232,8 +4235,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   e.preventDefault(); e.stopPropagation();
                   confirmDiscount();
                 }
-                else if (e.key === '%') { e.preventDefault(); e.stopPropagation(); setDiscountKind('percent'); }
-                else if (e.key === '$') { e.preventDefault(); e.stopPropagation(); setDiscountKind('reais'); }
+                else if (e.key === '%') { e.preventDefault(); e.stopPropagation(); setDiscountKind('percent'); setDiscountInput('0'); }
+                else if (e.key === '$') { e.preventDefault(); e.stopPropagation(); setDiscountKind('reais'); setDiscountInput(maskCurrency(0)); }
                 else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
               }}
               tabIndex={-1}
@@ -4253,7 +4256,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setDiscountKind('reais')}
+                      onClick={() => { setDiscountKind('reais'); setDiscountInput(maskCurrency(0)); }}
                       className={`py-2 text-sm font-black uppercase tracking-wider border-2 transition ${
                         discountKind === 'reais'
                           ? 'text-white border-gray-900 shadow-lg'
@@ -4265,7 +4268,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDiscountKind('percent')}
+                      onClick={() => { setDiscountKind('percent'); setDiscountInput('0'); }}
                       className={`py-2 text-sm font-black uppercase tracking-wider border-2 transition ${
                         discountKind === 'percent'
                           ? 'text-white border-gray-900 shadow-lg'
@@ -4283,8 +4286,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     <input
                       autoFocus
                       value={discountInput}
-                      onChange={(e) => setDiscountInput(maskCurrency(e.target.value))}
+                      onChange={(e) => setDiscountInput(
+                        discountKind === 'percent' ? maskPercent(e.target.value) : maskCurrency(e.target.value)
+                      )}
                       onFocus={(e) => e.currentTarget.select()}
+                      inputMode={discountKind === 'percent' ? 'decimal' : 'numeric'}
                       className="w-full bg-white border-2 text-3xl font-bold text-gray-900 outline-none px-3 py-2 tabular-nums focus:border-blue-700"
                       style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
                     />
@@ -4543,6 +4549,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               classicSearchOpen,
               suspendedSale,
               selectedCartIdx,
+              saleDiscount,
+              itemDiscountCount: cart.filter(i => (i.discount ?? 0) > 0).length,
+              cashMovementsCount,
+              cpfSetOnSale: cpfNota.trim().length > 0,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}
