@@ -1154,7 +1154,8 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       </div>
 
       {showAddUser && subTab === 'equipe' && (
-        <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[#172554] flex items-center gap-2">
               <UserPlus /> {editingItem ? 'EDITAR MEMBRO' : 'CADASTRAR NOVO MEMBRO'}
@@ -1220,11 +1221,13 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </button>
             </div>
           </form>
+          </div>
         </div>
       )}
 
       {showAddClient && subTab === 'clientes' && (
-        <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
@@ -1445,11 +1448,13 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </button>
             </div>
           </div>
+          </div>
         </div>
       )}
 
       {showAddProduct && subTab === 'produtos' && (
-        <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
@@ -1656,11 +1661,13 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </button>
             </div>
           </div>
+          </div>
         </div>
       )}
 
       {showAddService && subTab === 'servicos' && (
-        <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR SERVIÇO' : 'CADASTRAR NOVO SERVIÇO'}
@@ -1739,11 +1746,13 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </button>
             </div>
           </div>
+          </div>
         </div>
       )}
 
       {showAddSupplier && subTab === 'fornecedores' && (
-        <div className="neumorphic p-8 animate-in slide-in-from-top duration-300">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
@@ -1938,6 +1947,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR FORNECEDOR'}
               </button>
             </div>
+          </div>
           </div>
         </div>
       )}

@@ -9,6 +9,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { formatBRL } from '../lib/masks';
 import { Sale } from '../types';
+import { useConfirmDialog } from './ConfirmDialog';
 
 const EMITTED_KEY = 'fiscal_emitted_nfce';
 
@@ -92,6 +93,7 @@ function xmlSimulado(sale: Sale, chave: string): string {
 }
 
 export default function FiscalModule() {
+  const { askConfirm, host: confirmHost } = useConfirmDialog();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [emitted, setEmitted] = useState<Set<string>>(() => {
@@ -137,14 +139,21 @@ export default function FiscalModule() {
       alert('Nenhuma venda pendente de emissão.');
       return;
     }
-    if (!confirm(`Emitir NFC-e simulada para ${pendentes.length} venda(s) pendente(s)?`)) return;
-    setEmitted(prev => {
-      const next = new Set<string>(prev);
-      pendentes.forEach(s => next.add(s.id));
-      persistEmitted(next);
-      return next;
+    askConfirm({
+      title: 'Emitir NFC-e',
+      message: `Emitir NFC-e simulada para ${pendentes.length} venda(s) pendente(s)?`,
+      confirmLabel: 'EMITIR',
+      variant: 'primary',
+      onConfirm: () => {
+        setEmitted(prev => {
+          const next = new Set<string>(prev);
+          pendentes.forEach(s => next.add(s.id));
+          persistEmitted(next);
+          return next;
+        });
+        alert(`${pendentes.length} NFC-e simuladas emitidas com sucesso!`);
+      },
     });
-    alert(`${pendentes.length} NFC-e simuladas emitidas com sucesso!`);
   };
 
   const exportXML = (sale: Sale) => {
@@ -164,6 +173,7 @@ export default function FiscalModule() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {confirmHost}
       {/* Banner de Aviso Demonstrativo */}
       <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl flex items-center gap-4">
         <Info className="text-blue-500" size={24} />

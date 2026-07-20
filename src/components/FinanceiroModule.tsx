@@ -14,6 +14,7 @@ import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
 import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
+import { useConfirmDialog } from './ConfirmDialog';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function FinanceiroModule() {
+  const { askConfirm, host: confirmHost } = useConfirmDialog();
   const [sales, setSales] = useState<Sale[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
@@ -258,14 +260,21 @@ export default function FinanceiroModule() {
     }
   };
 
-  const handleDeleteAccount = async (id: string) => {
-    if (!confirm('Deseja excluir este lançamento?')) return;
-    try {
-      await Storage.deleteAccount(id);
-      setAccounts(prev => prev.filter(a => a.id !== id));
-    } catch (err: any) {
-      alert('Erro ao excluir conta: ' + err.message);
-    }
+  const handleDeleteAccount = (id: string) => {
+    askConfirm({
+      title: 'Excluir lançamento',
+      message: 'Excluir este lançamento? A ação não pode ser desfeita.',
+      confirmLabel: 'EXCLUIR',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await Storage.deleteAccount(id);
+          setAccounts(prev => prev.filter(a => a.id !== id));
+        } catch (err: any) {
+          alert('Erro ao excluir conta: ' + err.message);
+        }
+      },
+    });
   };
 
   const filteredAccounts = accounts.filter(a => {
@@ -298,6 +307,7 @@ export default function FinanceiroModule() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {confirmHost}
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {stats.map((stat, i) => {

@@ -10,6 +10,7 @@ import {
 import { Storage } from '../lib/storage';
 import { User, FolhaPagamento } from '../types';
 import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
+import { useConfirmDialog } from './ConfirmDialog';
 
 function currentMesRef(): string {
   const d = new Date();
@@ -23,6 +24,7 @@ const STATUS_STYLE: Record<FolhaPagamento['status'], string> = {
 };
 
 export default function FolhaPagamentoModule() {
+  const { askConfirm, host: confirmHost } = useConfirmDialog();
   const [colaboradores, setColaboradores] = useState<User[]>([]);
   const [folhas, setFolhas] = useState<FolhaPagamento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,31 +103,46 @@ export default function FolhaPagamentoModule() {
     }
   };
 
-  const handlePagar = async (folha: FolhaPagamento) => {
-    if (!confirm(`Confirmar pagamento de ${formatBRL(folha.salario_liquido)} para ${colaboradorNome(folha.colaborador_id)}? O valor será creditado na conta MaxBank do colaborador.`)) return;
-    setPaying(folha.id);
-    try {
-      await Storage.pagarFolha(folha.id);
-      await load();
-    } catch (err: any) {
-      alert('Erro ao pagar folha: ' + (err?.message ?? String(err)));
-    } finally {
-      setPaying(null);
-    }
+  const handlePagar = (folha: FolhaPagamento) => {
+    askConfirm({
+      title: 'Confirmar pagamento',
+      message: `Pagar ${formatBRL(folha.salario_liquido)} para ${colaboradorNome(folha.colaborador_id)}?\n\nO valor será creditado na conta MaxBank do colaborador.`,
+      confirmLabel: 'PAGAR',
+      variant: 'primary',
+      onConfirm: async () => {
+        setPaying(folha.id);
+        try {
+          await Storage.pagarFolha(folha.id);
+          await load();
+        } catch (err: any) {
+          alert('Erro ao pagar folha: ' + (err?.message ?? String(err)));
+        } finally {
+          setPaying(null);
+        }
+      },
+    });
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Excluir este lançamento de folha?')) return;
-    try {
-      await Storage.deleteFolha(id);
-      await load();
-    } catch (err: any) {
-      alert('Erro ao excluir folha: ' + err.message);
-    }
+  const handleDelete = (id: string) => {
+    askConfirm({
+      title: 'Excluir folha',
+      message: 'Excluir este lançamento de folha? A ação não pode ser desfeita.',
+      confirmLabel: 'EXCLUIR',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await Storage.deleteFolha(id);
+          await load();
+        } catch (err: any) {
+          alert('Erro ao excluir folha: ' + err.message);
+        }
+      },
+    });
   };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {confirmHost}
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         <div className="neumorphic p-4 md:p-6 relative overflow-hidden">
