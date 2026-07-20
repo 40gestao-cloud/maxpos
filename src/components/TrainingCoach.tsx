@@ -49,6 +49,17 @@ export type CoachPDVState = {
   itemDiscountCount: number;    // qtd de itens com discount > 0
   cashMovementsCount: number;   // sangrias + suprimentos EFETIVADOS neste turno
   cpfSetOnSale: boolean;        // cpfNota preenchido na venda atual
+  // Item com QUANTIDADE > 1 ou decimal (peso). Alimenta o passo de multiplicação
+  // (2*agua, 0,5*cafe) — bipar duas vezes o mesmo produto NÃO conta: precisa ser
+  // uma única linha com qty > 1.
+  hasMultiQuantityItem: boolean;
+  // Diferença (contado − esperado) capturada NO INSTANTE do fechamento de caixa.
+  // null enquanto não fechou. Usado para forçar prática de sobra/falta.
+  lastCloseCashDiff: number | null;
+  // Contador de pagamentos que vieram de valor PARCIAL (partialAmount preenchido).
+  // Usado pelo passo de pagamento parcial para saber que o operador de fato
+  // usou a divisão em vez de pagar o total inteiro.
+  partialPaymentsCount: number;
 };
 
 type Step = {
@@ -134,11 +145,21 @@ const TRACK_CASH_BASIC: Track = {
   steps: [
     scanFirst,
     {
+      id: 'scan-quantity',
+      target: '[data-training-target="code-input"]',
+      title: 'Bipa uma QUANTIDADE (2*produto)',
+      body:
+        'Cliente quer 3 pães? Em vez de bipar 3x, digite "3*pao" e Enter — o asterisco (*) multiplica. Aparece uma linha só com QTD 3.',
+      hint:
+        'Balança/peso: "0,350*cafe" registra 350 g. O sistema aceita decimal com vírgula. Para código de barras real, o padrão é "N°EAN" — igual, mas com o EAN completo em vez do apelido.',
+      done: (s) => s.hasMultiQuantityItem,
+    },
+    {
       id: 'scan-more',
       target: '[data-training-target="code-input"]',
       title: 'Adicione mais 1 item',
       body:
-        'No dia a dia, o operador bipa vários produtos em sequência. Bipa mais um (tente "pao" ou "cafe") — repare que o TOTAL A PAGAR sobe automaticamente no canto direito.',
+        'No dia a dia, o operador bipa vários produtos em sequência. Bipa mais um (tente "cafe") — repare que o TOTAL A PAGAR sobe automaticamente no canto direito.',
       done: (s) => s.cart.length >= 2,
     },
     goCheckout,
@@ -174,10 +195,10 @@ const TRACK_CASH_BASIC: Track = {
 
 const TRACK_CARD: Track = {
   id: 'card',
-  title: 'Cartão de crédito parcelado',
+  title: 'Cartão de crédito e débito',
   icon: '💳',
   color: '#172554',
-  description: 'Cliente passa o cartão de crédito e quer parcelar (ex.: 3x). Débito segue o mesmo caminho, mas sem parcela.',
+  description: 'Duas vendas seguidas: 1ª em CRÉDITO parcelado (3x), 2ª em DÉBITO à vista. Mesmo atalho F2, escolhas diferentes no picker.',
   steps: [
     scanFirst,
     goCheckout,
@@ -194,7 +215,8 @@ const TRACK_CARD: Track = {
       target: '[data-pay-method="credito"]',
       title: 'Escolha CRÉDITO',
       body:
-        'Use as setas ↑↓ para percorrer as opções (CRÉDITO / DÉBITO) e aperte ENTER em CRÉDITO. O crédito abre a escolha de parcela. O débito seria só apertar Enter e pronto — sem parcelar.',
+        'Use as setas ↑↓ para percorrer as opções (CRÉDITO / DÉBITO) e aperte ENTER em CRÉDITO. O crédito abre a escolha de parcela.',
+      hint: 'Débito não parcela — cai direto na revisão. Vamos praticar débito na 2ª venda logo em seguida.',
       done: (s) => s.showInstallments,
     },
     {
@@ -205,6 +227,74 @@ const TRACK_CARD: Track = {
         'Cliente pediu para parcelar em 3x? Você tem 3 formas de escolher:\n\n• Digite o número (ex.: "3" — atalho de 1 tecla)\n• Use ↑↓ ← → e ENTER\n• Clique com o mouse\n\nEscolha o parcelamento agora.',
       hint: 'Cada opção mostra o valor de CADA parcela ao lado (ex.: 3x R$ 4,00).',
       done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    receiptStep,
+    // ─── 2ª venda — DÉBITO ────────────────────────────────────────
+    {
+      id: 'scan-debit',
+      target: '[data-training-target="code-input"]',
+      title: '2ª venda — bipa 1 item',
+      body: 'Nova venda: cliente vai pagar em DÉBITO à vista. Bipa "agua" (ou qualquer produto).',
+      done: (s) => s.cart.length >= 1,
+    },
+    { ...goCheckout, id: 'go-checkout-debit' },
+    {
+      id: 'press-f2-debit',
+      target: '[data-pay-method="credito"]',
+      title: 'F2 de novo',
+      body: 'Mesma tecla F2 abre o picker CRÉDITO / DÉBITO.',
+      done: (s) => s.cardPickerOpen,
+    },
+    {
+      id: 'pick-debit',
+      target: '[data-pay-method="credito"]',
+      title: 'Desça para DÉBITO',
+      body:
+        'Aperte ↓ (ou Tab) para focar em DÉBITO e Enter. Débito NÃO abre modal de parcelas — o pagamento entra direto e você vai pra revisão.',
+      hint: 'No supermercado real, aqui o cliente digita a senha na maquininha. Como treinamento, entra automático.',
+      done: (s) => s.paymentsCount > 0,
+    },
+    { ...reviewSaleStep, id: 'review-sale-debit' },
+    { ...receiptStep, id: 'receipt-print-debit' },
+  ],
+};
+
+const TRACK_PARTIAL: Track = {
+  id: 'partial',
+  title: 'Pagamento parcial (dividir formas)',
+  icon: '🔀',
+  color: '#0369a1',
+  description:
+    'Cliente vai pagar parte em dinheiro e o resto no cartão. Muito comum: "só tenho R$ 5 na mão, passa o resto".',
+  steps: [
+    {
+      id: 'scan-two-partial',
+      target: '[data-training-target="code-input"]',
+      title: 'Monta uma venda de R$ 15',
+      body:
+        'Bipa "cafe" (R$ 12) e "agua" (R$ 3) — dois itens somando R$ 15. Cliente falou que só tem R$ 5 em dinheiro; o resto (R$ 10) vai no cartão.',
+      done: (s) => s.cart.length >= 2,
+    },
+    { ...goCheckout, id: 'go-checkout-partial' },
+    {
+      id: 'partial-cash',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'VALOR PARCIAL 5,00 → F1',
+      body:
+        'No checkout, à esquerda dos botões de pagamento, tem o campo VALOR PARCIAL. Digite 5,00 nele. Depois F1 — o modal de dinheiro abre já com 5,00. Enter confirma. Sobra R$ 10 no TOTAL A PAGAR.',
+      hint:
+        'Sem valor parcial preenchido, a forma leva o RESTANTE inteiro. Com valor parcial, ela leva só o que você digitou.',
+      done: (s) => s.partialPaymentsCount > 0,
+    },
+    {
+      id: 'pay-rest-card',
+      target: '[data-pay-method="credito"]',
+      title: 'F2 → CRÉDITO para o restante',
+      body:
+        'Agora o campo parcial ficou vazio de novo — a próxima forma leva o RESTANTE (R$ 10). Aperte F2, escolha CRÉDITO com Enter, e escolha 1x (ou o número que preferir).',
+      hint: 'Podia ser F1 (mais dinheiro), F2 débito, F3 PIX/Vale, F3 fiado — qualquer forma serve pra fechar. Aqui usamos crédito só pra praticar o F2.',
+      done: (s) => s.paymentsCount >= 2,
     },
     reviewSaleStep,
     receiptStep,
@@ -558,10 +648,15 @@ const TRACK_CASH_MGMT: Track = {
     {
       id: 'confirm-close',
       target: '[data-training-target="close-cash-modal"]',
-      title: 'Contar o dinheiro',
-      body: 'Sistema calcula quanto deveria ter em caixa (fundo + vendas + suprimentos − sangrias). Digite o que você contou (o valor sugerido já vem preenchido) e ENTER.',
-      hint: 'Se contado ≠ esperado, aparece "SOBRA" ou "FALTA" antes de confirmar — isso vira relatório para o gerente.',
-      done: (s) => s.cashSession === null,
+      title: 'Praticar SOBRA ou FALTA',
+      body:
+        'O valor esperado já vem preenchido. Mas no dia real, o contado quase nunca bate exato. Apague e digite um valor DIFERENTE (ex.: R$ 1,00 A MAIS que o sugerido) e Enter. Vai aparecer "SOBRA" antes de confirmar.',
+      hint:
+        'FALTA (contado < esperado) e SOBRA (contado > esperado) viram relatório para o gerente investigar. Bater no exato é raro — se acontece sempre, geralmente é operador "arredondando" na cabeça em vez de contar.',
+      // PDVModule bloqueia o fechamento exato no treino (mostra alerta e
+      // mantém o modal aberto), então quando cashSession vira null aqui é
+      // garantido que o operador digitou divergência real.
+      done: (s) => s.cashSession === null && s.lastCloseCashDiff !== null && Math.abs(s.lastCloseCashDiff) > 0.001,
     },
   ],
 };
@@ -573,6 +668,7 @@ const TRACKS: Record<ScenarioId, Track> = {
   'fiado': TRACK_FIADO,
   'fix-mistake': TRACK_FIX_MISTAKE,
   'discount': TRACK_DISCOUNT,
+  'partial': TRACK_PARTIAL,
   'extras': TRACK_EXTRAS,
   'cash-mgmt': TRACK_CASH_MGMT,
 };

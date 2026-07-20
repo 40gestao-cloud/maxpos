@@ -149,6 +149,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Usado pelo Modo Treinamento para distinguir "operador confirmou" de
   // "operador abriu e cancelou" (ambos fecham o modal).
   const [cashMovementsCount, setCashMovementsCount] = useState(0);
+  // Diferença capturada no fechamento (contado - esperado). Fica disponível
+  // para o Modo Treinamento validar prática de sobra/falta. Reset ao abrir
+  // um novo fechamento ou nova sessão de caixa.
+  const [lastCloseCashDiff, setLastCloseCashDiff] = useState<number | null>(null);
+  // Conta pagamentos originados de valor PARCIAL (partialAmount preenchido no
+  // momento do addPayment/handleCashClick). Usado só para instrumentar treino.
+  const [partialPaymentsCount, setPartialPaymentsCount] = useState(0);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -634,6 +641,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       showAlert({ title: 'Fundo inválido', message: 'O fundo de troco não pode ser negativo.', variant: 'warning' });
       return;
     }
+    setLastCloseCashDiff(null);
+    setCashMovementsCount(0);
+    setPartialPaymentsCount(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -721,6 +731,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       });
       return;
     }
+    setLastCloseCashDiff(null);
     if (isTraining) {
       setCloseCashExpected({ fundo: cashSession.fundoTroco, vendas: 0, suprimentos: 0, sangrias: 0, total: cashSession.fundoTroco });
       setCloseCashContado(maskCurrency(Math.round(cashSession.fundoTroco * 100)));
@@ -762,7 +773,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       showAlert({ title: 'Valor inválido', message: 'O dinheiro contado não pode ser negativo.', variant: 'warning' });
       return;
     }
+    const diff = parseFloat((contado - closeCashExpected.total).toFixed(2));
     if (isTraining) {
+      // No treinamento exigimos praticar SOBRA/FALTA — se fechou exato, avisa
+      // e mantém o modal aberto. Sem isso o passo confirm-close travaria com a
+      // sessão zerada e sem modal para reabrir.
+      if (Math.abs(diff) <= 0.001) {
+        showAlert({
+          title: 'Pratique SOBRA ou FALTA',
+          message: 'Digite um valor DIFERENTE do sugerido para praticar o relatório de divergência. No caixa real, contado ≠ esperado é o cenário mais comum.',
+          variant: 'warning',
+        });
+        return;
+      }
+      setLastCloseCashDiff(diff);
       // Fecha só localmente. NÃO chama onExitTraining aqui — o Coach detecta
       // cashSession === null como fim do cenário cash-mgmt, marca completo
       // e mostra a tela de conclusão como nos outros cenários.
@@ -772,6 +796,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setCloseCashObs('');
       return;
     }
+    setLastCloseCashDiff(diff);
     try {
       await Storage.closeCashSession(cashSession.id, contado, closeCashObs.trim() || undefined);
       setCashSession(null);
@@ -1239,10 +1264,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const remaining = total - paid;
 
   const addPayment = (method: Payment['method'], installments?: number) => {
+    const usedPartial = !!partialAmount;
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
     setPayments(prev => [...prev, { method, amount: finalAmount, ...(installments ? { installments } : {}) }]);
+    if (usedPartial && finalAmount < remaining - 0.001) setPartialPaymentsCount(c => c + 1);
     setPartialAmount('');
     focusAfterExtraConfirm();
   };
@@ -1381,6 +1408,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   };
 
   const confirmCashPayment = () => {
+    const usedPartial = !!partialAmount;
     const wanted = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     const due = parseFloat(Math.min(wanted, remaining).toFixed(2));
     const received = parseCurrencyToNumber(cashReceived);
@@ -1391,6 +1419,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setCashChange(change);
     setPartialAmount('');
     setCashModalOpen(false);
+    if (usedPartial && paidAmount < remaining - 0.001) setPartialPaymentsCount(c => c + 1);
     focusAfterExtraConfirm();
   };
 
@@ -4553,6 +4582,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               itemDiscountCount: cart.filter(i => (i.discount ?? 0) > 0).length,
               cashMovementsCount,
               cpfSetOnSale: cpfNota.trim().length > 0,
+              hasMultiQuantityItem: cart.some(i => i.quantity > 1 || !Number.isInteger(i.quantity)),
+              lastCloseCashDiff,
+              partialPaymentsCount,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}
