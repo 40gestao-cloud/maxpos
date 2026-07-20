@@ -163,6 +163,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // (Ctrl+R). Fora do treino, a reimpressão consulta o banco. Reset ao abrir
   // novo caixa (novo turno = novo histórico).
   const [trainingSalesHistory, setTrainingSalesHistory] = useState<Sale[]>([]);
+  // Totais de suprimentos/sangrias confirmados no treino, para o modal de
+  // fechamento refletir a realidade (no prod isso vem do banco).
+  const [trainingSuprimentoTotal, setTrainingSuprimentoTotal] = useState(0);
+  const [trainingSangriaTotal, setTrainingSangriaTotal] = useState(0);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -653,6 +657,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setPartialPaymentsCount(0);
     setPaymentEditsCount(0);
     setTrainingSalesHistory([]);
+    setTrainingSuprimentoTotal(0);
+    setTrainingSangriaTotal(0);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -712,6 +718,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setMovValor('');
       setMovMotivo('');
       setCashMovementsCount(c => c + 1);
+      if (tipo === 'suprimento') setTrainingSuprimentoTotal(t => parseFloat((t + valor).toFixed(2)));
+      else setTrainingSangriaTotal(t => parseFloat((t + valor).toFixed(2)));
       return;
     }
     try {
@@ -742,8 +750,22 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     setLastCloseCashDiff(null);
     if (isTraining) {
-      setCloseCashExpected({ fundo: cashSession.fundoTroco, vendas: 0, suprimentos: 0, sangrias: 0, total: cashSession.fundoTroco });
-      setCloseCashContado(maskCurrency(Math.round(cashSession.fundoTroco * 100)));
+      // Compõe o esperado a partir do que o operador fez neste turno de treino:
+      // vendas em DINHEIRO das vendas concluídas + suprimentos − sangrias +
+      // fundo de troco. Só entra dinheiro no cálculo — cartão/PIX/fiado não
+      // ficam na gaveta.
+      const vendasDinheiro = trainingSalesHistory.reduce((acc, s) =>
+        acc + s.payments.filter(p => p.method === 'dinheiro').reduce((a, p) => a + p.amount, 0), 0);
+      const fundo = cashSession.fundoTroco;
+      const expectedTotal = parseFloat((fundo + vendasDinheiro + trainingSuprimentoTotal - trainingSangriaTotal).toFixed(2));
+      setCloseCashExpected({
+        fundo,
+        vendas: parseFloat(vendasDinheiro.toFixed(2)),
+        suprimentos: trainingSuprimentoTotal,
+        sangrias: trainingSangriaTotal,
+        total: expectedTotal,
+      });
+      setCloseCashContado(maskCurrency(Math.round(expectedTotal * 100)));
       setCloseCashObs('');
       setCloseCashModal(true);
       return;
