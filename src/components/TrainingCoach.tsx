@@ -62,6 +62,12 @@ export type CoachPDVState = {
   partialPaymentsCount: number;
   // Edições em pagamentos já lançados (commitEditPayment mudou o valor).
   paymentEditsCount: number;
+  // Reimpressão: expõe se algum dos dois modais está aberto (o histórico
+  // com 1 venda abre reprintSale direto; com 2+ abre reprintList).
+  reprintModalOpen: boolean;
+  // Vendas finalizadas neste turno de treino — usado pelo cenário reprint
+  // para diferenciar "cliente novo" de "cliente com venda anterior".
+  trainingSalesCount: number;
 };
 
 type Step = {
@@ -516,6 +522,68 @@ const TRACK_DISCOUNT: Track = {
   ],
 };
 
+// ─── NOVO — Reimpressão de cupom (Ctrl+R) ───────────────────────
+const TRACK_REPRINT: Track = {
+  id: 'reprint',
+  title: 'Reimprimir cupom (Ctrl+R)',
+  icon: '🖨️',
+  color: '#4c1d95',
+  description:
+    'Cliente voltou pedindo 2ª via do cupom? Ctrl+R busca as últimas vendas concluídas neste turno e permite reimprimir em PDF.',
+  steps: [
+    {
+      id: 'scan-quick',
+      target: '[data-training-target="code-input"]',
+      title: 'Faça uma venda rápida — bipa "agua"',
+      body: 'Antes de reimprimir precisamos de uma venda concluída. Bipa "agua" (R$ 3) — só 1 item para acelerar.',
+      done: (s) => s.cart.length >= 1,
+    },
+    { ...goCheckout, id: 'go-checkout-reprint' },
+    {
+      id: 'quick-cash',
+      target: '[data-pay-method="dinheiro"]',
+      title: 'F1 → Enter (valor exato já vem preenchido)',
+      body: 'F1 abre o modal com R$ 3,00 pré-preenchido (valor exato do total). Só Enter para confirmar.',
+      done: (s) => s.paymentsCount > 0,
+    },
+    reviewSaleStep,
+    {
+      ...receiptStep,
+      id: 'receipt-reprint',
+      body:
+        'Aperte ENTER para continuar (ou P para baixar PDF). Vamos precisar dessa venda no histórico logo em seguida.',
+    },
+    {
+      id: 'close-thankyou',
+      target: '[data-training-target="code-input"]',
+      title: 'Feche a tela de agradecimento',
+      body:
+        'A tela azul "OBRIGADO" apareceu — só fecha com ENTER. Aperte Enter agora. Depois o cursor volta pro campo CÓDIGO, sinal de que a venda terminou.',
+      hint: 'Enquanto o obrigado está aberto o teclado é bloqueado — Ctrl+R não vai funcionar até você fechar.',
+      done: (s) => !s.thankYouOpen && !s.checkoutMode && s.cart.length === 0,
+    },
+    {
+      id: 'press-ctrl-r',
+      target: '[data-training-target="code-input"]',
+      title: 'Ctrl+R — abre a reimpressão',
+      body:
+        'Fora de venda (carrinho vazio, sem pagamento pendente), Ctrl+R abre o modal de reimpressão. Como só há 1 venda no histórico deste turno, ele abre direto o cupom — se houvesse 2+, apareceria uma LISTA para escolher.',
+      hint: 'Ctrl+R NÃO funciona dentro de checkout ou com itens no carrinho — é ação de "fora de venda".',
+      done: (s) => s.reprintModalOpen,
+    },
+    {
+      id: 'reprint-print',
+      target: '[data-training-target="reprint-modal"]',
+      title: 'P para PDF, Esc para fechar',
+      body:
+        'O cupom aparece na tela igual ao original. Aperte P para baixar em PDF (a impressora térmica no balcão real dispararia com o mesmo comando). Depois Esc fecha o modal.',
+      hint:
+        'PDF serve pra arquivo digital (comprovante por WhatsApp, backup, e-mail). No balcão a impressora térmica é o padrão.',
+      done: (s, prev) => prev !== null && prev.reprintModalOpen && !s.reprintModalOpen,
+    },
+  ],
+};
+
 // ─── NOVO — Corrigir pagamento já lançado ───────────────────────
 const TRACK_FIX_PAYMENT: Track = {
   id: 'fix-payment',
@@ -737,6 +805,7 @@ const TRACKS: Record<ScenarioId, Track> = {
   'fix-payment': TRACK_FIX_PAYMENT,
   'discount': TRACK_DISCOUNT,
   'partial': TRACK_PARTIAL,
+  'reprint': TRACK_REPRINT,
   'extras': TRACK_EXTRAS,
   'cash-mgmt': TRACK_CASH_MGMT,
 };

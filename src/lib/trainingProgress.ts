@@ -20,6 +20,7 @@ export type ScenarioId =
   | 'fix-payment'
   | 'discount'
   | 'partial'
+  | 'reprint'
   | 'extras'
   | 'cash-mgmt';
 
@@ -34,7 +35,7 @@ function safeRead(userId: string): Set<ScenarioId> {
     return new Set(arr.filter((x: unknown): x is ScenarioId =>
       x === 'cash-basic' || x === 'card' || x === 'pix' || x === 'fiado' ||
       x === 'fix-mistake' || x === 'fix-payment' || x === 'discount' ||
-      x === 'partial' || x === 'extras' || x === 'cash-mgmt'
+      x === 'partial' || x === 'reprint' || x === 'extras' || x === 'cash-mgmt'
     ));
   } catch {
     return new Set();
@@ -68,6 +69,7 @@ export const ALL_SCENARIOS: ScenarioId[] = [
   'fiado',
   'partial',
   'fix-payment',
+  'reprint',
   'extras',
   'cash-mgmt',
 ];

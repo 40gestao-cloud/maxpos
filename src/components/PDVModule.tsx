@@ -159,6 +159,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Conta edições efetivas em pagamentos já lançados (via commitEditPayment).
   // Só para instrumentar o cenário fix-payment do treinamento.
   const [paymentEditsCount, setPaymentEditsCount] = useState(0);
+  // Histórico local de vendas concluídas no treino — alimenta a reimpressão
+  // (Ctrl+R). Fora do treino, a reimpressão consulta o banco. Reset ao abrir
+  // novo caixa (novo turno = novo histórico).
+  const [trainingSalesHistory, setTrainingSalesHistory] = useState<Sale[]>([]);
   // ─── Consulta de preço (F7) ───
   const [priceQueryOpen, setPriceQueryOpen] = useState(false);
   const [priceQueryTerm, setPriceQueryTerm] = useState('');
@@ -648,6 +652,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setCashMovementsCount(0);
     setPartialPaymentsCount(0);
     setPaymentEditsCount(0);
+    setTrainingSalesHistory([]);
     if (isTraining) {
       const s: CashSession = {
         id: 'training-session',
@@ -953,7 +958,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // ─── Reimpressão (Fix #23 — últimas N vendas do operador) ─
   const openReprintModal = async () => {
     if (isTraining) {
-      showAlert({ title: 'Modo Treinamento', message: 'Reimpressão está desativada aqui — nenhuma venda foi gravada no banco.', variant: 'info' });
+      const list = trainingSalesHistory;
+      if (list.length === 0) {
+        showAlert({
+          title: 'Sem venda anterior',
+          message: 'Finalize uma venda antes de reimprimir. Ctrl+R busca as últimas concluídas neste turno.',
+          variant: 'info',
+        });
+        return;
+      }
+      if (list.length === 1) { setReprintSale(list[0]); return; }
+      setReprintList(list);
       return;
     }
     try {
@@ -1675,6 +1690,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           },
         });
         if (rpcErr) throw rpcErr;
+      } else {
+        // No treino guardamos as últimas vendas em memória para a reimpressão
+        // (Ctrl+R). Cap em 10 pra imitar o Storage.getRecentSalesForReprint.
+        setTrainingSalesHistory(prev => [newSale, ...prev].slice(0, 10));
       }
       playBeep('finalize');
 
@@ -4395,7 +4414,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 tabIndex={-1}
                 ref={(el) => { if (el && reprintSale && !el.contains(document.activeElement)) el.focus(); }}
               >
-                <div className="bg-white border-2 max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl" style={{ borderColor: NAVY_DARK }}>
+                <div data-training-target="reprint-modal" className="bg-white border-2 max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl" style={{ borderColor: NAVY_DARK }}>
                   <div className="px-4 py-2.5 flex items-center justify-between text-white no-print" style={{ background: NAVY_DARK }}>
                     <span className="font-black tracking-wide text-sm uppercase">Reimpressão · Última venda</span>
                     <button onClick={() => setReprintSale(null)} tabIndex={-1} className="hover:opacity-70">
@@ -4592,6 +4611,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               lastCloseCashDiff,
               partialPaymentsCount,
               paymentEditsCount,
+              reprintModalOpen: reprintSale !== null || reprintList !== null,
+              trainingSalesCount: trainingSalesHistory.length,
             } as CoachPDVState}
             onExit={onExitTraining}
             onScenarioStart={resetSaleState}
