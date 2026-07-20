@@ -569,8 +569,8 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         await Storage.deleteService(id);
         setServices(prev => prev.filter(s => s.id !== id));
       } else if (type === 'equipe') {
+        await Storage.deleteUser(id);
         setUsers(prev => prev.filter(u => u.id !== id));
-        alert('Membro removido da lista. Para revogar acesso ao sistema, remova o usuário no painel Supabase.');
       }
     } catch (err: any) {
       alert('Erro ao excluir: ' + err.message);

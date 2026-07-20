@@ -297,6 +297,15 @@ export const Storage = {
     if (error) throw error;
   },
 
+  // Deleta o usuário POR COMPLETO — auth.users cascateia pro
+  // user_profiles. Backend: delete_user_completely RPC (patch
+  // 2026-07-20_delete_user_completely.sql). Só admin/gerente_* podem;
+  // auto-deleção bloqueada.
+  deleteUser: async (userId: string): Promise<void> => {
+    const { error } = await supabase.rpc('delete_user_completely', { p_user_id: userId });
+    if (error) throw error;
+  },
+
   getSession: async (): Promise<User | null> => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return null;
