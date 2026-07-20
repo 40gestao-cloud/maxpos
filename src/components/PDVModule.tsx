@@ -1185,6 +1185,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
+      // TAB — em treinamento, impede que o foco escape para a chrome do
+      // navegador. Só trapa quando o foco está no input do CÓDIGO (leitura):
+      // no checkout o Tab natural é usado pelo fluxo F5→Tab→CPF/CLIENTE,
+      // então não interferimos ali. Modais têm seu próprio trapTab.
+      if (e.key === 'Tab' && isTraining && !modalOpen && !pickerOpen
+          && !checkoutMode && target === codeInputRef.current) {
+        e.preventDefault();
+        codeInputRef.current?.focus();
+        return;
+      }
+
       // ENTER — confirma venda no checkout quando totalmente pago
       // (padrão Bematech/Linx: operador confere e aperta ENTER pra fechar)
       if (e.key === 'Enter') {

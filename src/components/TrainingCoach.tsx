@@ -752,10 +752,14 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
       {/* Overlay em 4 pedaços deixando um buraco no alvo. Sem alvo → cobre a tela toda. */}
       {hasTarget ? (
         <>
-          <div className="absolute inset-x-0 top-0" style={{ height: targetRect.top - 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute left-0" style={{ top: targetRect.top - 8, height: targetRect.height + 16, width: targetRect.left - 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute right-0" style={{ top: targetRect.top - 8, height: targetRect.height + 16, left: targetRect.left + targetRect.width + 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute inset-x-0" style={{ top: targetRect.top + targetRect.height + 8, bottom: 0, background: 'rgba(15,23,42,0.72)' }} />
+          {/* pointer-events:none em cada faixa — o wrapper pointer-events-none
+              não é herdado; filhos com default 'auto' bloqueiam cliques mesmo
+              sob o overlay do coach. Sem isso o operador vê o input do CÓDIGO
+              "travado" quando o spotlight cobre o resto da tela. */}
+          <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: targetRect.top - 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute left-0 pointer-events-none" style={{ top: targetRect.top - 8, height: targetRect.height + 16, width: targetRect.left - 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute right-0 pointer-events-none" style={{ top: targetRect.top - 8, height: targetRect.height + 16, left: targetRect.left + targetRect.width + 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute inset-x-0 pointer-events-none" style={{ top: targetRect.top + targetRect.height + 8, bottom: 0, background: 'rgba(15,23,42,0.72)' }} />
           <div
             className="absolute border-4 rounded-md pointer-events-none animate-pulse"
             style={{
@@ -769,7 +773,7 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
           />
         </>
       ) : (
-        <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)' }} />
+        <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(15,23,42,0.55)' }} />
       )}
 
       {/* Balão canto sup. direito */}
@@ -786,6 +790,7 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
               </div>
             </div>
             <button
+              tabIndex={-1}
               onClick={backToMenu}
               className="text-[10px] font-black px-2 py-1 border-2 hover:bg-black/10 uppercase tracking-wider"
               style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
@@ -807,6 +812,7 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
               </span>
               {stepIdx < track.steps.length - 1 && (
                 <button
+                  tabIndex={-1}
                   onClick={() => setStepIdx(i => Math.min(i + 1, track.steps.length - 1))}
                   className="text-[10px] font-black px-2 py-1 border hover:bg-gray-50 uppercase tracking-wider"
                   style={{ borderColor: '#9ca3af', color: NAVY_DARK }}
@@ -835,10 +841,10 @@ function OpenCashPrelude({
     <div className="fixed inset-0 z-[500] pointer-events-none" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
       {rect ? (
         <>
-          <div className="absolute inset-x-0 top-0" style={{ height: rect.top - 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute left-0" style={{ top: rect.top - 8, height: rect.height + 16, width: rect.left - 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute right-0" style={{ top: rect.top - 8, height: rect.height + 16, left: rect.left + rect.width + 8, background: 'rgba(15,23,42,0.72)' }} />
-          <div className="absolute inset-x-0" style={{ top: rect.top + rect.height + 8, bottom: 0, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: rect.top - 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute left-0 pointer-events-none" style={{ top: rect.top - 8, height: rect.height + 16, width: rect.left - 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute right-0 pointer-events-none" style={{ top: rect.top - 8, height: rect.height + 16, left: rect.left + rect.width + 8, background: 'rgba(15,23,42,0.72)' }} />
+          <div className="absolute inset-x-0 pointer-events-none" style={{ top: rect.top + rect.height + 8, bottom: 0, background: 'rgba(15,23,42,0.72)' }} />
           <div
             className="absolute border-4 rounded-md pointer-events-none animate-pulse"
             style={{
@@ -852,7 +858,7 @@ function OpenCashPrelude({
           />
         </>
       ) : (
-        <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)' }} />
+        <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(15,23,42,0.55)' }} />
       )}
       <div className="absolute pointer-events-auto" style={{ top: 20, right: 20, maxWidth: 360 }}>
         <div className="bg-white border-4 shadow-2xl rounded-lg overflow-hidden" style={{ borderColor: YELLOW_DARK }}>
@@ -867,6 +873,7 @@ function OpenCashPrelude({
               </div>
             </div>
             <button
+              tabIndex={-1}
               onClick={onExit}
               className="text-[10px] font-black px-2 py-1 border-2 hover:bg-black/10 uppercase tracking-wider"
               style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
