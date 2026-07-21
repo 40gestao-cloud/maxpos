@@ -1517,7 +1517,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
-              <select 
+              <select
                 value={formData.category || 'Outros'}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
@@ -1527,6 +1527,17 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                 <option value="Serviços" className="bg-card">SERVIÇOS</option>
                 <option value="Outros" className="bg-card">OUTROS</option>
               </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Marca <span className="text-gray-400 normal-case font-medium">(opcional — MaxLook / TechMax)</span></label>
+              <input
+                value={formData.marca || ''}
+                onChange={e => setFormData({ ...formData, marca: e.target.value })}
+                placeholder="Ex.: Samsung, Hering, JBL, Nike..."
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+              />
+              <p className="text-[11px] text-gray-500 leading-relaxed">Aparece como badge de destaque nos cards de MaxLook (grife) e TechMax (fabricante). Não interfere no SuperMax.</p>
             </div>
 
             <div className="space-y-2">
