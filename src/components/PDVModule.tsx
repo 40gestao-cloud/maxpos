@@ -201,6 +201,10 @@ function NichoLeituraView({
   saleTipoAtendimento, setSaleTipoAtendimento,
   saleImeiSerial, setSaleImeiSerial,
   saleDefeitoRelatado, setSaleDefeitoRelatado,
+  clients,
+  nichoDinheiroRecebido, setNichoDinheiroRecebido,
+  nichoParcelas, setNichoParcelas,
+  nichoClienteFiadoId, setNichoClienteFiadoId,
   onQuickFinalize, onCancelSale, onOpenTrocaDevolucao,
   fmt, RED, NAVY_DARK,
 }: {
@@ -228,6 +232,13 @@ function NichoLeituraView({
   setSaleImeiSerial: Dispatch<SetStateAction<string>>;
   saleDefeitoRelatado: string;
   setSaleDefeitoRelatado: Dispatch<SetStateAction<string>>;
+  clients: Client[];
+  nichoDinheiroRecebido: string;
+  setNichoDinheiroRecebido: Dispatch<SetStateAction<string>>;
+  nichoParcelas: number;
+  setNichoParcelas: Dispatch<SetStateAction<number>>;
+  nichoClienteFiadoId: string;
+  setNichoClienteFiadoId: Dispatch<SetStateAction<string>>;
   onQuickFinalize: (method: Payment['method']) => void;
   onCancelSale: () => void;
   onOpenTrocaDevolucao: () => void;
@@ -267,6 +278,12 @@ function NichoLeituraView({
     const n = parseCurrencyToNumber(raw);
     setSaleDiscount(Math.max(0, isFinite(n) ? n : 0));
   };
+  // Dinheiro inline: troco / falta ao vivo (padrão LogMax).
+  const dinheiroRecebidoNum = parseCurrencyToNumber(nichoDinheiroRecebido);
+  const troco = Math.max(0, dinheiroRecebidoNum - total);
+  const falta = Math.max(0, total - dinheiroRecebidoNum);
+  // Crédito inline: valor por parcela pra exibir no select e pré-vencimento.
+  const valorPorParcela = nichoParcelas > 0 ? total / nichoParcelas : total;
 
   if (!cashSession) {
     // Caixa fechado: PDVModule já dispara o modal de abertura. Aqui só um placeholder.
@@ -613,6 +630,109 @@ function NichoLeituraView({
             </div>
           </div>
 
+          {/* Bloco expansível por forma de pagamento (padrão LogMax inline).
+              Dinheiro: valor recebido + troco/falta ao vivo + botões [Exato,50,100,200].
+              Crédito: select de parcelas 1x-12x com valor calculado.
+              Fiado:   select de cliente demo.
+              Débito/PIX: sem campos extras (Débito é direto; PIX abre QR modal). */}
+          {selectedPay === 'dinheiro' && cart.length > 0 && (
+            <div className="flex flex-col gap-2 p-2.5 rounded-xl"
+              style={{ background: modeMeta.accent + '10', border: `1px solid ${modeMeta.accent}40` }}>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest shrink-0">Valor recebido</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={nichoDinheiroRecebido}
+                  onChange={(e) => setNichoDinheiroRecebido(maskCurrency(e.target.value))}
+                  placeholder={fmt(total)}
+                  className="flex-1 px-2 py-1 text-xs text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white"
+                  style={{ borderColor: modeMeta.accentDark + '30' }}
+                />
+                <span className="text-[10px] font-bold text-gray-500">R$</span>
+              </div>
+              {nichoDinheiroRecebido && dinheiroRecebidoNum > 0 && (
+                <div className="flex justify-between items-center pt-1 border-t" style={{ borderColor: modeMeta.accentDark + '20' }}>
+                  {falta > 0.001 ? (
+                    <>
+                      <span className="text-[11px] font-black text-red-600 uppercase tracking-widest">Falta</span>
+                      <span className="text-base font-black text-red-600 tabular-nums">R$ {fmt(falta)}</span>
+                    </>
+                  ) : troco > 0.001 ? (
+                    <>
+                      <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: '#15803d' }}>Troco</span>
+                      <span className="text-lg font-black tabular-nums" style={{ color: '#15803d' }}>R$ {fmt(troco)}</span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] font-black uppercase tracking-widest w-full text-center" style={{ color: modeMeta.accentDark }}>
+                      Valor exato
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-1 pt-0.5">
+                {[total, 50, 100, 200].map((v, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setNichoDinheiroRecebido(maskCurrency(Math.round(v * 100).toString()))}
+                    className="flex-1 py-1 px-1 rounded-md text-[10px] font-bold border transition-all bg-white hover:brightness-95"
+                    style={{ borderColor: 'rgba(0,0,0,0.14)', color: '#525252' }}
+                  >
+                    {idx === 0 ? 'Exato' : `R$ ${v}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {selectedPay === 'credito' && cart.length > 0 && (
+            <div className="flex flex-col gap-1.5 p-2.5 rounded-xl"
+              style={{ background: modeMeta.accent + '10', border: `1px solid ${modeMeta.accent}40` }}>
+              <div className="flex items-center gap-2">
+                <CreditCard size={12} style={{ color: modeMeta.accentDark }} className="shrink-0" />
+                <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest shrink-0">Parcelas</label>
+                <select
+                  value={nichoParcelas}
+                  onChange={(e) => setNichoParcelas(Number(e.target.value))}
+                  className="flex-1 min-w-0 px-2 py-1 text-xs font-bold border rounded outline-none bg-white cursor-pointer"
+                  style={{ borderColor: modeMeta.accentDark + '30' }}
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>
+                      {n}x de R$ {fmt(total / n)}{n === 1 ? ' (à prazo, 30d)' : ' sem juros'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {nichoParcelas > 1 && (
+                <p className="text-[10px] text-gray-500 px-1">
+                  {nichoParcelas}x de <span className="font-bold" style={{ color: modeMeta.accentDark }}>R$ {fmt(valorPorParcela)}</span> — 1ª parcela vence em 30 dias.
+                </p>
+              )}
+            </div>
+          )}
+
+          {selectedPay === 'fiado' && cart.length > 0 && (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl"
+              style={{ background: modeMeta.accent + '10', border: `1px solid ${modeMeta.accent}40` }}>
+              <UserIcon size={12} style={{ color: modeMeta.accentDark }} className="shrink-0" />
+              <select
+                value={nichoClienteFiadoId}
+                onChange={(e) => setNichoClienteFiadoId(e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1 text-xs font-bold border rounded outline-none bg-white cursor-pointer"
+                style={{ borderColor: modeMeta.accentDark + '30' }}
+              >
+                <option value="">Selecione o cliente *</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.creditLimit ? ` — limite R$ ${c.creditLimit.toFixed(2).replace('.', ',')}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Campos por nicho */}
           {isTech && (
             <div className="pt-1 space-y-1.5">
@@ -699,6 +819,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [saleImeiSerial, setSaleImeiSerial] = useState('');
   const [saleTipoAtendimento, setSaleTipoAtendimento] = useState<'Venda' | 'OS'>('Venda');
   const [saleDefeitoRelatado, setSaleDefeitoRelatado] = useState('');
+  // Pagamento inline nos nichos (padrão LogMax — expande painel dentro do carrinho).
+  const [nichoDinheiroRecebido, setNichoDinheiroRecebido] = useState('');
+  const [nichoParcelas, setNichoParcelas] = useState(1);
+  const [nichoClienteFiadoId, setNichoClienteFiadoId] = useState('');
   // Isolar treino: se troca de modo com venda em aberto, avisa antes de zerar.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -1053,11 +1177,34 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen,
       postSaleReceipt, valeAuthModal, reprintList]);
 
+  // localStorage key para persistir cashSession de nichos entre remounts.
+  // Escopado por modo pra cada PDV ter caixa independente (MaxLook != TechMax).
+  // Treinamento NÃO persiste — é intencional efêmero.
+  const nichoCashKey = isSimulationMode && !isTraining
+    ? `maxpos.pdv.${pdvMode}.cashSession`
+    : null;
+
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
     let active = true;
     if (runsLocalOnly) {
-      // Treinamento/simulação: nunca busca caixa real. Força fluxo de abertura.
+      // Nicho (MaxLook/TechMax): tenta recuperar caixa salvo antes de forçar
+      // fluxo de abertura — assim sair/voltar do PDV mantém o caixa aberto,
+      // igual SuperMax faz via Supabase.
+      if (nichoCashKey) {
+        try {
+          const raw = localStorage.getItem(nichoCashKey);
+          if (raw) {
+            const saved = JSON.parse(raw) as CashSession;
+            if (saved?.status === 'aberto' && saved.operadorId === currentUser.id) {
+              setCashSession(saved);
+              setCashSessionLoaded(true);
+              return;
+            }
+          }
+        } catch { /* corrompido — cai no fluxo de abertura */ }
+      }
+      // Treinamento/simulação sem caixa salvo: força fluxo de abertura.
       setCashSession(null);
       setOpenCashFundo(maskCurrency(0));
       setOpenCashModal(true);
@@ -1423,7 +1570,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setQuickClientsCount(0);
     if (runsLocalOnly) {
       const s: CashSession = {
-        id: 'training-session',
+        id: nichoCashKey ? `sim-${pdvMode}-${Date.now()}` : 'training-session',
         operadorId: currentUser.id,
         aberturaAt: new Date().toISOString(),
         fundoTroco: fundo,
@@ -1432,6 +1579,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setCashSession(s);
       setOpenCashModal(false);
       setOpenCashFundo('');
+      // Persiste caixa do nicho — sair/voltar do PDV mantém aberto.
+      if (nichoCashKey) {
+        try { localStorage.setItem(nichoCashKey, JSON.stringify(s)); } catch { /* quota — segue sem persistir */ }
+      }
       return;
     }
     try {
@@ -1583,6 +1734,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       // cashSession === null como fim do cenário cash-mgmt, marca completo
       // e mostra a tela de conclusão como nos outros cenários.
       setCashSession(null);
+      // Nicho: limpa o caixa persistido pra próxima entrada abrir modal novamente.
+      if (nichoCashKey) {
+        try { localStorage.removeItem(nichoCashKey); } catch { /* ignora */ }
+      }
       setCloseCashModal(false);
       setCloseCashContado('');
       setCloseCashObs('');
@@ -2569,9 +2724,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setLinkedClient(null);
       // Reset nicho fields: vendedor persiste (mesma atendente costuma
       // encadear vendas), IMEI/defeito/OS-toggle sempre resetam.
+      // Também zera valores inline do painel direito (dinheiro/parcelas/cliente
+      // fiado) — próxima venda começa com estado limpo, igual LogMax.
       setSaleImeiSerial('');
       setSaleTipoAtendimento('Venda');
       setSaleDefeitoRelatado('');
+      setNichoDinheiroRecebido('');
+      setNichoParcelas(1);
+      setNichoClienteFiadoId('');
       // Fluxo pós-venda:
       //   (1) Se houver troco, tela grande de troco para o cliente.
       //   (2) Modal de Recibo na tela — operador pode IMPRIMIR (PDF) ou CONTINUAR.
@@ -2607,9 +2767,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
   };
 
-  // Finalização rápida (só simulação MaxLook/TechMax): monta um Payment
-  // único da forma selecionada no painel direito, chama finalizeSale e
-  // pula a tela intermediária de pagamento. Não usado no SuperMax.
+  // Finalização rápida (só simulação MaxLook/TechMax): usa os valores INLINE
+  // já preenchidos no painel direito (padrão LogMax — sem modais separados).
+  // Dinheiro: valor recebido → grava troco. Crédito: parcelas escolhidas.
+  // Fiado: cliente escolhido. Débito: direto. PIX: abre QR modal (Fase 1b
+  // adaptará pra realtime simulado). O useEffect auto-finalize detecta
+  // paid >= total.
   const finalizeSaleQuick = async (method: Payment['method']) => {
     if (!isSimulationMode) return;
     if (cart.length === 0) return;
@@ -2621,25 +2784,68 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       });
       return;
     }
-    // Fiado precisa cliente vinculado; nos nichos ainda não temos picker de
-    // cliente no painel — bloqueia com aviso claro em vez de crashar.
-    if (method === 'fiado' && !linkedClient) {
-      showAlert({
-        title: 'Cliente obrigatório p/ fiado',
-        message: 'Fiado exige cliente vinculado. Escolha outra forma de pagamento por enquanto.',
-        variant: 'warning',
-      });
+    if (method === 'pix') {
+      // Fluxo PIX ainda usa modal com QR — Fase 1b tira o botão manual.
+      await handlePixClick();
       return;
     }
-    setPayments([{
-      method,
-      amount: total,
-      clientId: method === 'fiado' ? linkedClient?.id : undefined,
-      clientName: method === 'fiado' ? linkedClient?.name : undefined,
-    }]);
-    // Delay 0 pra garantir que payments state está commitado antes do finalize.
-    setTimeout(() => { finalizeSale(); }, 0);
+    if (method === 'dinheiro') {
+      const recebido = parseCurrencyToNumber(nichoDinheiroRecebido);
+      if (recebido <= 0) {
+        showAlert({ title: 'Valor recebido', message: 'Informe o valor recebido do cliente.', variant: 'warning' });
+        return;
+      }
+      if (recebido < total - 0.001) {
+        showAlert({ title: 'Valor insuficiente', message: `Recebido R$ ${recebido.toFixed(2).replace('.', ',')} é menor que o total R$ ${total.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
+        return;
+      }
+      const change = parseFloat((recebido - total).toFixed(2));
+      setPayments([{ method: 'dinheiro', amount: total }]);
+      setCashChange(change);
+      return;
+    }
+    if (method === 'credito') {
+      setPayments([{ method: 'credito', amount: total, installments: nichoParcelas }]);
+      return;
+    }
+    if (method === 'fiado') {
+      if (!nichoClienteFiadoId) {
+        showAlert({ title: 'Cliente obrigatório', message: 'Selecione o cliente para venda em fiado.', variant: 'warning' });
+        return;
+      }
+      const c = clients.find(cl => cl.id === nichoClienteFiadoId);
+      if (c && c.creditLimit && (c.balance + total) > c.creditLimit) {
+        showAlert({
+          title: 'Limite de fiado estourado',
+          message: `${c.name} tem limite R$ ${c.creditLimit.toFixed(2).replace('.', ',')}. Saldo atual R$ ${c.balance.toFixed(2).replace('.', ',')} + venda R$ ${total.toFixed(2).replace('.', ',')} = R$ ${(c.balance + total).toFixed(2).replace('.', ',')}.`,
+          variant: 'warning',
+        });
+        return;
+      }
+      setPayments([{ method: 'fiado', amount: total, clientId: nichoClienteFiadoId, clientName: c?.name }]);
+      return;
+    }
+    // Débito: sem UI extra — Fase 1b adicionará overlay maquininha.
+    setPayments([{ method: 'debito', amount: total }]);
   };
+
+  // Auto-finalize para simulação: assim que qualquer modal confirma e o
+  // total é coberto, dispara finalizeSale — em SuperMax o operador confirma
+  // manualmente em checkoutMode; nos nichos não há esse passo intermediário.
+  useEffect(() => {
+    if (!isSimulationMode) return;
+    if (saving) return;
+    if (cart.length === 0) return;
+    if (payments.length === 0) return;
+    if (total <= 0) return;
+    if (paid < total - 0.001) return;
+    // Não dispara se algum modal ainda está aberto (evita finalize enquanto
+    // ainda vê o QR do PIX, o troco do dinheiro, o picker de cliente, etc.).
+    if (pixModalOpen || cashModalOpen || showInstallments || showClientPicker) return;
+    finalizeSale();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSimulationMode, saving, cart.length, payments.length, paid, total,
+      pixModalOpen, cashModalOpen, showInstallments, showClientPicker]);
 
   // Abre o card de confirmação para cancelar um item específico do carrinho.
   const requestCancelItem = (id: string) => {
@@ -3281,6 +3487,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               setSaleImeiSerial={setSaleImeiSerial}
               saleDefeitoRelatado={saleDefeitoRelatado}
               setSaleDefeitoRelatado={setSaleDefeitoRelatado}
+              clients={clients}
+              nichoDinheiroRecebido={nichoDinheiroRecebido}
+              setNichoDinheiroRecebido={setNichoDinheiroRecebido}
+              nichoParcelas={nichoParcelas}
+              setNichoParcelas={setNichoParcelas}
+              nichoClienteFiadoId={nichoClienteFiadoId}
+              setNichoClienteFiadoId={setNichoClienteFiadoId}
               onQuickFinalize={finalizeSaleQuick}
               onCancelSale={cancelSale}
               onOpenTrocaDevolucao={openReprintModal}
@@ -4244,21 +4457,29 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
             >
               <img
-                src="/icon-supermax.png"
-                alt="SuperMax"
+                src={modeMeta.logo}
+                alt={modeMeta.label}
                 className="object-contain drop-shadow-2xl"
                 style={{ maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
                 draggable={false}
               />
               <div
                 className="mt-4 text-3xl md:text-4xl lg:text-5xl font-black tracking-wide shrink-0"
-                style={{ color: NAVY_DARK }}
+                style={{ color: pdvMode === 'supermax' ? NAVY_DARK : modeMeta.accentDark }}
               >
-                Agradecemos a sua preferência
+                {pdvMode === 'maxlook'
+                  ? 'Obrigada pela sua visita'
+                  : pdvMode === 'techmax'
+                  ? 'Obrigado pela preferência'
+                  : 'Agradecemos a sua preferência'}
               </div>
               <div
                 className="mt-5 px-6 py-3 rounded-full text-sm md:text-base font-black uppercase tracking-[0.3em] animate-pulse shrink-0"
-                style={{ background: YELLOW, color: NAVY_DARK, border: `2px solid ${YELLOW_DARK}` }}
+                style={{
+                  background: modeMeta.accent,
+                  color: modeMeta.accentText,
+                  border: `2px solid ${modeMeta.accentDark}`,
+                }}
               >
                 Pressione ENTER para continuar
               </div>
