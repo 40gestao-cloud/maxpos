@@ -184,6 +184,15 @@ const NICHO_PAY_METHODS: Array<{ method: Payment['method']; label: string }> = [
   { method: 'fiado',    label: 'Fiado' },
 ];
 
+// Cupons de simulação (padrão LogMax mas com regras locais fixas em vez de
+// RPC validar_cupom). Operador aprende a checar erro/sucesso e ver o desconto
+// aplicado. Reset após venda concluída.
+const NICHO_CUPONS: Record<string, { descricao: string; tipo: 'pct' | 'fixo'; valor: number }> = {
+  PROMO10:  { descricao: 'Promo 10% off',       tipo: 'pct',  valor: 10 },
+  VIP20:    { descricao: 'Cliente VIP 20% off', tipo: 'pct',  valor: 20 },
+  WELCOME:  { descricao: 'Boas-vindas R$ 10',   tipo: 'fixo', valor: 10 },
+};
+
 // ═══════════════════════════════════════════════════════════════
 // NichoLeituraView — layout FULL do PDV MaxLook/TechMax (padrão LogMax).
 // LEFT: strip de ações (vendedor/toggle Venda-OS/Troca-Dev) + busca + chips + grid.
@@ -205,6 +214,7 @@ function NichoLeituraView({
   nichoDinheiroRecebido, setNichoDinheiroRecebido,
   nichoParcelas, setNichoParcelas,
   nichoClienteFiadoId, setNichoClienteFiadoId,
+  nichoCupomAplicado, setNichoCupomAplicado,
   onQuickFinalize, onCancelSale, onOpenTrocaDevolucao,
   fmt, RED, NAVY_DARK,
 }: {
@@ -239,6 +249,8 @@ function NichoLeituraView({
   setNichoParcelas: Dispatch<SetStateAction<number>>;
   nichoClienteFiadoId: string;
   setNichoClienteFiadoId: Dispatch<SetStateAction<string>>;
+  nichoCupomAplicado: { code: string; descricao: string; desconto: number } | null;
+  setNichoCupomAplicado: Dispatch<SetStateAction<{ code: string; descricao: string; desconto: number } | null>>;
   onQuickFinalize: (method: Payment['method']) => void;
   onCancelSale: () => void;
   onOpenTrocaDevolucao: () => void;
@@ -250,7 +262,37 @@ function NichoLeituraView({
   const [chip, setChip] = useState<string | null>(null);
   const [descontoStr, setDescontoStr] = useState('0,00');
   const [cupomStr, setCupomStr] = useState('');
+  const [cupomErro, setCupomErro] = useState<string | null>(null);
   const [selectedPay, setSelectedPay] = useState<Payment['method']>('dinheiro');
+  // Aplica cupom: valida contra NICHO_CUPONS, calcula desconto (pct do total
+  // ou valor fixo), delega pro state do pai pra somar no total. Repetido =
+  // recalcula (troca de cupom). Cart vazio = erro amigável.
+  const aplicarCupom = () => {
+    setCupomErro(null);
+    const code = cupomStr.trim().toUpperCase();
+    if (!code) return;
+    if (cart.length === 0) {
+      setCupomErro('Adicione produtos antes de aplicar cupom.');
+      return;
+    }
+    const cupom = NICHO_CUPONS[code];
+    if (!cupom) {
+      setCupomErro('Cupom inválido ou expirado.');
+      setNichoCupomAplicado(null);
+      return;
+    }
+    const base = Math.max(0, subtotal - saleDiscount);
+    const desconto = cupom.tipo === 'pct'
+      ? parseFloat((base * cupom.valor / 100).toFixed(2))
+      : Math.min(cupom.valor, base);
+    setNichoCupomAplicado({ code, descricao: cupom.descricao, desconto });
+    setCupomStr('');
+  };
+  const removerCupom = () => {
+    setNichoCupomAplicado(null);
+    setCupomStr('');
+    setCupomErro(null);
+  };
   const chips = pdvMode === 'maxlook'
     ? ['Roupas', 'Calçados', 'Acessórios', 'Feminino', 'Masculino']
     : ['Smartphones', 'Notebooks', 'Acessórios', 'Peças', 'Serviços'];
@@ -301,15 +343,36 @@ function NichoLeituraView({
     <div className="flex-1 flex overflow-hidden min-h-0" style={{ background: '#e5e7eb' }}>
       {/* ============ LEFT: busca + chips + grid (ações no header preto) ============ */}
       <div className="flex-1 flex flex-col min-w-0 p-4 gap-3">
-        {/* Barra de busca */}
+        {/* Barra de busca unificada — aceita nome, código OU EAN bipado (Enter).
+            Padrão LogMax: um único input pra tudo, sem campo separado de scanner.
+            Se o valor bater com um EAN/ref de produto e o usuário der Enter,
+            delega pra handleClassicSubmit (mesma lógica do fluxo SuperMax). */}
         <div className="relative shrink-0">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
+            ref={codeInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={isTech ? 'Buscar modelo, código ou bipar...' : 'Buscar por nome, código ou bipar...'}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              const q = search.trim();
+              if (!q) return;
+              // Se bate exatamente com um EAN/ref, dispara scan (adiciona ao cart);
+              // caso contrário deixa a busca filtrar visualmente e ignora o Enter.
+              const isBip = products.some(p =>
+                (p.ean13 && p.ean13 === q) || (p.ref && p.ref.toUpperCase() === q.toUpperCase())
+              );
+              if (isBip) {
+                e.preventDefault();
+                setClassicCode(q);
+                setTimeout(() => { handleClassicSubmit(); setSearch(''); }, 0);
+              }
+            }}
+            placeholder={isTech ? 'Buscar modelo, código, EAN ou bipar (Enter)...' : 'Buscar por nome, código, EAN ou bipar (Enter)...'}
             className="w-full pl-9 pr-3 py-2.5 text-sm border-2 outline-none focus:border-blue-700 rounded-xl bg-white"
             style={{ borderColor: modeMeta.accentDark + '30' }}
+            autoFocus
+            autoComplete="off"
           />
         </div>
 
@@ -339,23 +402,6 @@ function NichoLeituraView({
               </button>
             );
           })}
-        </div>
-
-        {/* Input CÓDIGO (bipar/teclar) — permanece para operadores rápidos */}
-        <div className="shrink-0 flex items-center gap-2 rounded-xl px-3 py-2 border-2 bg-white"
-          style={{ borderColor: modeMeta.accentDark + '20' }}>
-          <ScanBarcode size={16} className="text-gray-400" />
-          <input
-            ref={codeInputRef}
-            value={classicCode}
-            onChange={(e) => setClassicCode(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
-            placeholder="EAN / código de barras (Enter)"
-            className="flex-1 bg-transparent outline-none text-sm font-bold tabular-nums"
-            style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
-            autoFocus
-            autoComplete="off"
-          />
         </div>
 
         {/* GRID de produtos — 2/3 cols fashion, 1/2 cols tech horizontal.
@@ -586,18 +632,57 @@ function NichoLeituraView({
             />
           </div>
 
-          <div className="flex justify-between items-center gap-2">
-            <span className="text-sm text-gray-600 flex items-center gap-1">
-              <Ticket size={14} /> Cupom
-            </span>
-            <input
-              value={cupomStr}
-              onChange={(e) => setCupomStr(e.target.value.toUpperCase())}
-              className="w-28 px-2 py-1 text-xs text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white uppercase"
-              style={{ borderColor: modeMeta.accentDark + '30' }}
-              placeholder="CÓDIGO"
-            />
-          </div>
+          {/* Cupom com regras locais (PROMO10 10% / VIP20 20% / WELCOME R$10 fixo) */}
+          {nichoCupomAplicado ? (
+            <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg"
+              style={{ background: '#15803d10', border: '1px solid #15803d40' }}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Ticket size={12} style={{ color: '#15803d' }} />
+                <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: '#15803d' }}>
+                  {nichoCupomAplicado.code}
+                </span>
+                <span className="text-[10px] text-gray-500 truncate">— {nichoCupomAplicado.descricao}</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-xs font-black tabular-nums" style={{ color: '#15803d' }}>
+                  −R$ {fmt(nichoCupomAplicado.desconto)}
+                </span>
+                <button
+                  onClick={removerCupom}
+                  className="w-5 h-5 rounded-full flex items-center justify-center hover:bg-red-100 text-gray-500"
+                  title="Remover cupom"
+                ><X size={10} /></button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-sm text-gray-600 flex items-center gap-1">
+                  <Ticket size={14} /> Cupom
+                </span>
+                <div className="flex gap-1">
+                  <input
+                    value={cupomStr}
+                    onChange={(e) => { setCupomStr(e.target.value.toUpperCase()); setCupomErro(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarCupom(); } }}
+                    className="w-24 px-2 py-1 text-xs text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white uppercase"
+                    style={{ borderColor: cupomErro ? '#dc2626' : modeMeta.accentDark + '30' }}
+                    placeholder="CÓDIGO"
+                    maxLength={16}
+                  />
+                  <button
+                    onClick={aplicarCupom}
+                    disabled={!cupomStr.trim()}
+                    className="px-2 py-1 text-[10px] font-black uppercase tracking-wider border rounded disabled:opacity-40"
+                    style={{ borderColor: modeMeta.accentDark, background: 'white', color: modeMeta.accentDark }}
+                  >OK</button>
+                </div>
+              </div>
+              {cupomErro && (
+                <span className="text-[10px] font-bold text-red-600 text-right">{cupomErro}</span>
+              )}
+            </div>
+          )}
 
           <div className="flex justify-between items-end pt-2 border-t" style={{ borderColor: modeMeta.accentDark + '20' }}>
             <span className="text-sm uppercase tracking-widest font-black text-gray-700">Total</span>
@@ -825,6 +910,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [nichoDinheiroRecebido, setNichoDinheiroRecebido] = useState('');
   const [nichoParcelas, setNichoParcelas] = useState(1);
   const [nichoClienteFiadoId, setNichoClienteFiadoId] = useState('');
+  // Cupom aplicado no nicho (código + descrição + valor a descontar).
+  // Somado ao saleDiscount na hora de calcular o total.
+  const [nichoCupomAplicado, setNichoCupomAplicado] = useState<{
+    code: string; descricao: string; desconto: number;
+  } | null>(null);
   // Overlay maquininha MaxPay (padrão LogMax): débito/crédito nos nichos
   // NÃO finalizam direto — abrem QR pra cliente autorizar. Simulação auto-
   // confirma após delay curto imitando fluxo realtime cartao_pendentes.
@@ -2297,9 +2387,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   };
 
   // Subtotal = soma de (preço × qtd − desconto do item).
-  // Total = subtotal − desconto comercial no total.
+  // Total = subtotal − desconto comercial − cupom (nichos).
   const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity - (item.discount ?? 0), 0);
-  const total = Math.max(0, parseFloat((subtotal - saleDiscount).toFixed(2)));
+  const cupomDesconto = nichoCupomAplicado?.desconto ?? 0;
+  const total = Math.max(0, parseFloat((subtotal - saleDiscount - cupomDesconto).toFixed(2)));
   const paid = payments.reduce((acc, p) => acc + p.amount, 0);
   const remaining = total - paid;
 
@@ -2768,6 +2859,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setNichoDinheiroRecebido('');
       setNichoParcelas(1);
       setNichoClienteFiadoId('');
+      setNichoCupomAplicado(null);
       // Fluxo pós-venda:
       //   (1) Se houver troco, tela grande de troco para o cliente.
       //   (2) Modal de Recibo na tela — operador pode IMPRIMIR (PDF) ou CONTINUAR.
@@ -3656,6 +3748,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               setNichoParcelas={setNichoParcelas}
               nichoClienteFiadoId={nichoClienteFiadoId}
               setNichoClienteFiadoId={setNichoClienteFiadoId}
+              nichoCupomAplicado={nichoCupomAplicado}
+              setNichoCupomAplicado={setNichoCupomAplicado}
               onQuickFinalize={finalizeSaleQuick}
               onCancelSale={cancelSale}
               onOpenTrocaDevolucao={openTrocaDevolucaoNicho}
