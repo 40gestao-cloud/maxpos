@@ -84,9 +84,22 @@ export interface Sale {
   payments: Payment[];
   clientId?: string;
   vendedorId?: string;
-  status: 'completed' | 'cancelled';
+  status: 'completed' | 'cancelled' | 'reversed';
   discount?: number;      // desconto comercial no total da venda (R$)
   cpfCnpjNota?: string;   // CPF (11) ou CNPJ (14) na nota — só dígitos
+  // Modo PDV que originou a venda (SuperMax real; MaxLook/TechMax simulação).
+  // Não persiste no DB atual — usado só em memória. Sale só entra em
+  // sales quando pdvMode==='supermax'.
+  pdvMode?: 'supermax' | 'maxlook' | 'techmax';
+  // Nicho-específico: gravamos no observacao a partir desses campos.
+  // Vendedor (MaxLook: nome livre pra comissão de moda).
+  vendedorNome?: string;
+  // IMEI/Serial (TechMax: garantia).
+  imeiSerial?: string;
+  // Tipo de atendimento (TechMax): Venda balcão ou OS (assistência).
+  tipoAtendimento?: 'Venda' | 'OS';
+  // Defeito relatado (TechMax quando OS).
+  defeitoRelatado?: string;
 }
 
 export interface CartItem extends Product {

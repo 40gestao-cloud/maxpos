@@ -39,6 +39,79 @@ const TRAINING_PRODUCTS: Product[] = [
 const SUPERVISOR_PIN = '1234';
 const DISCOUNT_SUPERVISOR_THRESHOLD_PCT = 20; // > 20% do valor base exige PIN
 
+// ═══════════════════════════════════════════════════════════════
+// Modos de operação do PDV (perfis do ecossistema Max)
+// ─────────────────────────────────────────────────────────────
+// SuperMax: supermercado — modo padrão, produtos vindos do DB real.
+// MaxLook:  moda/boutique — layout fashion, campo vendedor, produtos
+//           demo em memória (simulação, não persiste).
+// TechMax:  eletrônicos + assistência — layout tech, campo IMEI/Serial,
+//           toggle Venda/OS + defeito relatado. Também simulação.
+// ═══════════════════════════════════════════════════════════════
+type PdvMode = 'supermax' | 'maxlook' | 'techmax';
+
+const PDV_MODE_META: Record<PdvMode, {
+  label: string;
+  subtitle: string;
+  desc: string;
+  accent: string;
+  accentDark: string;
+  accentText: string;
+  logo: string; // emoji fallback quando não tem asset
+  layout: 'default' | 'fashion' | 'tech';
+}> = {
+  supermax: {
+    label: 'SuperMax',
+    subtitle: 'Supermercado',
+    desc: 'Alimentos, bebidas, higiene, mercearia. Fluxo padrão do PDV.',
+    accent: '#FFC107',
+    accentDark: '#B8860B',
+    accentText: '#0A0A0A',
+    logo: '🛒',
+    layout: 'default',
+  },
+  maxlook: {
+    label: 'MaxLook',
+    subtitle: 'Boutique',
+    desc: 'Roupas, calçados e acessórios. Vendedor associado à venda para comissão.',
+    accent: '#D4AF37',
+    accentDark: '#8B6914',
+    accentText: '#0A0A0A',
+    logo: '👗',
+    layout: 'fashion',
+  },
+  techmax: {
+    label: 'TechMax',
+    subtitle: 'Loja & Assistência',
+    desc: 'Eletrônicos, celulares, notebooks. IMEI/Serial para garantia + abertura de OS.',
+    accent: '#F97316',
+    accentDark: '#9A3412',
+    accentText: '#FFFFFF',
+    logo: '💻',
+    layout: 'tech',
+  },
+};
+
+// Produtos demo por modo — usados quando o modo não é SuperMax
+// (aí o PDV opera 100% em memória, sem tocar no DB real).
+const DEMO_PRODUCTS_MAXLOOK: Product[] = [
+  { id: 'ml1', name: 'Camiseta Básica Preta M', price: 49.90, costPrice: 18, category: 'Roupas',    ref: 'CAMB-M',  stock: 25, minStock: 3, unit: 'UN', ean13: '7891100000012', controlStock: true },
+  { id: 'ml2', name: 'Calça Jeans Slim 42',      price: 149.90, costPrice: 55, category: 'Roupas',    ref: 'JEAN-42', stock: 10, minStock: 2, unit: 'UN', ean13: '7891100000029', controlStock: true },
+  { id: 'ml3', name: 'Tênis Casual Branco 40',   price: 249.90, costPrice: 95, category: 'Calçados',  ref: 'TEN-40',  stock: 6,  minStock: 2, unit: 'UN', ean13: '7891100000036', controlStock: true },
+  { id: 'ml4', name: 'Bolsa Transversal Preta',  price: 129.90, costPrice: 45, category: 'Acessórios',ref: 'BOL-01',  stock: 8,  minStock: 1, unit: 'UN', ean13: '7891100000043', controlStock: true },
+  { id: 'ml5', name: 'Vestido Floral Verão P',   price: 179.90, costPrice: 68, category: 'Feminino',  ref: 'VEST-P',  stock: 4,  minStock: 1, unit: 'UN', ean13: '7891100000050', controlStock: true },
+  { id: 'ml6', name: 'Camisa Social Branca G',   price: 119.90, costPrice: 42, category: 'Masculino', ref: 'CSOC-G',  stock: 1,  minStock: 1, unit: 'UN', ean13: '7891100000067', controlStock: true },
+];
+
+const DEMO_PRODUCTS_TECHMAX: Product[] = [
+  { id: 'tm1', name: 'Smartphone Galaxy A15 128GB', price: 1299.00, costPrice: 780,  category: 'Smartphones', ref: 'SGA-15',  stock: 5, minStock: 1, unit: 'UN', ean13: '7891200000013', controlStock: true },
+  { id: 'tm2', name: 'Notebook Ideapad 3 i5 8GB',   price: 2999.00, costPrice: 1900, category: 'Notebooks',   ref: 'NB-I3',   stock: 3, minStock: 1, unit: 'UN', ean13: '7891200000020', controlStock: true },
+  { id: 'tm3', name: 'Fone Bluetooth JBL Tune',     price: 249.90,  costPrice: 105,  category: 'Acessórios',  ref: 'JBL-TUNE',stock: 12, minStock: 2, unit: 'UN', ean13: '7891200000037', controlStock: true },
+  { id: 'tm4', name: 'Cabo USB-C 1m Original',      price: 39.90,   costPrice: 12,   category: 'Acessórios',  ref: 'USBC-1M', stock: 40, minStock: 5, unit: 'UN', ean13: '7891200000044', controlStock: true },
+  { id: 'tm5', name: 'Película Vidro Galaxy A15',   price: 29.90,   costPrice: 8,    category: 'Peças',       ref: 'PEL-A15', stock: 20, minStock: 3, unit: 'UN', ean13: '7891200000051', controlStock: true },
+  { id: 'tm6', name: 'Troca de Tela iPhone',        price: 450.00,  costPrice: 250,  category: 'Serviços',    ref: 'SRV-TIP', stock: 999, minStock: 0, unit: 'UN', ean13: '7891200000068', controlStock: false },
+];
+
 const TRAINING_CLIENTS: Client[] = [
   { id: 'tc1', type: 'PF', name: 'Cliente Treinamento', email: '', document: '00000000000', phone: '', status: 'active', creditLimit: 500, balance: 0 },
   // Limite MUITO BAIXO — para praticar a recusa por limite estourado no fiado.
@@ -91,6 +164,35 @@ interface PDVModuleProps {
 
 export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining, onSwapOperator }: PDVModuleProps) {
   const [products, setProducts] = useState<Product[]>([]);
+  // Modo de operação do PDV: SuperMax é o real (produtos do DB, vendas
+  // persistem); MaxLook e TechMax são simulações em memória (produtos
+  // demo, tudo local). Persistido em localStorage pra sobreviver a reload.
+  const [pdvMode, setPdvMode] = useState<PdvMode>(() => {
+    try {
+      const saved = localStorage.getItem('maxpos.pdvMode');
+      if (saved === 'supermax' || saved === 'maxlook' || saved === 'techmax') return saved;
+    } catch { /* localStorage indisponível → default */ }
+    return 'supermax';
+  });
+  const [pdvModePickerOpen, setPdvModePickerOpen] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem('maxpos.pdvMode', pdvMode); } catch { /* silêncio */ }
+  }, [pdvMode]);
+  const modeMeta = PDV_MODE_META[pdvMode];
+  // Modos MaxLook/TechMax NUNCA tocam no DB — são simulação demonstrativa
+  // do ecossistema Max pra vitrine. Só SuperMax segue o fluxo real.
+  const isSimulationMode = pdvMode !== 'supermax';
+  // Roda 100% em memória: treinamento OU simulação de nicho. Todos os
+  // caminhos que hoje têm `if (isTraining) { ...local; return; }` também
+  // devem entrar quando isSimulationMode=true — SuperMax é o único que
+  // conversa com o DB real.
+  const runsLocalOnly = isTraining || isSimulationMode;
+  // Campos específicos por nicho (MaxLook: vendedor / TechMax: IMEI + OS):
+  const [saleVendedor, setSaleVendedor] = useState('');
+  const [saleImeiSerial, setSaleImeiSerial] = useState('');
+  const [saleTipoAtendimento, setSaleTipoAtendimento] = useState<'Venda' | 'OS'>('Venda');
+  const [saleDefeitoRelatado, setSaleDefeitoRelatado] = useState('');
+  // Isolar treino: se troca de modo com venda em aberto, avisa antes de zerar.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -234,9 +336,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSwapOperatorFilter('');
     setSwapOperatorIdx(0);
     try {
-      if (isTraining) {
-        // No treino, apresentamos 2 usuários fictícios além do atual pra
-        // simular o picker (não temos acesso ao user_profiles real).
+      if (runsLocalOnly) {
+        // Treinamento/simulação: apresentamos 2 usuários fictícios além do
+        // atual pra simular o picker (não temos acesso ao user_profiles real).
         setSwapOperatorList([
           currentUser,
           { id: 'trainer-op-1', email: 'julia@treino.local', name: 'Júlia (turno tarde)', role: 'operador_geral' } as User,
@@ -296,7 +398,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           balance: 0,
         };
         try {
-          if (!isTraining) await Storage.upsertClient(novo);
+          if (!runsLocalOnly) await Storage.upsertClient(novo);
           setClients(prev => [...prev, novo]);
           setQuickClientsCount(c => c + 1);
           setQuickClientModal(false);
@@ -447,8 +549,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
     let active = true;
-    if (isTraining) {
-      // Treinamento: nunca busca caixa real. Força fluxo de abertura.
+    if (runsLocalOnly) {
+      // Treinamento/simulação: nunca busca caixa real. Força fluxo de abertura.
       setCashSession(null);
       setOpenCashFundo(maskCurrency(0));
       setOpenCashModal(true);
@@ -470,13 +572,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       })
       .finally(() => { if (active) setCashSessionLoaded(true); });
     return () => { active = false; };
-  }, [currentUser.id, isTraining]);
+  }, [currentUser.id, isTraining, runsLocalOnly]);
 
   useEffect(() => {
     let active = true;
-    if (isTraining) {
-      // Treinamento: catálogo em memória, sem realtime, sem RPC.
-      setProducts(TRAINING_PRODUCTS);
+    // MaxLook/TechMax rodam sempre em memória — mesmo fora do treino.
+    // Produtos e clientes são demo, vendas não vão pro DB.
+    if (isTraining || isSimulationMode) {
+      const demo = pdvMode === 'maxlook' ? DEMO_PRODUCTS_MAXLOOK
+                : pdvMode === 'techmax' ? DEMO_PRODUCTS_TECHMAX
+                : TRAINING_PRODUCTS;
+      setProducts(demo);
       setClients(TRAINING_CLIENTS);
       setLoading(false);
       return () => { active = false; };
@@ -497,7 +603,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, [isTraining]);
+  }, [isTraining, isSimulationMode, pdvMode]);
 
   const addToCart = (product: Product, qty: number = 1) => {
     // Arredonda em 3 casas para conter erro de ponto flutuante em qtd de balança
@@ -808,7 +914,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setReversalsCount(0);
     setOperatorSwapsCount(0);
     setQuickClientsCount(0);
-    if (isTraining) {
+    if (runsLocalOnly) {
       const s: CashSession = {
         id: 'training-session',
         operadorId: currentUser.id,
@@ -861,7 +967,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       showAlert({ title: 'Motivo obrigatório', message: 'Descreva o motivo da movimentação para o fechamento do caixa.', variant: 'warning' });
       return;
     }
-    if (isTraining) {
+    if (runsLocalOnly) {
       setSangriaModal(false);
       setSupModal(false);
       setMovValor('');
@@ -898,7 +1004,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     setLastCloseCashDiff(null);
-    if (isTraining) {
+    if (runsLocalOnly) {
       // Compõe o esperado a partir do que o operador fez neste turno de treino:
       // vendas em DINHEIRO das vendas concluídas + suprimentos − sangrias +
       // fundo de troco. Só entra dinheiro no cálculo — cartão/PIX/fiado não
@@ -954,11 +1060,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     const diff = parseFloat((contado - closeCashExpected.total).toFixed(2));
-    if (isTraining) {
-      // No treinamento exigimos praticar SOBRA/FALTA — se fechou exato, avisa
-      // e mantém o modal aberto. Sem isso o passo confirm-close travaria com a
-      // sessão zerada e sem modal para reabrir.
-      if (Math.abs(diff) <= 0.001) {
+    if (runsLocalOnly) {
+      // Só no MODO TREINAMENTO forçamos a prática de SOBRA/FALTA — simulação
+      // MaxLook/TechMax não bloqueia (o operador está vitrinando o fluxo).
+      if (isTraining && Math.abs(diff) <= 0.001) {
         showAlert({
           title: 'Pratique SOBRA ou FALTA',
           message: 'Digite um valor DIFERENTE do sugerido para praticar o relatório de divergência. No caixa real, contado ≠ esperado é o cenário mais comum.',
@@ -1154,7 +1259,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // ─── Reimpressão (Fix #23 — últimas N vendas do operador) ─
   const openReprintModal = async () => {
     setReprintSearch('');
-    if (isTraining) {
+    if (runsLocalOnly) {
       const list = trainingSalesHistory;
       if (list.length === 0) {
         showAlert({
@@ -1588,6 +1693,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSwapOperatorModal(false);
     setQuickClientModal(false);
     setReprintSearch('');
+    setSaleVendedor('');
+    setSaleImeiSerial('');
+    setSaleTipoAtendimento('Venda');
+    setSaleDefeitoRelatado('');
     setCart([]);
     setPayments([]);
     setLastAdded(null);
@@ -1724,7 +1833,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     const uuid = crypto.randomUUID();
     const payload = `MAX-PIX-${uuid}`;
     try {
-      if (!isTraining) {
+      if (!runsLocalOnly) {
         const { error: insertErr } = await supabase
           .from('pix_pendentes')
           .insert({
@@ -1755,7 +1864,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     pixConfirmedRef.current.add(pixUuid);
-    if (isTraining) {
+    if (runsLocalOnly) {
       setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
       setPartialAmount('');
       setPixModalOpen(false);
@@ -1793,7 +1902,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
   useEffect(() => {
     if (!pixModalOpen || !pixUuid) return;
-    if (isTraining) return;
+    if (runsLocalOnly) return;
     const channel = supabase
       .channel(`pix-${pixUuid}`)
       .on(
@@ -1871,10 +1980,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const requestFinalizeSale = () => {
     if (saving) return;
     if (paid < total - 0.001 || total <= 0) return;
+    // TechMax OS: defeito relatado é obrigatório pra abrir a ordem de serviço.
+    if (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' && !saleDefeitoRelatado.trim()) {
+      showAlert({
+        title: 'Defeito relatado obrigatório',
+        message: 'Para abrir OS informe pelo menos brevemente o defeito relatado pelo cliente.',
+        variant: 'warning',
+      });
+      return;
+    }
+    const isOS = pdvMode === 'techmax' && saleTipoAtendimento === 'OS';
     askConfirm({
-      title: 'CONFIRMAR VENDA',
-      message: `Total R$ ${total.toFixed(2).replace('.', ',')} — recebido R$ ${paid.toFixed(2).replace('.', ',')}. Confirmar finalizacao da venda?`,
-      confirmLabel: 'CONFIRMAR VENDA',
+      title: isOS ? 'ABRIR ORDEM DE SERVIÇO' : 'CONFIRMAR VENDA',
+      message: `Total R$ ${total.toFixed(2).replace('.', ',')} — recebido R$ ${paid.toFixed(2).replace('.', ',')}. Confirmar ${isOS ? 'abertura da OS' : 'finalizacao da venda'}?`,
+      confirmLabel: isOS ? 'ABRIR OS' : 'CONFIRMAR VENDA',
       cancelLabel: 'VOLTAR',
       variant: 'success',
       onConfirm: () => { finalizeSale(); },
@@ -1896,9 +2015,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         status: 'completed',
         discount: saleDiscount,
         cpfCnpjNota: cpfNota || undefined,
+        pdvMode,
+        vendedorNome: saleVendedor.trim() || undefined,
+        imeiSerial: saleImeiSerial.trim() || undefined,
+        tipoAtendimento: pdvMode === 'techmax' ? saleTipoAtendimento : undefined,
+        defeitoRelatado: (pdvMode === 'techmax' && saleTipoAtendimento === 'OS')
+          ? (saleDefeitoRelatado.trim() || undefined)
+          : undefined,
       };
 
-      if (!isTraining) {
+      if (!runsLocalOnly) {
         // Finalização atômica: insere sale + items + payments, decrementa
         // estoque e debita fiado num único bloco transacional no Postgres.
         const { error: rpcErr } = await supabase.rpc('finalize_sale_atomic', {
@@ -1918,8 +2044,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         });
         if (rpcErr) throw rpcErr;
       } else {
-        // No treino guardamos as últimas vendas em memória para a reimpressão
-        // (Ctrl+R). Cap em 10 pra imitar o Storage.getRecentSalesForReprint.
+        // Treino/simulação: guardamos as últimas vendas em memória para a
+        // reimpressão (Ctrl+R). Cap em 10 pra imitar getRecentSalesForReprint.
         setTrainingSalesHistory(prev => [newSale, ...prev].slice(0, 10));
       }
       playBeep('finalize');
@@ -1934,6 +2060,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setSaleDiscount(0);
       setCpfNota('');
       setLinkedClient(null);
+      // Reset nicho fields: vendedor persiste (mesma atendente costuma
+      // encadear vendas), IMEI/defeito/OS-toggle sempre resetam.
+      setSaleImeiSerial('');
+      setSaleTipoAtendimento('Venda');
+      setSaleDefeitoRelatado('');
       // Fluxo pós-venda:
       //   (1) Se houver troco, tela grande de troco para o cliente.
       //   (2) Modal de Recibo na tela — operador pode IMPRIMIR (PDF) ou CONTINUAR.
@@ -2036,10 +2167,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           className="flex-1 flex flex-col min-h-0 bg-white text-gray-900"
           style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
         >
-          {/* Header */}
+          {/* Header — cor conforme modo PDV (SuperMax amarelo, MaxLook dourado, TechMax laranja) */}
           <div
             className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
-            style={{ background: YELLOW, borderColor: YELLOW_DARK }}
+            style={{ background: modeMeta.accent, borderColor: modeMeta.accentDark }}
           >
             <div className="flex items-center gap-3 min-w-0 flex-1">
               {onExitToMenu && (
@@ -2058,6 +2189,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               >
                 MAXPOS
               </span>
+              {/* PDV Mode badge — clicável abre picker das 3 marcas */}
+              <button
+                onClick={() => setPdvModePickerOpen(true)}
+                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold border-2 flex items-center gap-2 hover:brightness-110 transition-all"
+                style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
+                title="Trocar modo PDV (SuperMax / MaxLook / TechMax)"
+              >
+                <span className="text-xl leading-none">{modeMeta.logo}</span>
+                PDV: {modeMeta.label.toUpperCase()}
+              </button>
               <span
                 className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
@@ -2094,6 +2235,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   title="Modo Treinamento — nada é salvo"
                 >
                   🎓 TREINAMENTO
+                </span>
+              )}
+              {isSimulationMode && !isTraining && (
+                <span
+                  className="ml-2 px-3 py-1.5 rounded-md text-sm uppercase font-black tracking-widest shrink-0 border-2 flex items-center gap-1.5"
+                  style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
+                  title={`${modeMeta.label} é uma simulação demonstrativa — vendas não persistem no banco.`}
+                >
+                  ✨ SIMULAÇÃO
                 </span>
               )}
               {cashSession && (
@@ -2799,6 +2949,63 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         <div className="text-3xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(cashChange)}</div>
                       </div>
                     )}
+                    {/* MaxLook: vendedor associado à venda (comissão de moda) */}
+                    {pdvMode === 'maxlook' && (
+                      <div className="mt-4 p-3 border-2 rounded space-y-1" style={{ borderColor: modeMeta.accentDark, background: `${modeMeta.accent}18` }}>
+                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block">👗 Vendedor(a)</label>
+                        <input
+                          value={saleVendedor}
+                          onChange={(e) => setSaleVendedor(e.target.value)}
+                          placeholder="Nome do(a) vendedor(a) — comissão"
+                          className="w-full bg-white border outline-none px-2 py-1.5 text-sm focus:border-blue-700"
+                          style={{ borderColor: modeMeta.accentDark }}
+                        />
+                      </div>
+                    )}
+                    {/* TechMax: toggle Venda/OS + IMEI/Serial + defeito relatado (quando OS) */}
+                    {pdvMode === 'techmax' && (
+                      <div className="mt-4 p-3 border-2 rounded space-y-2" style={{ borderColor: modeMeta.accentDark, background: `${modeMeta.accent}18` }}>
+                        <div className="flex items-center gap-1">
+                          {(['Venda', 'OS'] as const).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => setSaleTipoAtendimento(t)}
+                              className="flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider transition-all"
+                              style={saleTipoAtendimento === t
+                                ? { background: modeMeta.accent, color: modeMeta.accentText, border: `1px solid ${modeMeta.accentDark}` }
+                                : { background: 'white', color: '#6b7280', border: '1px solid #e5e7eb' }}
+                            >
+                              {t === 'Venda' ? '💰 Venda' : '🔧 Ordem de Serviço'}
+                            </button>
+                          ))}
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block mb-1">📱 IMEI/Serial (garantia)</label>
+                          <input
+                            value={saleImeiSerial}
+                            onChange={(e) => setSaleImeiSerial(e.target.value)}
+                            placeholder="Opcional — 15 dígitos ou serial"
+                            maxLength={40}
+                            className="w-full bg-white border outline-none px-2 py-1.5 text-sm tabular-nums focus:border-blue-700"
+                            style={{ borderColor: modeMeta.accentDark, fontFamily: 'Consolas, "Courier New", monospace' }}
+                          />
+                        </div>
+                        {saleTipoAtendimento === 'OS' && (
+                          <div>
+                            <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block mb-1">🔧 Defeito relatado</label>
+                            <textarea
+                              value={saleDefeitoRelatado}
+                              onChange={(e) => setSaleDefeitoRelatado(e.target.value)}
+                              placeholder="Ex.: tela trincada, não liga, bateria viciada..."
+                              rows={2}
+                              maxLength={200}
+                              className="w-full bg-white border outline-none px-2 py-1.5 text-sm resize-none focus:border-blue-700"
+                              style={{ borderColor: modeMeta.accentDark }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="mt-4 grid grid-cols-2 gap-2">
                       <button
                         data-extra-action="desconto"
@@ -2909,7 +3116,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         SALVANDO...
                       </>
-                    ) : 'CONFIRMAR VENDA'}
+                    ) : (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' ? 'ABRIR OS' : 'CONFIRMAR VENDA')}
                   </button>
                 </div>
               </div>
@@ -4920,7 +5127,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                           `Cupom ${target.id.slice(0, 8).toUpperCase()} — R$ ${fmt(target.total)}\n\nEssa operação devolve o estoque, cancela dívida em fiado (se houver) e marca a venda como REVERTIDA. Afeta o fechamento de caixa. Peça ao supervisor para digitar o PIN.`,
                           async () => {
                             try {
-                              if (isTraining) {
+                              if (runsLocalOnly) {
                                 setTrainingSalesHistory(prev => prev.filter(x => x.id !== target.id));
                               } else {
                                 await Storage.reverseSale(target.id);
@@ -5027,6 +5234,66 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             </div>
           );
         })()}
+
+        {/* ─── PDV Mode Picker (SuperMax / MaxLook / TechMax) ─── */}
+        {pdvModePickerOpen && (
+          <div
+            className="fixed inset-0 z-[340] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={(e) => { if (e.target === e.currentTarget) setPdvModePickerOpen(false); }}
+          >
+            <div className="w-full max-w-3xl bg-white border-4 shadow-2xl rounded-lg overflow-hidden" style={{ borderColor: modeMeta.accentDark }}>
+              <div className="px-5 py-4 text-black flex items-center gap-3" style={{ background: modeMeta.accent, borderBottom: `2px solid ${modeMeta.accentDark}` }}>
+                <span className="text-2xl">{modeMeta.logo}</span>
+                <div className="flex-1">
+                  <div className="text-[10px] font-black uppercase tracking-[0.3em] opacity-70">Modo de operação do PDV</div>
+                  <div className="text-xl font-black leading-tight">Escolha a marca do ecossistema Max</div>
+                </div>
+                <button onClick={() => setPdvModePickerOpen(false)} className="text-black hover:opacity-70" tabIndex={-1}><X size={18} /></button>
+              </div>
+              <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+                {(['supermax', 'maxlook', 'techmax'] as PdvMode[]).map((m) => {
+                  const meta = PDV_MODE_META[m];
+                  const active = m === pdvMode;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => {
+                        if (m === pdvMode) { setPdvModePickerOpen(false); return; }
+                        // Trocar de modo cancela venda em andamento (avisando).
+                        if (cart.length > 0 || payments.length > 0) {
+                          if (!window.confirm(`Trocar para ${meta.label} vai descartar a venda em andamento. Continuar?`)) return;
+                          setCart([]); setPayments([]); setCheckoutMode(false);
+                          setSaleDiscount(0); setLinkedClient(null); setCpfNota('');
+                        }
+                        setPdvMode(m);
+                        setCashSession(null); // força reabertura de caixa no novo modo
+                        setPdvModePickerOpen(false);
+                      }}
+                      className={`p-5 border-4 rounded-xl flex flex-col items-center gap-3 text-center transition-all ${
+                        active ? 'ring-4 ring-offset-2 shadow-xl' : 'hover:shadow-lg hover:scale-[1.02]'
+                      }`}
+                      style={{
+                        borderColor: meta.accentDark,
+                        background: active ? meta.accent : '#f9fafb',
+                        color: active ? meta.accentText : '#111827',
+                      }}
+                    >
+                      <span className="text-5xl">{meta.logo}</span>
+                      <div>
+                        <div className="text-lg font-black uppercase tracking-wider">{meta.label}</div>
+                        <div className="text-[11px] font-bold uppercase tracking-widest opacity-70 mt-1">{meta.subtitle}</div>
+                      </div>
+                      <p className="text-xs leading-relaxed">{meta.desc}</p>
+                      {m === 'supermax'
+                        ? <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">🟢 Produção · grava no DB</span>
+                        : <span className="text-[10px] font-black uppercase tracking-widest opacity-70">✨ Simulação demonstrativa</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ─── PIN de supervisor (autorização de ações sensíveis) ─── */}
         {supervisorAuthModal && (
