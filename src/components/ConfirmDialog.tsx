@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react';
 
 export type ConfirmVariant = 'danger' | 'primary';
 
@@ -103,4 +103,109 @@ export function useConfirmDialog() {
   const askConfirm = (opts: ConfirmOptions) => setDialog(opts);
   const host = <ConfirmDialogHost dialog={dialog} onClose={() => setDialog(null)} />;
   return { askConfirm, host };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AlertDialog — substitui window.alert(...). Enter/Esc/click fora
+// fecham. Padroniza aparência em success/error/warning/info.
+// ═══════════════════════════════════════════════════════════════
+
+export type AlertVariant = 'success' | 'error' | 'warning' | 'info';
+
+export interface AlertOptions {
+  title?: string;
+  message: string | ReactNode;
+  variant?: AlertVariant;
+}
+
+const ALERT_STYLE: Record<AlertVariant, {
+  icon: typeof CheckCircle2;
+  bg: string;
+  ring: string;
+  defaultTitle: string;
+}> = {
+  success: { icon: CheckCircle2, bg: 'bg-emerald-500/10 text-emerald-600', ring: 'shadow-[inset_0_0_20px_rgba(16,185,129,0.2)]', defaultTitle: 'Sucesso' },
+  error:   { icon: XCircle,      bg: 'bg-red-500/10 text-red-500',        ring: 'shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]',  defaultTitle: 'Erro'    },
+  warning: { icon: AlertTriangle,bg: 'bg-amber-500/10 text-amber-600',    ring: 'shadow-[inset_0_0_20px_rgba(245,158,11,0.2)]', defaultTitle: 'Atenção' },
+  info:    { icon: Info,         bg: 'bg-blue-500/10 text-blue-600',      ring: 'shadow-[inset_0_0_20px_rgba(59,130,246,0.2)]', defaultTitle: 'Aviso'   },
+};
+
+export function AlertDialogHost({ alert, onClose }: {
+  alert: AlertOptions | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!alert) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [alert, onClose]);
+
+  if (!alert) return null;
+  const style = ALERT_STYLE[alert.variant ?? 'info'];
+  const Icon = style.icon;
+  const title = alert.title ?? style.defaultTitle;
+
+  return (
+    <div
+      className="fixed inset-0 z-[310] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="neumorphic p-8 max-w-md w-full space-y-6 text-center animate-in zoom-in duration-200" style={{ background: '#e0e5ec' }}>
+        <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${style.bg} ${style.ring}`}>
+          <Icon size={32} />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-lg font-black text-gray-900 uppercase tracking-widest">{title}</h3>
+          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+            {alert.message}
+          </div>
+        </div>
+        <div className="pt-2">
+          <button
+            autoFocus
+            onClick={onClose}
+            className="w-full p-3 bg-gray-900 text-white font-black rounded-xl shadow-lg shadow-gray-900/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function useAlertDialog() {
+  const [alert, setAlert] = useState<AlertOptions | null>(null);
+  // Aceita 3 formas:
+  //   showAlert('mensagem simples')
+  //   showAlert('mensagem', 'success')
+  //   showAlert({ title, message, variant })
+  const showAlert = (
+    a: string | AlertOptions,
+    variant?: AlertVariant,
+  ) => {
+    if (typeof a === 'string') {
+      setAlert({ message: a, variant: variant ?? guessAlertVariant(a) });
+    } else {
+      setAlert(a);
+    }
+  };
+  const host = <AlertDialogHost alert={alert} onClose={() => setAlert(null)} />;
+  return { showAlert, host };
+}
+
+// Deriva variant a partir de mensagens comuns — útil pra migração rápida
+// de `alert('Sucesso!')` sem precisar reescrever tudo.
+export function guessAlertVariant(message: string): AlertVariant {
+  const m = message.toLowerCase();
+  if (/erro|falha|falhou|inválido|inserira|obrigat|não\s|nao\s/.test(m)) return 'error';
+  if (/sucess|atualizad|cadastrad|salvo|excluíd|excluido|removid|emitid|enviad|paga/.test(m)) return 'success';
+  if (/nenhum|vazio|selecione|informe|máximo|min[íi]mo|muito grande|não suportado/.test(m)) return 'warning';
+  return 'info';
 }

@@ -9,7 +9,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { formatBRL } from '../lib/masks';
 import { Sale } from '../types';
-import { useConfirmDialog } from './ConfirmDialog';
+import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 
 const EMITTED_KEY = 'fiscal_emitted_nfce';
 
@@ -94,6 +94,7 @@ function xmlSimulado(sale: Sale, chave: string): string {
 
 export default function FiscalModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [emitted, setEmitted] = useState<Set<string>>(() => {
@@ -130,13 +131,13 @@ export default function FiscalModule() {
       persistEmitted(next);
       return next;
     });
-    alert(`NFC-e Nº ${numeroNFCe(sale)} emitida com sucesso!\n\nAmbiente de demonstração — nenhuma comunicação real com a SEFAZ foi realizada.`);
+    showAlert(`NFC-e Nº ${numeroNFCe(sale)} emitida com sucesso!\n\nAmbiente de demonstração — nenhuma comunicação real com a SEFAZ foi realizada.`);
   };
 
   const emitirTodas = () => {
     const pendentes = sales.filter(s => !emitted.has(s.id));
     if (pendentes.length === 0) {
-      alert('Nenhuma venda pendente de emissão.');
+      showAlert('Nenhuma venda pendente de emissão.');
       return;
     }
     askConfirm({
@@ -151,7 +152,7 @@ export default function FiscalModule() {
           persistEmitted(next);
           return next;
         });
-        alert(`${pendentes.length} NFC-e simuladas emitidas com sucesso!`);
+        showAlert(`${pendentes.length} NFC-e simuladas emitidas com sucesso!`);
       },
     });
   };
@@ -174,6 +175,7 @@ export default function FiscalModule() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
+      {alertHost}
       {/* Banner de Aviso Demonstrativo */}
       <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl flex items-center gap-4">
         <Info className="text-blue-500" size={24} />
@@ -193,7 +195,7 @@ export default function FiscalModule() {
           </div>
           <button
             className="p-3 btn-neumorphic rounded-xl text-emerald-500"
-            onClick={() => alert('Status SEFAZ: Online (Ambiente Simulado) — Nenhuma comunicação real realizada.')}
+            onClick={() => showAlert('Status SEFAZ: Online (Ambiente Simulado) — Nenhuma comunicação real realizada.')}
           >
             <RefreshCw size={20} />
           </button>
@@ -263,7 +265,7 @@ export default function FiscalModule() {
             </div>
             <button
               className="w-full bg-[#FFC107] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-transform"
-              onClick={() => alert('Configuração salva no ambiente simulado. Em produção, será necessário certificado digital A1.')}
+              onClick={() => showAlert('Configuração salva no ambiente simulado. Em produção, será necessário certificado digital A1.')}
             >
               SALVAR CONFIGURAÇÃO
             </button>

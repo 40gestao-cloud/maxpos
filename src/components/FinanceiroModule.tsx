@@ -14,7 +14,7 @@ import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
 import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
-import { useConfirmDialog } from './ConfirmDialog';
+import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -47,6 +47,7 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
 
 export default function FinanceiroModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [sales, setSales] = useState<Sale[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,7 +152,7 @@ export default function FinanceiroModule() {
       }
       setInstallmentsMap(prev => ({ ...prev, [sale.id]: list }));
     } catch (err: any) {
-      alert('Erro ao carregar parcelas: ' + err.message);
+      showAlert('Erro ao carregar parcelas: ' + err.message);
     } finally {
       setLoadingInst(prev => ({ ...prev, [sale.id]: false }));
     }
@@ -169,7 +170,7 @@ export default function FinanceiroModule() {
         ),
       }));
     } catch (err: any) {
-      alert('Erro ao dar baixa na parcela: ' + err.message);
+      showAlert('Erro ao dar baixa na parcela: ' + err.message);
     }
   };
 
@@ -190,7 +191,7 @@ export default function FinanceiroModule() {
 
   const handlePrintReport = async () => {
     if (accounts.length === 0 && sales.length === 0) {
-      alert('Nenhuma movimentação/conta para gerar relatório.');
+      showAlert('Nenhuma movimentação/conta para gerar relatório.');
       return;
     }
 
@@ -218,7 +219,7 @@ export default function FinanceiroModule() {
 
   const handleAddAccount = async () => {
     if (!formData.description || !formData.amount || !formData.dueDate) {
-      alert('Preencha todos os campos obrigatórios.');
+      showAlert('Preencha todos os campos obrigatórios.');
       return;
     }
     const newAccount: Account = {
@@ -235,7 +236,7 @@ export default function FinanceiroModule() {
       setShowAddModal(false);
       setFormData({ description: '', amount: '', dueDate: new Date().toISOString().split('T')[0], status: 'pending' });
     } catch (err: any) {
-      alert('Erro ao salvar conta: ' + err.message);
+      showAlert('Erro ao salvar conta: ' + err.message);
     }
   };
 
@@ -256,7 +257,7 @@ export default function FinanceiroModule() {
       await Storage.upsertAccount(updated);
       setAccounts(prev => prev.map(a => a.id === id ? updated : a));
     } catch (err: any) {
-      alert('Erro ao atualizar status: ' + err.message);
+      showAlert('Erro ao atualizar status: ' + err.message);
     }
   };
 
@@ -271,7 +272,7 @@ export default function FinanceiroModule() {
           await Storage.deleteAccount(id);
           setAccounts(prev => prev.filter(a => a.id !== id));
         } catch (err: any) {
-          alert('Erro ao excluir conta: ' + err.message);
+          showAlert('Erro ao excluir conta: ' + err.message);
         }
       },
     });
@@ -308,6 +309,7 @@ export default function FinanceiroModule() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
+      {alertHost}
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {stats.map((stat, i) => {

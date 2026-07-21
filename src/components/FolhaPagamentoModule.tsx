@@ -10,7 +10,7 @@ import {
 import { Storage } from '../lib/storage';
 import { User, FolhaPagamento } from '../types';
 import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
-import { useConfirmDialog } from './ConfirmDialog';
+import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 
 function currentMesRef(): string {
   const d = new Date();
@@ -25,6 +25,7 @@ const STATUS_STYLE: Record<FolhaPagamento['status'], string> = {
 
 export default function FolhaPagamentoModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [colaboradores, setColaboradores] = useState<User[]>([]);
   const [folhas, setFolhas] = useState<FolhaPagamento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +47,7 @@ export default function FolhaPagamentoModule() {
       setColaboradores(users);
       setFolhas(list);
     } catch (err: any) {
-      alert('Erro ao carregar folha de pagamento: ' + err.message);
+      showAlert('Erro ao carregar folha de pagamento: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -65,14 +66,14 @@ export default function FolhaPagamentoModule() {
 
   const handleAddFolha = async () => {
     if (!formData.colaborador_id || !formData.salario_bruto) {
-      alert('Selecione o colaborador e informe o salário bruto.');
+      showAlert('Selecione o colaborador e informe o salário bruto.');
       return;
     }
     const bruto = parseCurrencyToNumber(formData.salario_bruto);
     const descontos = parseCurrencyToNumber(formData.descontos);
     const liquido = parseFloat((bruto - descontos).toFixed(2));
     if (liquido <= 0) {
-      alert('Salário líquido deve ser maior que zero.');
+      showAlert('Salário líquido deve ser maior que zero.');
       return;
     }
     try {
@@ -90,7 +91,7 @@ export default function FolhaPagamentoModule() {
       resetForm();
       await load();
     } catch (err: any) {
-      alert('Erro ao lançar folha: ' + err.message);
+      showAlert('Erro ao lançar folha: ' + err.message);
     }
   };
 
@@ -99,7 +100,7 @@ export default function FolhaPagamentoModule() {
       await Storage.upsertFolha({ ...folha, status: 'Processada' });
       await load();
     } catch (err: any) {
-      alert('Erro ao processar folha: ' + err.message);
+      showAlert('Erro ao processar folha: ' + err.message);
     }
   };
 
@@ -115,7 +116,7 @@ export default function FolhaPagamentoModule() {
           await Storage.pagarFolha(folha.id);
           await load();
         } catch (err: any) {
-          alert('Erro ao pagar folha: ' + (err?.message ?? String(err)));
+          showAlert('Erro ao pagar folha: ' + (err?.message ?? String(err)));
         } finally {
           setPaying(null);
         }
@@ -134,7 +135,7 @@ export default function FolhaPagamentoModule() {
           await Storage.deleteFolha(id);
           await load();
         } catch (err: any) {
-          alert('Erro ao excluir folha: ' + err.message);
+          showAlert('Erro ao excluir folha: ' + err.message);
         }
       },
     });
@@ -143,6 +144,7 @@ export default function FolhaPagamentoModule() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
+      {alertHost}
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         <div className="neumorphic p-4 md:p-6 relative overflow-hidden">

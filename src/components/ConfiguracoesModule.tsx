@@ -6,6 +6,7 @@ import {
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { User, AuditLogEntry } from '../types';
+import { useAlertDialog } from './ConfirmDialog';
 
 const DATA_CACHE_KEYS = [
   'fiscal_emitted_nfce',
@@ -43,6 +44,7 @@ interface ConfiguracoesProps {
 type SubTab = 'perfil' | 'auditoria';
 
 export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate }) => {
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [user, setUser] = useState<User | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -155,9 +157,9 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       setUser(updatedUser);
       onUserUpdate(updatedUser);
       localStorage.setItem(`notif_${user.id}`, JSON.stringify(notificationConfig));
-      alert('Configurações salvas com sucesso!');
+      showAlert('Configurações salvas com sucesso!');
     } catch (err: any) {
-      alert('Erro ao salvar: ' + err.message);
+      showAlert('Erro ao salvar: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -174,10 +176,10 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       const { error } = await supabase.rpc('factory_reset');
       if (error) throw error;
       DATA_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
-      alert('Reset concluído. Todos os dados operacionais foram apagados. A página será recarregada.');
+      showAlert('Reset concluído. Todos os dados operacionais foram apagados. A página será recarregada.');
       window.location.reload();
     } catch (err: any) {
-      alert('Erro ao executar reset: ' + (err?.message || err));
+      showAlert('Erro ao executar reset: ' + (err?.message || err));
       setResetting(false);
     }
   };
@@ -205,6 +207,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
+      {alertHost}
       <div className="flex items-center gap-4 mb-2">
         <div className="p-3 bg-[#FFC107]/10 rounded-2xl">
           <Settings className="text-[#FFC107]" size={24} />

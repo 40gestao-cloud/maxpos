@@ -12,12 +12,14 @@ import { Client, User, UserRole } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
+import { useAlertDialog } from './ConfirmDialog';
 
 interface CadastrosModuleProps {
   currentUser: User;
 }
 
 export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -51,13 +53,13 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-      alert('Formato não suportado. Use JPG, PNG ou WEBP.');
+      showAlert('Formato não suportado. Use JPG, PNG ou WEBP.');
       return;
     }
 
     const MAX_BYTES = 120 * 1024;
     if (file.size > MAX_BYTES) {
-      alert(`Imagem muito grande (${Math.round(file.size / 1024)} KB). Máximo permitido: 120 KB.`);
+      showAlert(`Imagem muito grande (${Math.round(file.size / 1024)} KB). Máximo permitido: 120 KB.`);
       return;
     }
 
@@ -66,7 +68,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       const dataUrl = reader.result as string;
       setFormData((prev: any) => ({ ...prev, image: dataUrl }));
     };
-    reader.onerror = () => alert('Erro ao ler a imagem.');
+    reader.onerror = () => showAlert('Erro ao ler a imagem.');
     reader.readAsDataURL(file);
   };
 
@@ -132,7 +134,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
       await Storage.upsertProduct(updated);
       setBarcodeModal({ isOpen: true, product: updated });
     } catch (err: any) {
-      alert('Erro ao salvar EAN: ' + (err?.message || err));
+      showAlert('Erro ao salvar EAN: ' + (err?.message || err));
     } finally {
       setSavingEan(false);
     }
@@ -280,19 +282,19 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUser.role) return alert('Selecione um cargo');
+    if (!newUser.role) return showAlert('Selecione um cargo');
 
     if (editingItem) {
       try {
         await Storage.updateUserProfile(editingItem.id, { name: newUser.name, role: newUser.role as UserRole });
         const updatedUsers = users.map(u => u.id === editingItem.id ? { ...u, name: newUser.name, role: newUser.role as UserRole } : u);
         setUsers(updatedUsers);
-        alert('Membro atualizado com sucesso!');
+        showAlert('Membro atualizado com sucesso!');
       } catch (err: any) {
-        alert('Erro ao atualizar membro: ' + err.message);
+        showAlert('Erro ao atualizar membro: ' + err.message);
       }
     } else {
-      if (!newUser.password) return alert('Defina uma senha temporária');
+      if (!newUser.password) return showAlert('Defina uma senha temporária');
       try {
         const created = await Storage.createUser(
           newUser.email,
@@ -302,9 +304,9 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           currentUser?.id
         );
         setUsers(prev => [...prev, created]);
-        alert('Novo membro cadastrado! Ele pode acessar com o e-mail e senha definidos.');
+        showAlert('Novo membro cadastrado! Ele pode acessar com o e-mail e senha definidos.');
       } catch (err: any) {
-        alert('Erro ao cadastrar membro: ' + err.message);
+        showAlert('Erro ao cadastrar membro: ' + err.message);
       }
     }
     setShowAddUser(false);
@@ -354,7 +356,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   const exportProductsPDF = () => {
     if (filteredProducts.length === 0) {
-      alert('Nenhum produto para exportar.');
+      showAlert('Nenhum produto para exportar.');
       return;
     }
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -495,7 +497,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   const exportProductsExcel = () => {
     if (filteredProducts.length === 0) {
-      alert('Nenhum produto para exportar.');
+      showAlert('Nenhum produto para exportar.');
       return;
     }
     const sep = ';';
@@ -573,7 +575,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         setUsers(prev => prev.filter(u => u.id !== id));
       }
     } catch (err: any) {
-      alert('Erro ao excluir: ' + err.message);
+      showAlert('Erro ao excluir: ' + err.message);
     }
 
     setDeleteConfirm(null);
@@ -597,11 +599,11 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         setFormData((prev: any) => ({ ...prev, stock: newStock }));
       }
     } catch (err: any) {
-      alert('Erro ao ajustar estoque: ' + err.message);
+      showAlert('Erro ao ajustar estoque: ' + err.message);
     }
 
     setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
-    alert('Estoque atualizado com sucesso!');
+    showAlert('Estoque atualizado com sucesso!');
   };
 
   const handleEdit = (item: any, type: string) => {
@@ -624,7 +626,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertClient(updated);
           setClients(prev => prev.map(c => c.id === editingItem.id ? updated : c));
-          alert('Cliente atualizado com sucesso!');
+          showAlert('Cliente atualizado com sucesso!');
         } else {
           const newClient: Client = {
             type: 'PF', status: 'active', creditLimit: 0, balance: 0,
@@ -633,7 +635,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           } as Client;
           await Storage.upsertClient(newClient);
           setClients(prev => [...prev, newClient]);
-          alert('Cliente cadastrado com sucesso!');
+          showAlert('Cliente cadastrado com sucesso!');
         }
         setShowAddClient(false);
       } else if (type === 'produto') {
@@ -643,7 +645,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           const updated = { ...editingItem, ...productFields, stock: finalStock };
           await Storage.upsertProduct(updated);
           setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
-          alert('Produto atualizado com sucesso!');
+          showAlert('Produto atualizado com sucesso!');
         } else {
           const newProduct = {
             unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,
@@ -652,7 +654,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           };
           await Storage.upsertProduct(newProduct);
           setProducts(prev => [...prev, newProduct]);
-          alert('Produto cadastrado com sucesso!');
+          showAlert('Produto cadastrado com sucesso!');
         }
         setShowAddProduct(false);
       } else if (type === 'servico') {
@@ -660,7 +662,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertService(updated);
           setServices(prev => prev.map(s => s.id === editingItem.id ? updated : s));
-          alert('Serviço atualizado com sucesso!');
+          showAlert('Serviço atualizado com sucesso!');
         } else {
           const newService = {
             costPrice: 0, price: 0,
@@ -669,7 +671,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           };
           await Storage.upsertService(newService);
           setServices(prev => [...prev, newService]);
-          alert('Serviço cadastrado com sucesso!');
+          showAlert('Serviço cadastrado com sucesso!');
         }
         setShowAddService(false);
       } else if (type === 'fornecedor') {
@@ -677,7 +679,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertSupplier(updated);
           setSuppliers(prev => prev.map(s => s.id === editingItem.id ? updated : s));
-          alert('Fornecedor atualizado com sucesso!');
+          showAlert('Fornecedor atualizado com sucesso!');
         } else {
           const newSupplier = {
             type: 'PF',
@@ -686,12 +688,12 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
           };
           await Storage.upsertSupplier(newSupplier);
           setSuppliers(prev => [...prev, newSupplier]);
-          alert('Fornecedor cadastrado com sucesso!');
+          showAlert('Fornecedor cadastrado com sucesso!');
         }
         setShowAddSupplier(false);
       }
     } catch (err: any) {
-      alert('Erro ao salvar: ' + err.message);
+      showAlert('Erro ao salvar: ' + err.message);
     }
     setEditingItem(null);
     setFormData({});
@@ -1064,6 +1066,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   return (
     <div className="space-y-8 flex flex-col max-w-full">
+      {alertHost}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 overflow-x-auto pb-2 custom-scrollbar">
         <div className="flex gap-2 shrink-0 flex-wrap">
           {(['clientes', 'produtos', 'servicos', 'fornecedores', 'equipe'] as const).map((t) => {

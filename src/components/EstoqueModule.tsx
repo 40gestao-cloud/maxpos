@@ -10,10 +10,12 @@ import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { formatBRL } from '../lib/masks';
 import { Product, Sale } from '../types';
+import { useAlertDialog } from './ConfirmDialog';
 
 const DISMISSED_MOVES_KEY = 'estoque_dismissed_moves';
 
 export default function EstoqueModule() {
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +68,7 @@ export default function EstoqueModule() {
 
   const handleGeneratePurchaseReport = () => {
     if (criticalProducts.length === 0) {
-      alert('Nenhum produto com estoque crítico no momento.');
+      showAlert('Nenhum produto com estoque crítico no momento.');
       return;
     }
     PDFReport.generateStockReport(criticalProducts);
@@ -99,6 +101,7 @@ export default function EstoqueModule() {
 
   return (
     <div className="space-y-6 max-w-full">
+      {alertHost}
       {/* Stats grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => {

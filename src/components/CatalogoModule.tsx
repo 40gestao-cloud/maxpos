@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { ExternalLink, ShoppingBag, Share2, Globe, Check } from 'lucide-react';
+import { useAlertDialog } from './ConfirmDialog';
 
 interface CatalogSettings {
   catalogUrl: string;
@@ -12,6 +13,7 @@ interface CatalogSettings {
 }
 
 export default function CatalogoModule() {
+  const { showAlert, host: alertHost } = useAlertDialog();
   const [catalogUrl, setCatalogUrl] = useState('');
   const [welcomeMessage, setWelcomeMessage] = useState('');
   const [copied, setCopied] = useState(false);
@@ -42,7 +44,7 @@ export default function CatalogoModule() {
 
   const handleOpen = () => {
     if (!isValidUrl) {
-      alert('Cole um link válido (ex.: https://www.canva.com/...)');
+      showAlert('Cole um link válido (ex.: https://www.canva.com/...)');
       return;
     }
     window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
@@ -50,7 +52,7 @@ export default function CatalogoModule() {
 
   const handleShare = async () => {
     if (!isValidUrl) {
-      alert('Salve um link antes de compartilhar.');
+      showAlert('Salve um link antes de compartilhar.');
       return;
     }
     if (navigator.share) {
@@ -73,6 +75,7 @@ export default function CatalogoModule() {
 
   return (
     <div className="space-y-6 max-w-full">
+      {alertHost}
       {/* Card principal — URL do catálogo */}
       <section className="smart-card">
         <div className="flex items-center gap-4 mb-5 pb-4 border-b border-gray-200">
