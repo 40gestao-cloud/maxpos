@@ -2140,6 +2140,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         setLastAdded(null);
       };
 
+      // Simulação (MaxLook/TechMax) NÃO reage a F-keys — LogMax real não usa
+      // essas teclas, e simulador precisa treinar o operador sem dependências
+      // que não vão existir na produção. F9 (cancelar venda) é preservado
+      // porque é atalho universal esperado em qualquer PDV.
+      if (isSimulationMode && /^F\d+$/.test(e.key) && e.key !== 'F9') {
+        return;
+      }
+
       // F9 — cancelar venda (qualquer tela, exceto se modal/picker)
       if (e.key === 'F9') {
         e.preventDefault();
@@ -2849,12 +2857,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setSaleDiscount(0);
       setCpfNota('');
       setLinkedClient(null);
-      // Reset nicho fields: vendedor persiste (mesma atendente costuma
-      // encadear vendas), IMEI/defeito/OS-toggle sempre resetam.
-      // Também zera valores inline do painel direito (dinheiro/parcelas/cliente
-      // fiado) — próxima venda começa com estado limpo, igual LogMax.
+      // Reset nicho fields: vendedor E tipoAtendimento persistem entre vendas
+      // (mesma atendente costuma encadear; operador em modo OS continua até
+      // trocar manualmente — padrão LogMax). IMEI e defeito sempre resetam
+      // porque são por-aparelho. Valores do painel direito também zeram —
+      // próxima venda começa com carrinho limpo.
       setSaleImeiSerial('');
-      setSaleTipoAtendimento('Venda');
       setSaleDefeitoRelatado('');
       setNichoDinheiroRecebido('');
       setNichoParcelas(1);
