@@ -765,15 +765,17 @@ function NichoLeituraView({
           <button
             onClick={() => onQuickFinalize(selectedPay)}
             disabled={cart.length === 0}
-            className="w-full py-3 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            className="w-full py-3.5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             style={{
-              background: cart.length === 0 ? '#d4d4d4' : NAVY_DARK,
+              background: cart.length === 0 ? '#d4d4d4' : '#0A0A0A',
               color: cart.length === 0 ? '#737373' : '#FFFFFF',
               border: cart.length > 0 ? `2px solid ${modeMeta.accent}` : '2px solid transparent',
-              boxShadow: cart.length > 0 ? `0 4px 14px ${modeMeta.accent}45` : 'none',
+              boxShadow: cart.length > 0
+                ? `0 8px 24px rgba(0,0,0,0.20), 0 0 0 3px ${modeMeta.accent}40`
+                : 'none',
             }}
           >
-            <CheckCircleIcon /> {isTech && saleTipoAtendimento === 'OS' ? 'ABRIR OS' : 'FECHAR VENDA'} · R$ {fmt(total)}
+            <CheckCircleIcon /> {isTech && saleTipoAtendimento === 'OS' ? 'Abrir OS' : 'Fechar Venda'} · R$ {fmt(total)}
           </button>
         </div>
       </div>
@@ -823,6 +825,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [nichoDinheiroRecebido, setNichoDinheiroRecebido] = useState('');
   const [nichoParcelas, setNichoParcelas] = useState(1);
   const [nichoClienteFiadoId, setNichoClienteFiadoId] = useState('');
+  // Overlay maquininha MaxPay (padrão LogMax): débito/crédito nos nichos
+  // NÃO finalizam direto — abrem QR pra cliente autorizar. Simulação auto-
+  // confirma após delay curto imitando fluxo realtime cartao_pendentes.
+  const [cartaoModal, setCartaoModal] = useState<{
+    metodo: 'debito' | 'credito';
+    amount: number;
+    parcelas: number;
+    uuid: string;
+  } | null>(null);
   // Isolar treino: se troca de modo com venda em aberto, avisa antes de zerar.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -2285,7 +2296,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Enter no picker chama handleCreditClick/handlePixClick/etc., a closure
   // ainda vê o picker como aberto e faz early-return silencioso.
   const isAnyPaymentModalOpen = () =>
-    showInstallments || pixModalOpen || cashModalOpen || showClientPicker;
+    showInstallments || pixModalOpen || cashModalOpen || showClientPicker || cartaoModal !== null;
 
   const handleCreditClick = () => {
     if (isAnyPaymentModalOpen()) return;
@@ -2805,7 +2816,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     if (method === 'credito') {
-      setPayments([{ method: 'credito', amount: total, installments: nichoParcelas }]);
+      // Abre overlay MaxPay (mesmo fluxo do débito, com parcelas). O useEffect
+      // que fecha o cartaoModal grava o Payment e dispara auto-finalize.
+      setCartaoModal({
+        metodo: 'credito',
+        amount: total,
+        parcelas: nichoParcelas,
+        uuid: crypto.randomUUID(),
+      });
       return;
     }
     if (method === 'fiado') {
@@ -2825,9 +2843,40 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setPayments([{ method: 'fiado', amount: total, clientId: nichoClienteFiadoId, clientName: c?.name }]);
       return;
     }
-    // Débito: sem UI extra — Fase 1b adicionará overlay maquininha.
-    setPayments([{ method: 'debito', amount: total }]);
+    // Débito: overlay MaxPay igual crédito (sem parcelas).
+    setCartaoModal({
+      metodo: 'debito',
+      amount: total,
+      parcelas: 1,
+      uuid: crypto.randomUUID(),
+    });
   };
+
+  // Auto-confirma MaxPay em simulação (imita fluxo realtime cartao_pendentes
+  // do LogMax onde o cliente autoriza no app MaxBank). Delay de 4s dá tempo
+  // do operador ver o QR — igual maquininha real.
+  useEffect(() => {
+    if (!cartaoModal) return;
+    if (!runsLocalOnly) return;
+    const t = setTimeout(() => {
+      const payment: Payment = cartaoModal.metodo === 'credito'
+        ? { method: 'credito', amount: cartaoModal.amount, installments: cartaoModal.parcelas }
+        : { method: 'debito', amount: cartaoModal.amount };
+      setPayments([payment]);
+      setCartaoModal(null);
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [cartaoModal, runsLocalOnly]);
+
+  // Auto-confirma PIX em simulação — mesmo padrão: sem botão manual, delay
+  // curto simula cliente escaneando o QR e confirmando no MaxBank.
+  useEffect(() => {
+    if (!pixModalOpen) return;
+    if (!runsLocalOnly) return;
+    const t = setTimeout(() => { confirmPixPayment(); }, 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixModalOpen, runsLocalOnly]);
 
   // Auto-finalize para simulação: assim que qualquer modal confirma e o
   // total é coberto, dispara finalizeSale — em SuperMax o operador confirma
@@ -2841,11 +2890,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     if (paid < total - 0.001) return;
     // Não dispara se algum modal ainda está aberto (evita finalize enquanto
     // ainda vê o QR do PIX, o troco do dinheiro, o picker de cliente, etc.).
-    if (pixModalOpen || cashModalOpen || showInstallments || showClientPicker) return;
+    if (pixModalOpen || cashModalOpen || showInstallments || showClientPicker || cartaoModal) return;
     finalizeSale();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSimulationMode, saving, cart.length, payments.length, paid, total,
-      pixModalOpen, cashModalOpen, showInstallments, showClientPicker]);
+      pixModalOpen, cashModalOpen, showInstallments, showClientPicker, cartaoModal]);
 
   // Abre o card de confirmação para cancelar um item específico do carrinho.
   const requestCancelItem = (id: string) => {
@@ -4889,19 +4938,93 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <div className="flex gap-3 w-full pt-2">
                   <button
                     onClick={cancelPixPayment}
-                    className="flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                    className={runsLocalOnly ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50' : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
                     style={{ borderColor: '#9ca3af' }}
                   >
                     CANCELAR
                   </button>
-                  <button
-                    onClick={confirmPixPayment}
-                    className="flex-1 px-4 py-3 text-white font-bold"
-                    style={{ background: MONEY }}
-                  >
-                    PAGAMENTO RECEBIDO
-                  </button>
+                  {!runsLocalOnly && (
+                    // Simulação (nichos + treinamento) NÃO tem botão manual:
+                    // o realtime do MaxBank confirma sozinho via setTimeout no
+                    // useEffect. Padrão LogMax — operador não pode auto-forçar.
+                    <button
+                      onClick={confirmPixPayment}
+                      className="flex-1 px-4 py-3 text-white font-bold"
+                      style={{ background: MONEY }}
+                    >
+                      PAGAMENTO RECEBIDO
+                    </button>
+                  )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Overlay MaxPay (débito/crédito nos nichos — padrão LogMax) */}
+        {cartaoModal && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60"
+            tabIndex={-1}
+            ref={(el) => { if (el && cartaoModal && !el.contains(document.activeElement)) el.focus(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCartaoModal(null); }
+              else { e.stopPropagation(); }
+            }}
+          >
+            <div className="bg-white border-2 max-w-md w-full shadow-2xl"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: modeMeta.accentDark }}>
+              <div className="px-4 py-2.5 flex items-center justify-between"
+                style={{ background: modeMeta.accent, color: modeMeta.accentText, borderBottom: `2px solid ${modeMeta.accentDark}` }}>
+                <span className="font-black tracking-wide text-sm uppercase flex items-center gap-2">
+                  <CreditCard size={16} /> MaxPay · {cartaoModal.metodo === 'credito' ? 'Cartão de Crédito' : 'Cartão de Débito'}
+                </span>
+                <button onClick={() => setCartaoModal(null)} className="hover:opacity-70" tabIndex={-1}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-5 space-y-4 flex flex-col items-center">
+                <div className="text-sm text-gray-600 text-center">
+                  Cliente deve aproximar / inserir o cartão na <b>maquininha MaxPay</b>
+                </div>
+                <div className="w-56 h-56 flex items-center justify-center border-2 border-gray-300 rounded-lg"
+                  style={{ background: '#f8fafc' }}>
+                  <div className="flex flex-col items-center gap-3">
+                    <CreditCard size={80} strokeWidth={1.2} className="text-gray-400" />
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                      Aguardando cartão
+                    </div>
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs uppercase tracking-wider text-gray-500">VALOR</div>
+                  <div className="text-4xl font-bold tabular-nums" style={{ color: MONEY }}>
+                    R$ {cartaoModal.amount.toFixed(2).replace('.', ',')}
+                  </div>
+                  {cartaoModal.metodo === 'credito' && cartaoModal.parcelas > 1 && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      em {cartaoModal.parcelas}x de R$ {(cartaoModal.amount / cartaoModal.parcelas).toFixed(2).replace('.', ',')}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ background: modeMeta.accent }} />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full" style={{ background: modeMeta.accent }} />
+                  </span>
+                  Aguardando autorização MaxPay...
+                </div>
+                <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
+                  MAX-CARTAO-{cartaoModal.uuid}
+                </div>
+                <button
+                  onClick={() => setCartaoModal(null)}
+                  className="w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
+                  style={{ borderColor: '#9ca3af' }}
+                >
+                  CANCELAR
+                </button>
               </div>
             </div>
           </div>
