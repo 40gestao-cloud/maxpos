@@ -310,22 +310,58 @@ export const Storage = {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return null;
 
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .single();
+    // Tenta buscar o profile. Se a query falhar (rede, cold-start,
+    // RLS transitório), fazemos 1 retry curto — Ctrl+Shift+R hard reload
+    // frequentemente cai na primeira request antes do cliente estar quente.
+    const fetchProfile = async () => {
+      return await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+    };
 
-    if (!profile) return null;
+    let { data: profile, error } = await fetchProfile();
+    if ((!profile || error) && !error?.message?.includes('multiple')) {
+      await new Promise(r => setTimeout(r, 250));
+      ({ data: profile, error } = await fetchProfile());
+    }
 
-    return {
-      id: session.user.id,
-      email: session.user.email ?? '',
-      name: profile.name,
-      role: profile.role,
-      avatar: profile.avatar,
-      parentId: profile.parentId,
-    } as User;
+    if (profile) {
+      return {
+        id: session.user.id,
+        email: session.user.email ?? '',
+        name: profile.name,
+        role: profile.role,
+        avatar: profile.avatar,
+        parentId: profile.parentId,
+      } as User;
+    }
+
+    // Profile falhou depois de retry. Session é válida — usar user_metadata
+    // como fallback (name/role/parentId ficam salvos ali no signUp).
+    // Deslogar aqui bounceia o operador pra Login mesmo com auth válido,
+    // o que é o pior UX possível — melhor tentar seguir com o metadata.
+    const meta = (session.user.user_metadata ?? {}) as Record<string, any>;
+    if (meta.name && meta.role) {
+      // eslint-disable-next-line no-console
+      console.warn('[Storage.getSession] Profile fetch failed, usando user_metadata como fallback', error);
+      return {
+        id: session.user.id,
+        email: session.user.email ?? '',
+        name: meta.name,
+        role: meta.role,
+        avatar: meta.avatar,
+        parentId: meta.parentId ?? undefined,
+      } as User;
+    }
+
+    // Sem profile nem metadata utilizável — session órfã (usuário
+    // deletado do user_profiles mas com auth.user ainda vivo). Aí sim
+    // é seguro deslogar.
+    // eslint-disable-next-line no-console
+    console.error('[Storage.getSession] Session sem profile nem metadata', error);
+    return null;
   },
 
   getCurrentUser: async (): Promise<User | null> => Storage.getSession(),
