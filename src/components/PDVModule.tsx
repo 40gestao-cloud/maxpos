@@ -834,6 +834,31 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     parcelas: number;
     uuid: string;
   } | null>(null);
+  // Modal Troca/Devolução (padrão LogMax MaxLook): busca venda pelos 6
+  // últimos chars do id nas vendas locais (trainingSalesHistory), lista
+  // itens com qtd disponível pra devolver, motivo e confirma o estorno
+  // — devolve estoque em memória e marca a venda como 'reversed'.
+  type DevolucaoItem = {
+    productId: string;
+    name: string;
+    qty: number;
+    price: number;
+    jaDevolvido: number;
+  };
+  const [devolucaoModal, setDevolucaoModal] = useState<{
+    busca: string;
+    buscando: boolean;
+    erro: string | null;
+    venda: {
+      id: string;
+      shortId: string;
+      formaPagamento: string;
+      itens: DevolucaoItem[];
+    } | null;
+    qtds: Record<string, string>;
+    motivo: string;
+    processando: boolean;
+  } | null>(null);
   // Isolar treino: se troca de modo com venda em aberto, avisa antes de zerar.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [checkoutMode, setCheckoutMode] = useState(false);
@@ -2896,6 +2921,94 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   }, [isSimulationMode, saving, cart.length, payments.length, paid, total,
       pixModalOpen, cashModalOpen, showInstallments, showClientPicker, cartaoModal]);
 
+  // ─── Troca/Devolução MaxLook (padrão LogMax) ────────────────
+  const openTrocaDevolucaoNicho = () => {
+    setDevolucaoModal({
+      busca: '', buscando: false, erro: null, venda: null,
+      qtds: {}, motivo: '', processando: false,
+    });
+  };
+
+  // Busca a venda pelos 6 últimos chars do id em trainingSalesHistory (simulação
+  // local). No LogMax bate no DB via ilike — aqui filtramos o array em memória.
+  const buscarVendaParaDevolucao = () => {
+    if (!devolucaoModal) return;
+    const termo = devolucaoModal.busca.trim().toUpperCase();
+    if (!termo) return;
+    setDevolucaoModal(d => d ? { ...d, buscando: true, erro: null, venda: null, qtds: {} } : d);
+    const encontrada = trainingSalesHistory.find(s =>
+      s.id.slice(-6).toUpperCase() === termo && s.status !== 'reversed'
+    );
+    if (!encontrada) {
+      setDevolucaoModal(d => d ? {
+        ...d, buscando: false,
+        erro: 'Venda não encontrada. Confira os 6 últimos caracteres do id (no recibo).',
+      } : d);
+      return;
+    }
+    const formaPag = encontrada.payments[0]?.method === 'fiado' ? 'Fiado'
+                   : encontrada.payments[0]?.method === 'credito' ? 'Cartão Crédito'
+                   : encontrada.payments[0]?.method === 'debito' ? 'Cartão Débito'
+                   : encontrada.payments[0]?.method === 'pix' ? 'PIX'
+                   : 'Dinheiro';
+    const itens: DevolucaoItem[] = encontrada.items.map(it => ({
+      productId: it.id,
+      name: it.name,
+      qty: it.quantity,
+      price: it.price,
+      jaDevolvido: 0, // simulação: cada venda pode ser devolvida uma vez
+    }));
+    setDevolucaoModal(d => d ? {
+      ...d,
+      buscando: false,
+      venda: { id: encontrada.id, shortId: encontrada.id.slice(-6).toUpperCase(), formaPagamento: formaPag, itens },
+      qtds: Object.fromEntries(itens.map(it => [it.productId, ''])),
+    } : d);
+  };
+
+  const confirmarDevolucao = () => {
+    if (!devolucaoModal?.venda) return;
+    const itensSelecionados = devolucaoModal.venda.itens
+      .map(it => ({ ...it, qtdDevolver: parseFloat((devolucaoModal.qtds[it.productId] ?? '').replace(',', '.')) || 0 }))
+      .filter(it => it.qtdDevolver > 0);
+    if (itensSelecionados.length === 0) {
+      showAlert({
+        title: 'Nenhum item selecionado',
+        message: 'Informe a quantidade a devolver em pelo menos um item.',
+        variant: 'warning',
+      });
+      return;
+    }
+    const invalido = itensSelecionados.find(it => it.qtdDevolver > (it.qty - it.jaDevolvido));
+    if (invalido) {
+      showAlert({
+        title: 'Quantidade inválida',
+        message: `"${invalido.name}" — máximo disponível para devolução: ${invalido.qty - invalido.jaDevolvido}.`,
+        variant: 'warning',
+      });
+      return;
+    }
+    setDevolucaoModal(d => d ? { ...d, processando: true } : d);
+    // Devolve estoque em memória.
+    setProducts(prev => prev.map(p => {
+      const devolvido = itensSelecionados.find(it => it.productId === p.id);
+      if (!devolvido || p.controlStock === false) return p;
+      return { ...p, stock: (p.stock ?? 0) + devolvido.qtdDevolver };
+    }));
+    // Marca venda como reversed (não pode ser devolvida de novo).
+    setTrainingSalesHistory(prev => prev.map(s =>
+      s.id === devolucaoModal.venda!.id ? { ...s, status: 'reversed' } : s
+    ));
+    setDevolucaoModal(null);
+    showAlert({
+      title: 'Devolução processada',
+      message: `Estoque atualizado. ${devolucaoModal.venda.formaPagamento === 'Fiado' || devolucaoModal.venda.formaPagamento === 'Cartão Crédito'
+        ? 'Ajuste manualmente em Financeiro → Contas a Receber.'
+        : 'Cliente pode ser reembolsado.'}`,
+      variant: 'info',
+    });
+  };
+
   // Abre o card de confirmação para cancelar um item específico do carrinho.
   const requestCancelItem = (id: string) => {
     const it = cart.find(c => c.id === id);
@@ -3545,7 +3658,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               setNichoClienteFiadoId={setNichoClienteFiadoId}
               onQuickFinalize={finalizeSaleQuick}
               onCancelSale={cancelSale}
-              onOpenTrocaDevolucao={openReprintModal}
+              onOpenTrocaDevolucao={openTrocaDevolucaoNicho}
               fmt={fmt}
               RED={RED}
               NAVY_DARK={NAVY_DARK}
@@ -5025,6 +5138,147 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 >
                   CANCELAR
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Troca/Devolução MaxLook (padrão LogMax — busca venda + itens + motivo) */}
+        {devolucaoModal && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60"
+            onClick={() => { if (!devolucaoModal.processando) setDevolucaoModal(null); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && !devolucaoModal.processando) {
+                e.preventDefault(); e.stopPropagation(); setDevolucaoModal(null);
+              } else { e.stopPropagation(); }
+            }}
+            tabIndex={-1}
+            ref={(el) => { if (el && devolucaoModal && !el.contains(document.activeElement)) el.focus(); }}
+          >
+            <div
+              className="bg-white border-2 max-w-md w-full shadow-2xl rounded-2xl max-h-[85vh] overflow-y-auto"
+              style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: modeMeta.accentDark }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 py-2.5 flex items-center justify-between rounded-t-xl"
+                style={{ background: modeMeta.accent, color: modeMeta.accentText, borderBottom: `2px solid ${modeMeta.accentDark}` }}>
+                <span className="font-black tracking-wide text-sm uppercase flex items-center gap-2">
+                  ↺ Troca / Devolução
+                </span>
+                <button
+                  onClick={() => !devolucaoModal.processando && setDevolucaoModal(null)}
+                  className="hover:opacity-70"
+                  tabIndex={-1}
+                ><X size={18} /></button>
+              </div>
+
+              <div className="p-4 space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                    Código da venda (6 últimos caracteres — vide recibo)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      autoFocus
+                      value={devolucaoModal.busca}
+                      onChange={(e) => setDevolucaoModal(d => d ? { ...d, busca: e.target.value.toUpperCase() } : d)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); buscarVendaParaDevolucao(); } }}
+                      placeholder="Ex.: A1B2C3"
+                      maxLength={6}
+                      className="flex-1 px-3 py-2.5 rounded-xl text-sm font-bold tracking-widest uppercase border-2 outline-none focus:border-blue-700 bg-white"
+                      style={{ borderColor: modeMeta.accentDark + '30' }}
+                    />
+                    <button
+                      onClick={buscarVendaParaDevolucao}
+                      disabled={!devolucaoModal.busca.trim() || devolucaoModal.buscando}
+                      className="px-4 rounded-xl text-xs font-black uppercase tracking-wider border-2 flex items-center gap-1.5 disabled:opacity-40"
+                      style={{ borderColor: modeMeta.accentDark, background: 'white', color: modeMeta.accentDark }}
+                    >
+                      <Search size={14} /> Buscar
+                    </button>
+                  </div>
+                  {devolucaoModal.erro && (
+                    <p className="text-[11px] text-red-600 mt-1">{devolucaoModal.erro}</p>
+                  )}
+                </div>
+
+                {devolucaoModal.venda && (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                        Venda #{devolucaoModal.venda.shortId} · {devolucaoModal.venda.formaPagamento}
+                      </p>
+                      {devolucaoModal.venda.itens.map(it => {
+                        const disponivel = it.qty - it.jaDevolvido;
+                        return (
+                          <div key={it.productId} className="flex items-center gap-2 p-2 rounded-xl border"
+                            style={{ borderColor: modeMeta.accentDark + '20' }}>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-gray-900 truncate">{it.name}</p>
+                              <p className="text-[10px] text-gray-500">
+                                vendido {it.qty} · disponível p/ devolver {disponivel}
+                              </p>
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              disabled={disponivel <= 0}
+                              value={devolucaoModal.qtds[it.productId] ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/[^\d.,]/g, '');
+                                setDevolucaoModal(d => d ? {
+                                  ...d, qtds: { ...d.qtds, [it.productId]: v }
+                                } : d);
+                              }}
+                              placeholder="0"
+                              className="w-16 px-2 py-1.5 rounded-lg text-xs text-right tabular-nums font-bold border outline-none disabled:opacity-30 bg-white"
+                              style={{ borderColor: modeMeta.accentDark + '30' }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                        Motivo (opcional)
+                      </label>
+                      <textarea
+                        value={devolucaoModal.motivo}
+                        onChange={(e) => setDevolucaoModal(d => d ? { ...d, motivo: e.target.value } : d)}
+                        placeholder="Ex.: tamanho errado, peça com defeito..."
+                        rows={2}
+                        maxLength={200}
+                        className="px-3 py-2 rounded-xl text-xs border resize-none outline-none focus:border-blue-700 bg-white"
+                        style={{ borderColor: modeMeta.accentDark + '30' }}
+                      />
+                    </div>
+
+                    {(devolucaoModal.venda.formaPagamento === 'Fiado' || devolucaoModal.venda.formaPagamento === 'Cartão Crédito') && (
+                      <p className="text-[11px] text-amber-700 flex items-start gap-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                        ⚠️ Venda {devolucaoModal.venda.formaPagamento} — após confirmar, ajuste manualmente em Financeiro → Contas a Receber.
+                      </p>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setDevolucaoModal(null)}
+                        disabled={devolucaoModal.processando}
+                        className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider border-2 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                        style={{ borderColor: '#9ca3af' }}
+                      >Cancelar</button>
+                      <button
+                        onClick={confirmarDevolucao}
+                        disabled={devolucaoModal.processando}
+                        className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 disabled:opacity-40"
+                        style={{ background: modeMeta.accent, color: modeMeta.accentText }}
+                      >
+                        {devolucaoModal.processando ? '...' : '↺ Confirmar devolução'}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
