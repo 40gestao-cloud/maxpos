@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search } from 'lucide-react';
+import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
@@ -160,29 +160,86 @@ interface PDVModuleProps {
   // Troca de operador sem fechar caixa (Ctrl+U). O parent atualiza o
   // currentUser via setUser. Se não for passado, o atalho é ignorado.
   onSwapOperator?: (user: User) => void;
+  // Modo PDV escolhido pela sidebar do App: 'supermax' | 'maxlook' |
+  // 'techmax'. SuperMax opera no DB real; MaxLook/TechMax rodam em
+  // memória com layout LogMax. Default 'supermax'.
+  pdvMode?: PdvMode;
 }
 
+// Vendedores demo do MaxLook — usados no seletor "Sem vendedor" (comissão).
+// MaxLook opera 100% em memória, então esses nomes não vão pro banco.
+const DEMO_VENDEDORES_MAXLOOK = [
+  { id: 'vml1', nome: 'Ana Ribeiro' },
+  { id: 'vml2', nome: 'Beatriz Souza' },
+  { id: 'vml3', nome: 'Camila Duarte' },
+  { id: 'vml4', nome: 'Rodrigo Lima' },
+];
+
+// Formas de pagamento do painel direito (padrão LogMax — igual pros dois nichos).
+const NICHO_PAY_METHODS: Array<{ method: Payment['method']; label: string }> = [
+  { method: 'dinheiro', label: 'Dinheiro' },
+  { method: 'debito',   label: 'Cartão Débito' },
+  { method: 'credito',  label: 'Cartão Crédito' },
+  { method: 'pix',      label: 'PIX' },
+  { method: 'fiado',    label: 'Fiado' },
+];
+
 // ═══════════════════════════════════════════════════════════════
-// NichoProductGrid — grade de produtos estilo LogMax (fashion/tech).
-// Renderiza no lado direito do PDV quando pdvMode ∈ {maxlook, techmax}.
-// Cards clicáveis adicionam ao carrinho; busca local por nome/marca/ref.
+// NichoLeituraView — layout FULL do PDV MaxLook/TechMax (padrão LogMax).
+// LEFT: strip de ações (vendedor/toggle Venda-OS/Troca-Dev) + busca + chips + grid.
+// RIGHT: carrinho + Subtotal + Desconto (R$) + Cupom + TOTAL + 6 formas de
+// pagamento inline + IMEI/SERIAL (techmax) + FECHAR VENDA (finalize direto).
+// SuperMax mantém seu layout tradicional (fluxo supermercado, tela separada
+// de pagamento). Os dois nichos usam este layout, alternando
+// `layout: fashion` vs `layout: tech`.
 // ═══════════════════════════════════════════════════════════════
-function NichoProductGrid({
-  products, cart, addToCart, pdvMode, modeMeta, subtotal, total, totalItens, fmt, onOpenTrocaDevolucao,
+function NichoLeituraView({
+  products, cart, addToCart, removeFromCart, setCart, pdvMode, modeMeta,
+  subtotal, total, saleDiscount, setSaleDiscount, cashSession, codeInputRef,
+  classicCode, setClassicCode, handleClassicSubmit,
+  saleVendedor, setSaleVendedor,
+  saleTipoAtendimento, setSaleTipoAtendimento,
+  saleImeiSerial, setSaleImeiSerial,
+  saleDefeitoRelatado, setSaleDefeitoRelatado,
+  onQuickFinalize, onCancelSale, onOpenTrocaDevolucao,
+  fmt, RED, NAVY_DARK,
 }: {
   products: Product[];
   cart: CartItem[];
   addToCart: (p: Product, q?: number) => void;
+  removeFromCart: (id: string) => void;
+  setCart: Dispatch<SetStateAction<CartItem[]>>;
   pdvMode: PdvMode;
   modeMeta: typeof PDV_MODE_META[PdvMode];
   subtotal: number;
   total: number;
-  totalItens: number;
+  saleDiscount: number;
+  setSaleDiscount: Dispatch<SetStateAction<number>>;
+  cashSession: CashSession | null;
+  codeInputRef: RefObject<HTMLInputElement>;
+  classicCode: string;
+  setClassicCode: (v: string) => void;
+  handleClassicSubmit: () => void;
+  saleVendedor: string;
+  setSaleVendedor: Dispatch<SetStateAction<string>>;
+  saleTipoAtendimento: 'Venda' | 'OS';
+  setSaleTipoAtendimento: Dispatch<SetStateAction<'Venda' | 'OS'>>;
+  saleImeiSerial: string;
+  setSaleImeiSerial: Dispatch<SetStateAction<string>>;
+  saleDefeitoRelatado: string;
+  setSaleDefeitoRelatado: Dispatch<SetStateAction<string>>;
+  onQuickFinalize: (method: Payment['method']) => void;
+  onCancelSale: () => void;
+  onOpenTrocaDevolucao: () => void;
   fmt: (n: number) => string;
-  onOpenTrocaDevolucao?: () => void;
+  RED: string;
+  NAVY_DARK: string;
 }) {
   const [search, setSearch] = useState('');
   const [chip, setChip] = useState<string | null>(null);
+  const [descontoStr, setDescontoStr] = useState('0,00');
+  const [cupomStr, setCupomStr] = useState('');
+  const [selectedPay, setSelectedPay] = useState<Payment['method']>('dinheiro');
   const chips = pdvMode === 'maxlook'
     ? ['Roupas', 'Calçados', 'Acessórios', 'Feminino', 'Masculino']
     : ['Smartphones', 'Notebooks', 'Acessórios', 'Peças', 'Serviços'];
@@ -194,162 +251,194 @@ function NichoProductGrid({
   });
   const isFashion = pdvMode === 'maxlook';
   const isTech = pdvMode === 'techmax';
+  const changeQty = (id: string, delta: number) => {
+    setCart(prev => prev
+      .map(i => {
+        if (i.id !== id) return i;
+        const newQty = i.quantity + delta;
+        if (newQty <= 0) return null as any;
+        return { ...i, quantity: newQty };
+      })
+      .filter(Boolean));
+  };
+  // Espelha desconto local -> state do pai (usado no finalize).
+  const commitDesconto = (raw: string) => {
+    setDescontoStr(raw);
+    const n = parseCurrencyToNumber(raw);
+    setSaleDiscount(Math.max(0, isFinite(n) ? n : 0));
+  };
+
+  if (!cashSession) {
+    // Caixa fechado: PDVModule já dispara o modal de abertura. Aqui só um placeholder.
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50 text-gray-400">
+        <div className="text-center">
+          <img src={modeMeta.logo} alt="" className="w-24 h-24 object-contain mx-auto opacity-40" />
+          <p className="mt-4 text-sm font-bold uppercase tracking-widest">Abra o caixa para começar</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="w-[520px] shrink-0 flex flex-col bg-gray-50 border-l" style={{ borderColor: modeMeta.accentDark + '40' }}>
-      {/* Toolbar: busca + Troca/Devolução (MaxLook) */}
-      <div className="px-4 py-3 border-b bg-white shrink-0 space-y-2" style={{ borderColor: modeMeta.accentDark + '30' }}>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={isTech ? 'Buscar modelo, marca, código...' : 'Buscar peça, marca...'}
-              className="w-full pl-8 pr-2 py-1.5 text-sm border-2 outline-none focus:border-blue-700 rounded"
-              style={{ borderColor: modeMeta.accentDark + '60' }}
-            />
-          </div>
-          {isFashion && onOpenTrocaDevolucao && (
-            <button
-              onClick={onOpenTrocaDevolucao}
-              className="px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider border-2 rounded flex items-center gap-1 hover:brightness-95 transition"
-              style={{ borderColor: modeMeta.accentDark, background: 'white', color: modeMeta.accentDark }}
-              title="Troca / Devolução — abre reimpressão da última venda p/ estornar"
-            >
-              ↺ Troca
-            </button>
-          )}
+    <div className="flex-1 flex overflow-hidden min-h-0" style={{ background: '#e5e7eb' }}>
+      {/* ============ LEFT: busca + chips + grid (ações no header preto) ============ */}
+      <div className="flex-1 flex flex-col min-w-0 p-4 gap-3">
+        {/* Barra de busca */}
+        <div className="relative shrink-0">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={isTech ? 'Buscar modelo, código ou bipar...' : 'Buscar por nome, código ou bipar...'}
+            className="w-full pl-9 pr-3 py-2.5 text-sm border-2 outline-none focus:border-blue-700 rounded-xl bg-white"
+            style={{ borderColor: modeMeta.accentDark + '30' }}
+          />
         </div>
-        <div className="flex gap-1 flex-wrap">
+
+        {/* Chips de categoria (padrão LogMax) */}
+        <div className="flex gap-1.5 overflow-x-auto pb-1 shrink-0" style={{ scrollbarWidth: 'thin' }}>
           <button
             onClick={() => setChip(null)}
-            className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded transition"
+            className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2"
             style={chip === null
-              ? { background: modeMeta.accent, color: modeMeta.accentText }
-              : { background: 'white', color: '#6b7280', border: `1px solid ${modeMeta.accentDark}40` }}
+              ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
+              : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
           >
             Todos
           </button>
-          {chips.map(c => (
-            <button
-              key={c}
-              onClick={() => setChip(c === chip ? null : c)}
-              className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded transition"
-              style={c === chip
-                ? { background: modeMeta.accent, color: modeMeta.accentText }
-                : { background: 'white', color: '#6b7280', border: `1px solid ${modeMeta.accentDark}40` }}
-            >
-              {c}
-            </button>
-          ))}
+          {chips.map(c => {
+            const active = c === chip;
+            return (
+              <button
+                key={c}
+                onClick={() => setChip(active ? null : c)}
+                className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2"
+                style={active
+                  ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
+                  : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
+              >
+                {c}
+              </button>
+            );
+          })}
         </div>
-      </div>
 
-      {/* Grid */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
-        {filtered.length === 0 ? (
-          <div className="text-center py-12 text-sm text-gray-400">Nenhum produto encontrado.</div>
-        ) : (
-          <div className={isFashion ? 'grid grid-cols-2 gap-3' : 'flex flex-col gap-2'}>
-            {filtered.map(p => {
+        {/* Input CÓDIGO (bipar/teclar) — permanece para operadores rápidos */}
+        <div className="shrink-0 flex items-center gap-2 rounded-xl px-3 py-2 border-2 bg-white"
+          style={{ borderColor: modeMeta.accentDark + '20' }}>
+          <ScanBarcode size={16} className="text-gray-400" />
+          <input
+            ref={codeInputRef}
+            value={classicCode}
+            onChange={(e) => setClassicCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleClassicSubmit(); } }}
+            placeholder="EAN / código de barras (Enter)"
+            className="flex-1 bg-transparent outline-none text-sm font-bold tabular-nums"
+            style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
+            autoFocus
+            autoComplete="off"
+          />
+        </div>
+
+        {/* GRID de produtos — 2/3 cols fashion, 1/2 cols tech horizontal.
+            content-start + auto-rows-min: quando o filtro deixa poucos
+            resultados, os cards ficam no TOPO em vez de esticar/centralizar
+            no meio da área branca — comportamento esperado de PDV real. */}
+        <div className={`flex-1 overflow-y-auto custom-scrollbar min-h-0 grid gap-3 pr-1 pb-2 content-start auto-rows-min ${
+          isTech ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-2 xl:grid-cols-3'
+        }`}>
+          {filtered.length === 0 ? (
+            <div className={`${isTech ? 'xl:col-span-2' : 'col-span-3'} flex flex-col items-center justify-center py-16 gap-3 text-center`}>
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/60"
+                style={{ border: '1px dashed rgba(0,0,0,0.15)' }}>
+                <Package size={26} strokeWidth={1.5} className="text-gray-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-700">
+                  {search || chip ? 'Nenhum produto encontrado' : 'Sem produtos neste PDV'}
+                </p>
+                <p className="text-xs mt-1 max-w-[18rem] text-gray-500">
+                  {chip
+                    ? <>Nenhum item em <b>{chip}</b>. <button className="underline font-bold" onClick={() => setChip(null)}>ver todos</button>.</>
+                    : 'Ajuste a busca ou bipa outro código.'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            filtered.map(p => {
               const semEstoque = (p.controlStock ?? true) && (p.stock ?? 999) <= 0;
               const inCart = cart.find(i => i.id === p.id);
               const onClick = () => { if (!semEstoque) addToCart(p, 1); };
 
               if (isFashion) {
-                const ultimaPeca = !semEstoque && p.stock === 1;
+                // Card só-texto (padrão LogMax): marca dourada uppercase, categoria,
+                // nome do produto. Sem imagem/thumbnail — layout limpo tipo lista.
                 return (
                   <button
                     key={p.id}
                     onClick={onClick}
                     disabled={semEstoque}
-                    className="rounded-xl overflow-hidden flex flex-col text-left transition-all border-2 relative bg-white hover:shadow-lg disabled:opacity-40 hover:scale-[1.02]"
+                    className="rounded-xl px-3 py-2.5 flex flex-col gap-1 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40"
                     style={{
-                      borderColor: inCart ? modeMeta.accent : '#e5e7eb',
+                      borderColor: inCart ? modeMeta.accent : 'rgba(0,0,0,0.08)',
                       background: inCart ? `${modeMeta.accent}15` : 'white',
+                      boxShadow: inCart ? undefined : '0 1px 2px rgba(0,0,0,0.04)',
                     }}
                   >
                     {inCart && (
-                      <span className="absolute top-2 right-2 px-1.5 h-5 min-w-5 rounded-full flex items-center justify-center text-[10px] font-black z-10"
+                      <span className="absolute top-1.5 right-1.5 px-1.5 h-5 min-w-5 rounded-full flex items-center justify-center text-[10px] font-black"
                         style={{ background: modeMeta.accent, color: modeMeta.accentText }}>
                         {inCart.quantity}
                       </span>
                     )}
-                    {ultimaPeca && (
-                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider z-10"
-                        style={{ background: '#0A0A0A', color: modeMeta.accent, border: `1px solid ${modeMeta.accent}` }}>
-                        Última peça
+                    {p.marca && (
+                      <span className="text-[11px] font-black uppercase tracking-[0.18em] truncate"
+                        style={{ color: modeMeta.accentDark }}>
+                        {p.marca}
                       </span>
                     )}
-                    <div className="w-full aspect-square bg-gray-100 flex items-center justify-center overflow-hidden border-b border-gray-200">
-                      {p.image ? (
-                        <img src={p.image} alt={p.name} loading="lazy" className="w-full h-full object-cover" />
-                      ) : (
-                        <Package size={40} strokeWidth={1.25} className="text-gray-400" />
-                      )}
-                    </div>
-                    <div className="p-2.5 flex flex-col gap-1 flex-1">
-                      {p.marca && (
-                        <span className="text-[10px] font-black uppercase tracking-[0.25em] truncate"
-                          style={{ color: modeMeta.accentDark }}>
-                          {p.marca}
-                        </span>
-                      )}
-                      {p.category && (
-                        <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-gray-500 truncate">
-                          {p.category}
-                        </span>
-                      )}
-                      <span className="text-xs font-bold text-gray-900 leading-tight line-clamp-2">{p.name}</span>
-                      <div className="flex items-end justify-between mt-auto pt-1">
-                        <span className="text-sm font-black tabular-nums" style={{ color: modeMeta.accentDark }}>
-                          {Number(p.price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </span>
-                        {!semEstoque && (
-                          <span className="text-[9px] font-bold text-gray-500">
-                            {p.stock ?? '∞'} peças
-                          </span>
-                        )}
-                        {semEstoque && (
-                          <span className="text-[9px] font-bold text-red-500">Esgotado</span>
-                        )}
-                      </div>
-                    </div>
+                    {p.category && (
+                      <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-gray-500 truncate -mt-0.5">
+                        {p.category}
+                      </span>
+                    )}
+                    <span className="text-sm font-bold text-gray-900 leading-tight line-clamp-1 truncate">{p.name}</span>
                   </button>
                 );
               }
 
-              // TECH — layout horizontal denso
+              // TECH — horizontal denso, ficha técnica ao lado
               const ultimasUnidades = !semEstoque && typeof p.stock === 'number' && p.stock > 0 && p.stock <= 2;
               return (
                 <button
                   key={p.id}
                   onClick={onClick}
                   disabled={semEstoque}
-                  className="rounded-lg p-2.5 flex items-center gap-3 text-left transition-all border-2 relative bg-white hover:shadow disabled:opacity-40"
+                  className="rounded-xl p-3 flex items-center gap-3 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40"
                   style={{
-                    borderColor: inCart ? modeMeta.accent : '#e5e7eb',
+                    borderColor: inCart ? modeMeta.accent : 'rgba(0,0,0,0.08)',
                     background: inCart ? `${modeMeta.accent}15` : 'white',
+                    boxShadow: inCart ? undefined : '0 1px 2px rgba(0,0,0,0.04)',
                   }}
                 >
                   {inCart && (
-                    <span className="absolute top-1.5 right-1.5 px-1.5 h-5 min-w-5 rounded-full flex items-center justify-center text-[10px] font-black z-10"
+                    <span className="absolute top-1.5 right-1.5 px-1.5 h-6 min-w-6 rounded-full flex items-center justify-center text-xs font-black z-10"
                       style={{ background: modeMeta.accent, color: modeMeta.accentText }}>
                       {inCart.quantity}
                     </span>
                   )}
-                  <div className="w-14 h-14 bg-gray-100 rounded flex items-center justify-center overflow-hidden shrink-0">
+                  <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
                     {p.image ? (
                       <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
                     ) : (
-                      <Package size={24} strokeWidth={1.5} className="text-gray-400" />
+                      <Package size={32} strokeWidth={1.5} className="text-gray-400" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <div className="flex-1 min-w-0 flex flex-col gap-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {p.marca ? (
-                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
                           style={{ background: modeMeta.accent, color: modeMeta.accentText }}>
                           {p.marca}
                         </span>
@@ -367,12 +456,12 @@ function NichoProductGrid({
                       )}
                     </div>
                     <span className="text-sm font-bold text-gray-900 leading-tight line-clamp-2">{p.name}</span>
-                    <div className="flex items-center gap-2 text-[9px] font-bold text-gray-500 truncate">
+                    <div className="flex items-center gap-2 text-[10px] font-bold text-gray-500 truncate">
                       {p.category && <span className="uppercase tracking-wider truncate">{p.category}</span>}
                       {p.ref && p.marca && <span className="uppercase tracking-wider text-gray-400">· {p.ref}</span>}
                     </div>
                     <div className="flex items-end justify-between mt-0.5">
-                      <span className="text-base font-black tabular-nums" style={{ color: modeMeta.accentDark }}>
+                      <span className="text-lg font-black tabular-nums" style={{ color: modeMeta.accentDark }}>
                         {Number(p.price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                       </span>
                       <span className={`text-[10px] font-bold ${semEstoque ? 'text-red-500' : 'text-gray-500'}`}>
@@ -382,48 +471,220 @@ function NichoProductGrid({
                   </div>
                 </button>
               );
-            })}
-          </div>
-        )}
+            })
+          )}
+        </div>
       </div>
 
-      {/* Footer: subtotal condensado */}
-      <div className="px-5 py-3 border-t bg-white shrink-0 space-y-1 text-sm" style={{ borderColor: modeMeta.accentDark + '30' }}>
-        <div className="flex justify-between text-xs">
-          <span className="text-gray-500">QTD. ITENS</span>
-          <span className="tabular-nums font-bold text-gray-900">{totalItens}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-600">SUBTOTAL</span>
-          <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
-        </div>
-        {(subtotal - total) > 0.001 && (
-          <div className="flex justify-between text-xs">
-            <span className="text-gray-500">DESCONTO</span>
-            <span className="tabular-nums font-bold text-red-600">− R$ {fmt(subtotal - total)}</span>
+      {/* ============ RIGHT: carrinho + pagamento inline (padrão LogMax) ============ */}
+      <div className="w-[440px] shrink-0 flex flex-col border-l bg-white" style={{ borderColor: modeMeta.accentDark + '30' }}>
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0" style={{ borderColor: modeMeta.accentDark + '30' }}>
+          <div className="flex items-center gap-2">
+            <ShoppingCartHeaderIcon color={modeMeta.accentDark} />
+            <span className="text-sm font-black uppercase tracking-wider text-gray-800">
+              Carrinho
+            </span>
+            {cart.length > 0 && (
+              <span className="px-2 py-0.5 text-[10px] font-black rounded-full"
+                style={{ background: modeMeta.accent + '30', color: modeMeta.accentDark }}>
+                {cart.length} {cart.length === 1 ? 'item' : 'itens'}
+              </span>
+            )}
           </div>
-        )}
+          {cart.length > 0 && (
+            <button
+              onClick={onCancelSale}
+              className="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-wider"
+              title="Cancelar venda inteira (F9)"
+            >
+              Limpar
+            </button>
+          )}
+        </div>
+
+        {/* Lista de itens (compacta — dá espaço pro bloco de pagamento) */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+          {cart.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2 px-6 text-center">
+              <ShoppingCartHeaderIcon color="#d4d4d4" />
+              <p className="text-xs">Clique em um produto<br/>para adicionar ao carrinho</p>
+            </div>
+          ) : (
+            <div className="p-3 space-y-1.5">
+              {cart.map((item) => (
+                <div key={item.id} className="px-2.5 py-2 border rounded-lg bg-gray-50 hover:bg-gray-100 transition"
+                  style={{ borderColor: modeMeta.accentDark + '20' }}>
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      {item.marca && (
+                        <div className="text-[9px] font-black uppercase tracking-[0.18em] truncate"
+                          style={{ color: modeMeta.accentDark }}>
+                          {item.marca}
+                        </div>
+                      )}
+                      <div className="text-xs font-bold text-gray-900 leading-tight line-clamp-1">{item.name}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5 tabular-nums">
+                        R$ {fmt(item.price)} × {item.quantity}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeFromCart(item.id)}
+                      className="text-gray-400 hover:text-red-500 shrink-0"
+                      title="Remover"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <div className="flex items-center gap-0.5 border rounded overflow-hidden bg-white" style={{ borderColor: modeMeta.accentDark + '30' }}>
+                      <button onClick={() => changeQty(item.id, -1)} className="px-2 py-0.5 text-sm font-bold hover:bg-gray-100">−</button>
+                      <span className="px-2 tabular-nums text-xs font-black">{item.quantity}</span>
+                      <button onClick={() => changeQty(item.id, +1)} className="px-2 py-0.5 text-sm font-bold hover:bg-gray-100">+</button>
+                    </div>
+                    <span className="text-sm font-black tabular-nums" style={{ color: modeMeta.accentDark }}>
+                      R$ {fmt(item.price * item.quantity - (item.discount ?? 0))}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Bloco de pagamento — Subtotal + Desconto + Cupom + TOTAL + formas + IMEI + Fechar */}
+        <div className="border-t px-4 py-3 space-y-2.5 shrink-0 bg-gray-50" style={{ borderColor: modeMeta.accentDark + '30' }}>
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-gray-600">Subtotal</span>
+            <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
+          </div>
+
+          <div className="flex justify-between items-center gap-2">
+            <span className="text-sm text-gray-600 whitespace-nowrap">Desconto (R$)</span>
+            <input
+              value={descontoStr}
+              onChange={(e) => commitDesconto(maskCurrency(e.target.value))}
+              className="w-28 px-2 py-1 text-sm text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white"
+              style={{ borderColor: modeMeta.accentDark + '30', color: saleDiscount > 0 ? RED : '#171717' }}
+              placeholder="0,00"
+            />
+          </div>
+
+          <div className="flex justify-between items-center gap-2">
+            <span className="text-sm text-gray-600 flex items-center gap-1">
+              <Ticket size={14} /> Cupom
+            </span>
+            <input
+              value={cupomStr}
+              onChange={(e) => setCupomStr(e.target.value.toUpperCase())}
+              className="w-28 px-2 py-1 text-xs text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white uppercase"
+              style={{ borderColor: modeMeta.accentDark + '30' }}
+              placeholder="CÓDIGO"
+            />
+          </div>
+
+          <div className="flex justify-between items-end pt-2 border-t" style={{ borderColor: modeMeta.accentDark + '20' }}>
+            <span className="text-sm uppercase tracking-widest font-black text-gray-700">Total</span>
+            <span className="text-2xl font-black tabular-nums" style={{ color: modeMeta.accentDark }}>
+              R$ {fmt(total)}
+            </span>
+          </div>
+
+          {/* Grid 3x2 de formas de pagamento */}
+          <div className="pt-1">
+            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">
+              Forma de pagamento
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {NICHO_PAY_METHODS.map(({ method, label }) => {
+                const active = selectedPay === method;
+                return (
+                  <button
+                    key={method}
+                    onClick={() => setSelectedPay(method)}
+                    className="py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition border-2 leading-tight"
+                    style={active
+                      ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent }
+                      : { background: 'white', color: modeMeta.accentDark, borderColor: modeMeta.accentDark + '40' }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Campos por nicho */}
+          {isTech && (
+            <div className="pt-1 space-y-1.5">
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 border rounded-lg bg-white"
+                style={{ borderColor: modeMeta.accentDark + '30' }}>
+                <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded"
+                  style={{ background: modeMeta.accent + '30', color: modeMeta.accentDark }}>
+                  IMEI/SERIAL
+                </span>
+                <input
+                  value={saleImeiSerial}
+                  onChange={(e) => setSaleImeiSerial(e.target.value)}
+                  className="flex-1 min-w-0 text-xs outline-none bg-transparent font-mono"
+                  placeholder="Opcional — garantia"
+                />
+              </div>
+              {saleTipoAtendimento === 'OS' && (
+                <textarea
+                  value={saleDefeitoRelatado}
+                  onChange={(e) => setSaleDefeitoRelatado(e.target.value)}
+                  rows={2}
+                  className="w-full px-2.5 py-1.5 text-xs border rounded-lg bg-white outline-none focus:border-blue-700"
+                  style={{ borderColor: modeMeta.accentDark + '30' }}
+                  placeholder="Defeito relatado (obrigatório p/ OS)"
+                />
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => onQuickFinalize(selectedPay)}
+            disabled={cart.length === 0}
+            className="w-full py-3 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{
+              background: cart.length === 0 ? '#d4d4d4' : NAVY_DARK,
+              color: cart.length === 0 ? '#737373' : '#FFFFFF',
+              border: cart.length > 0 ? `2px solid ${modeMeta.accent}` : '2px solid transparent',
+              boxShadow: cart.length > 0 ? `0 4px 14px ${modeMeta.accent}45` : 'none',
+            }}
+          >
+            <CheckCircleIcon /> {isTech && saleTipoAtendimento === 'OS' ? 'ABRIR OS' : 'FECHAR VENDA'} · R$ {fmt(total)}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining, onSwapOperator }: PDVModuleProps) {
+// Ícone de check compacto usado no botão FECHAR VENDA.
+function CheckCircleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
+// Ícone alias inline (Header do carrinho — SVG mínimo).
+function ShoppingCartHeaderIcon({ color }: { color: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+    </svg>
+  );
+}
+
+export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isTraining = false, onExitTraining, onSwapOperator, pdvMode = 'supermax' }: PDVModuleProps) {
   const [products, setProducts] = useState<Product[]>([]);
-  // Modo de operação do PDV: SuperMax é o real (produtos do DB, vendas
-  // persistem); MaxLook e TechMax são simulações em memória (produtos
-  // demo, tudo local). Persistido em localStorage pra sobreviver a reload.
-  const [pdvMode, setPdvMode] = useState<PdvMode>(() => {
-    try {
-      const saved = localStorage.getItem('maxpos.pdvMode');
-      if (saved === 'supermax' || saved === 'maxlook' || saved === 'techmax') return saved;
-    } catch { /* localStorage indisponível → default */ }
-    return 'supermax';
-  });
-  const [pdvModePickerOpen, setPdvModePickerOpen] = useState(false);
-  useEffect(() => {
-    try { localStorage.setItem('maxpos.pdvMode', pdvMode); } catch { /* silêncio */ }
-  }, [pdvMode]);
+  // pdvMode agora vem do parent (App.tsx) via sidebar — cada modo é uma
+  // aba separada. Um remount (key={activeTab}) garante state limpo ao
+  // trocar de PDV.
   const modeMeta = PDV_MODE_META[pdvMode];
   // Modos MaxLook/TechMax NUNCA tocam no DB — são simulação demonstrativa
   // do ecossistema Max pra vitrine. Só SuperMax segue o fluxo real.
@@ -2346,6 +2607,40 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
   };
 
+  // Finalização rápida (só simulação MaxLook/TechMax): monta um Payment
+  // único da forma selecionada no painel direito, chama finalizeSale e
+  // pula a tela intermediária de pagamento. Não usado no SuperMax.
+  const finalizeSaleQuick = async (method: Payment['method']) => {
+    if (!isSimulationMode) return;
+    if (cart.length === 0) return;
+    if (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' && !saleDefeitoRelatado.trim()) {
+      showAlert({
+        title: 'Defeito não informado',
+        message: 'Descreva o defeito relatado antes de abrir a OS.',
+        variant: 'warning',
+      });
+      return;
+    }
+    // Fiado precisa cliente vinculado; nos nichos ainda não temos picker de
+    // cliente no painel — bloqueia com aviso claro em vez de crashar.
+    if (method === 'fiado' && !linkedClient) {
+      showAlert({
+        title: 'Cliente obrigatório p/ fiado',
+        message: 'Fiado exige cliente vinculado. Escolha outra forma de pagamento por enquanto.',
+        variant: 'warning',
+      });
+      return;
+    }
+    setPayments([{
+      method,
+      amount: total,
+      clientId: method === 'fiado' ? linkedClient?.id : undefined,
+      clientName: method === 'fiado' ? linkedClient?.name : undefined,
+    }]);
+    // Delay 0 pra garantir que payments state está commitado antes do finalize.
+    setTimeout(() => { finalizeSale(); }, 0);
+  };
+
   // Abre o card de confirmação para cancelar um item específico do carrinho.
   const requestCancelItem = (id: string) => {
     const it = cart.find(c => c.id === id);
@@ -2413,7 +2708,109 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           className="flex-1 flex flex-col min-h-0 bg-white text-gray-900"
           style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
         >
-          {/* Header — cor conforme modo PDV (SuperMax amarelo, MaxLook dourado, TechMax laranja) */}
+          {/* ============ Header PRETO minimal — só nichos MaxLook/TechMax ============ */}
+          {isSimulationMode && (
+            <div
+              className="px-4 py-3 flex items-center justify-between shrink-0 gap-3"
+              style={{ background: '#0A0A0A', borderBottom: `2px solid ${modeMeta.accentDark}` }}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                {onExitToMenu && (
+                  <button
+                    onClick={tryExitToMenu}
+                    className="shrink-0 px-3 py-2 rounded-lg flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border transition hover:brightness-110"
+                    style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
+                    title="Abrir menu / Sair do PDV (Ctrl+M)"
+                  >
+                    <Menu size={14} /> Menu
+                  </button>
+                )}
+                <div className="w-11 h-11 rounded-lg flex items-center justify-center overflow-hidden shrink-0"
+                  style={{ background: 'white' }}>
+                  <img src={modeMeta.logo} alt={modeMeta.label} className="w-9 h-9 object-contain" />
+                </div>
+                <div className="flex flex-col leading-tight shrink-0">
+                  <span className="text-xl font-black tracking-tight" style={{ color: modeMeta.accent }}>
+                    {modeMeta.label}
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                    {modeMeta.subtitle}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {pdvMode === 'maxlook' && (
+                  <>
+                    <div className="flex items-center gap-1.5 px-3 py-2 border rounded-lg bg-black"
+                      style={{ borderColor: modeMeta.accentDark + '80' }}>
+                      <UserIcon size={14} className="text-gray-400" />
+                      <select
+                        value={saleVendedor}
+                        onChange={(e) => setSaleVendedor(e.target.value)}
+                        className="text-xs font-bold outline-none bg-transparent min-w-[130px] cursor-pointer appearance-none pr-4"
+                        style={{ color: saleVendedor ? modeMeta.accent : '#a3a3a3' }}
+                      >
+                        <option value="" style={{ background: '#0A0A0A' }}>Sem vendedor</option>
+                        {DEMO_VENDEDORES_MAXLOOK.map(v => (
+                          <option key={v.id} value={v.nome} style={{ background: '#0A0A0A' }}>{v.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={openReprintModal}
+                      className="px-3 py-2 text-xs font-black uppercase tracking-wider border rounded-lg hover:brightness-110 transition flex items-center gap-1.5"
+                      style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
+                      title="Troca / Devolução"
+                    >
+                      ↺ Troca/Devolução
+                    </button>
+                  </>
+                )}
+                {pdvMode === 'techmax' && (
+                  <div className="inline-flex border rounded-lg overflow-hidden"
+                    style={{ borderColor: modeMeta.accentDark + '80' }}>
+                    {(['Venda', 'OS'] as const).map(t => {
+                      const active = saleTipoAtendimento === t;
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => setSaleTipoAtendimento(t)}
+                          className="px-4 py-2 text-xs font-black uppercase tracking-wider transition"
+                          style={active
+                            ? { background: modeMeta.accent, color: modeMeta.accentText }
+                            : { background: 'black', color: '#a3a3a3' }}
+                        >
+                          {t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {cashSession && cart.length === 0 && payments.length === 0 && (
+                  <button
+                    onClick={startCloseCash}
+                    className="px-3 py-2 text-xs font-black uppercase tracking-wider border rounded-lg hover:brightness-110 transition flex items-center gap-1.5"
+                    style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
+                    title="Fechar caixa · encerrar turno (Ctrl+L)"
+                  >
+                    <Lock size={13} /> Fechar meu caixa
+                  </button>
+                )}
+                <button
+                  onClick={() => setHelpOpen(true)}
+                  className="w-9 h-9 rounded-full flex items-center justify-center border transition hover:brightness-110"
+                  style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
+                  title="Ajuda"
+                  aria-label="Abrir ajuda"
+                >
+                  <HelpCircle size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ============ Header laranja SuperMax (fluxo supermercado tradicional) ============ */}
+          {!isSimulationMode && (
           <div
             className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
             style={{ background: modeMeta.accent, borderColor: modeMeta.accentDark }}
@@ -2435,16 +2832,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               >
                 MAXPOS
               </span>
-              {/* PDV Mode badge — clicável abre picker das 3 marcas */}
-              <button
-                onClick={() => setPdvModePickerOpen(true)}
-                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold border-2 flex items-center gap-2 hover:brightness-110 transition-all"
+              {/* PDV Mode badge — identifica qual PDV o operador está.
+                  Sem picker; troca é feita pela sidebar (aba). */}
+              <span
+                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold border-2 flex items-center gap-2"
                 style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
-                title="Trocar modo PDV (SuperMax / MaxLook / TechMax)"
+                title={`Você está operando o PDV ${modeMeta.label}`}
               >
                 <img src={modeMeta.logo} alt={modeMeta.label} className="w-6 h-6 object-contain rounded" />
-                PDV: {modeMeta.label.toUpperCase()}
-              </button>
+                {modeMeta.label.toUpperCase()}
+              </span>
               <span
                 className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
@@ -2533,9 +2930,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               <HelpCircle size={22} />
             </button>
           </div>
+          )}
 
-          {/* ============ TELA DE LEITURA ============ */}
-          {!checkoutMode && (
+          {/* ============ TELA DE LEITURA — SuperMax (fluxo supermercado) ============ */}
+          {!checkoutMode && pdvMode === 'supermax' && (
             <>
               <div className="flex-1 flex overflow-hidden min-h-0">
                 {/* Items table */}
@@ -2622,65 +3020,49 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </div>
                 </div>
 
-                {/* Right sidebar: MaxLook/TechMax mostram GRID de produtos
-                    (padrão logmax), SuperMax mostra último item lido. */}
-                {isSimulationMode ? (
-                  <NichoProductGrid
-                    products={products}
-                    cart={cart}
-                    addToCart={addToCart}
-                    pdvMode={pdvMode}
-                    modeMeta={modeMeta}
-                    subtotal={subtotal}
-                    total={total}
-                    totalItens={totalItens}
-                    fmt={fmt}
-                    onOpenTrocaDevolucao={() => openReprintModal()}
-                  />
-                ) : (
-                  <div className="w-[420px] shrink-0 flex flex-col bg-gray-50">
-                    <div className="px-5 py-5 border-b border-gray-300">
-                      <div className="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">
-                        ÚLTIMO ITEM LIDO
-                      </div>
-                      {lastAdded ? (
-                        <>
-                          <div className="text-2xl font-bold leading-tight mb-2 text-gray-900 break-words">
-                            {(lastAdded.name || '').toUpperCase()}
-                          </div>
-                          <div className="text-xs text-gray-500 mb-4">
-                            REF: {lastAdded.ref || '—'} · EAN: {lastAdded.ean13 || '—'}
-                          </div>
-                          <div className="text-base text-gray-600 tabular-nums">
-                            {fmtQty(lastAdded.quantity, lastAdded.unit)} {(lastAdded.unit || '').toLowerCase() || ''} × R$ {fmt(lastAdded.price)}
-                          </div>
-                          <div className="text-6xl font-bold tabular-nums mt-1" style={{ color: MONEY }}>
-                            R$ {fmt(lastAdded.price * lastAdded.quantity)}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="h-32" />
-                      )}
+                {/* Right sidebar: último item + subtotal (SuperMax) */}
+                <div className="w-[420px] shrink-0 flex flex-col bg-gray-50">
+                  <div className="px-5 py-5 border-b border-gray-300">
+                    <div className="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">
+                      ÚLTIMO ITEM LIDO
                     </div>
-
-                    <div className="px-5 py-5 flex-1 space-y-3 text-lg">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">QTD. ITENS</span>
-                        <span className="tabular-nums font-bold text-gray-900">{totalItens}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">SUBTOTAL</span>
-                        <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
-                      </div>
-                      {(subtotal - total) > 0.001 && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">DESCONTO</span>
-                          <span className="tabular-nums font-bold" style={{ color: RED }}>− R$ {fmt(subtotal - total)}</span>
+                    {lastAdded ? (
+                      <>
+                        <div className="text-2xl font-bold leading-tight mb-2 text-gray-900 break-words">
+                          {(lastAdded.name || '').toUpperCase()}
                         </div>
-                      )}
-                    </div>
+                        <div className="text-xs text-gray-500 mb-4">
+                          REF: {lastAdded.ref || '—'} · EAN: {lastAdded.ean13 || '—'}
+                        </div>
+                        <div className="text-base text-gray-600 tabular-nums">
+                          {fmtQty(lastAdded.quantity, lastAdded.unit)} {(lastAdded.unit || '').toLowerCase() || ''} × R$ {fmt(lastAdded.price)}
+                        </div>
+                        <div className="text-6xl font-bold tabular-nums mt-1" style={{ color: MONEY }}>
+                          R$ {fmt(lastAdded.price * lastAdded.quantity)}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="h-32" />
+                    )}
                   </div>
-                )}
+
+                  <div className="px-5 py-5 flex-1 space-y-3 text-lg">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">QTD. ITENS</span>
+                      <span className="tabular-nums font-bold text-gray-900">{totalItens}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">SUBTOTAL</span>
+                      <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
+                    </div>
+                    {(subtotal - total) > 0.001 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">DESCONTO</span>
+                        <span className="tabular-nums font-bold" style={{ color: RED }}>− R$ {fmt(subtotal - total)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* TOTAL bar */}
@@ -2870,6 +3252,42 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 </div>
               </div>
             </>
+          )}
+
+          {/* ============ TELA DE LEITURA — MaxLook/TechMax (padrão LogMax) ============ */}
+          {!checkoutMode && isSimulationMode && (
+            <NichoLeituraView
+              products={products}
+              cart={cart}
+              addToCart={addToCart}
+              removeFromCart={removeFromCart}
+              setCart={setCart}
+              pdvMode={pdvMode}
+              modeMeta={modeMeta}
+              subtotal={subtotal}
+              total={total}
+              saleDiscount={saleDiscount}
+              setSaleDiscount={setSaleDiscount}
+              cashSession={cashSession}
+              codeInputRef={codeInputRef}
+              classicCode={classicCode}
+              setClassicCode={setClassicCode}
+              handleClassicSubmit={handleClassicSubmit}
+              saleVendedor={saleVendedor}
+              setSaleVendedor={setSaleVendedor}
+              saleTipoAtendimento={saleTipoAtendimento}
+              setSaleTipoAtendimento={setSaleTipoAtendimento}
+              saleImeiSerial={saleImeiSerial}
+              setSaleImeiSerial={setSaleImeiSerial}
+              saleDefeitoRelatado={saleDefeitoRelatado}
+              setSaleDefeitoRelatado={setSaleDefeitoRelatado}
+              onQuickFinalize={finalizeSaleQuick}
+              onCancelSale={cancelSale}
+              onOpenTrocaDevolucao={openReprintModal}
+              fmt={fmt}
+              RED={RED}
+              NAVY_DARK={NAVY_DARK}
+            />
           )}
 
           {/* ============ TELA DE PAGAMENTO ============ */}
@@ -5496,66 +5914,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             </div>
           );
         })()}
-
-        {/* ─── PDV Mode Picker (SuperMax / MaxLook / TechMax) ─── */}
-        {pdvModePickerOpen && (
-          <div
-            className="fixed inset-0 z-[340] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-            onClick={(e) => { if (e.target === e.currentTarget) setPdvModePickerOpen(false); }}
-          >
-            <div className="w-full max-w-3xl bg-white border-4 shadow-2xl rounded-lg overflow-hidden" style={{ borderColor: modeMeta.accentDark }}>
-              <div className="px-5 py-4 text-black flex items-center gap-3" style={{ background: modeMeta.accent, borderBottom: `2px solid ${modeMeta.accentDark}` }}>
-                <img src={modeMeta.logo} alt="" className="w-10 h-10 object-contain rounded bg-white/40 p-1" />
-                <div className="flex-1">
-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] opacity-70">Modo de operação do PDV</div>
-                  <div className="text-xl font-black leading-tight">Escolha a marca do ecossistema Max</div>
-                </div>
-                <button onClick={() => setPdvModePickerOpen(false)} className="text-black hover:opacity-70" tabIndex={-1}><X size={18} /></button>
-              </div>
-              <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
-                {(['supermax', 'maxlook', 'techmax'] as PdvMode[]).map((m) => {
-                  const meta = PDV_MODE_META[m];
-                  const active = m === pdvMode;
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => {
-                        if (m === pdvMode) { setPdvModePickerOpen(false); return; }
-                        // Trocar de modo cancela venda em andamento (avisando).
-                        if (cart.length > 0 || payments.length > 0) {
-                          if (!window.confirm(`Trocar para ${meta.label} vai descartar a venda em andamento. Continuar?`)) return;
-                          setCart([]); setPayments([]); setCheckoutMode(false);
-                          setSaleDiscount(0); setLinkedClient(null); setCpfNota('');
-                        }
-                        setPdvMode(m);
-                        setCashSession(null); // força reabertura de caixa no novo modo
-                        setPdvModePickerOpen(false);
-                      }}
-                      className={`p-5 border-4 rounded-xl flex flex-col items-center gap-3 text-center transition-all ${
-                        active ? 'ring-4 ring-offset-2 shadow-xl' : 'hover:shadow-lg hover:scale-[1.02]'
-                      }`}
-                      style={{
-                        borderColor: meta.accentDark,
-                        background: active ? meta.accent : '#f9fafb',
-                        color: active ? meta.accentText : '#111827',
-                      }}
-                    >
-                      <img src={meta.logo} alt="" className="w-20 h-20 object-contain rounded-lg bg-white/60 p-2" />
-                      <div>
-                        <div className="text-lg font-black uppercase tracking-wider">{meta.label}</div>
-                        <div className="text-[11px] font-bold uppercase tracking-widest opacity-70 mt-1">{meta.subtitle}</div>
-                      </div>
-                      <p className="text-xs leading-relaxed">{meta.desc}</p>
-                      {m === 'supermax'
-                        ? <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">🟢 Produção · grava no DB</span>
-                        : <span className="text-[10px] font-black uppercase tracking-widest opacity-70">✨ Simulação demonstrativa</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ─── PIN de supervisor (autorização de ações sensíveis) ─── */}
         {supervisorAuthModal && (

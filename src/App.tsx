@@ -29,7 +29,15 @@ import { supabase } from './lib/supabase';
 import { Storage } from './lib/storage';
 import { User } from './types';
 
-type Tab = 'inicio' | 'pdv' | 'cadastros' | 'estoque' | 'financeiro' | 'folha' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
+type Tab = 'inicio' | 'pdv-supermax' | 'pdv-maxlook' | 'pdv-techmax' | 'cadastros' | 'estoque' | 'financeiro' | 'folha' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
+
+// Mapa tab → modo PDV. Cada PDV é uma entrada de sidebar independente,
+// com caixa próprio (via cashSession scoped por modo dentro do PDVModule).
+const TAB_TO_PDV_MODE: Partial<Record<Tab, 'supermax' | 'maxlook' | 'techmax'>> = {
+  'pdv-supermax': 'supermax',
+  'pdv-maxlook': 'maxlook',
+  'pdv-techmax': 'techmax',
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
@@ -38,9 +46,9 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   // Modo Treinamento: PDV em memória, nenhum dado real tocado.
   const [pdvTraining, setPdvTraining] = useState(false);
+  const isPdvTab = activeTab === 'pdv-supermax' || activeTab === 'pdv-maxlook' || activeTab === 'pdv-techmax';
   // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
-  // Sem isso, ele voltaria pro treinamento sem querer ao clicar Vendas de novo.
-  useEffect(() => { if (activeTab !== 'pdv' && pdvTraining) setPdvTraining(false); }, [activeTab, pdvTraining]);
+  useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
 
   useEffect(() => {
     // Fallback: se a sessão demorar mais de 8s, libera o loading e mostra login
@@ -59,7 +67,14 @@ export default function App() {
       if (event === 'SIGNED_OUT') {
         setUser(null);
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        Storage.getSession().then(u => setUser(u)).catch(() => setUser(null));
+        // IMPORTANTE: qualquer chamada supabase.* dentro deste callback
+        // roda numa seção crítica do auth client e deadlocka (issue
+        // supabase-js #1120). Defer pra próxima tick evita o lock e
+        // libera signInWithPassword a resolver — sem isso o spinner
+        // do botão ENTRAR fica infinito após credencial correta.
+        setTimeout(() => {
+          Storage.getSession().then(u => setUser(u)).catch(() => setUser(null));
+        }, 0);
       }
     });
 
@@ -74,9 +89,12 @@ export default function App() {
     setUser(null);
   };
 
+  const pdvRoles = ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'];
   const menuItems = [
     { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
-    { id: 'pdv', icon: ShoppingCart, label: 'PDV / Caixa', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
+    { id: 'pdv-supermax', icon: ShoppingCart, label: 'PDV SuperMax', roles: pdvRoles, iconSrc: '/icon-supermax.png' },
+    { id: 'pdv-maxlook',  icon: ShoppingCart, label: 'PDV MaxLook',  roles: pdvRoles, iconSrc: '/icon-maxlook.png'  },
+    { id: 'pdv-techmax',  icon: ShoppingCart, label: 'PDV TechMax',  roles: pdvRoles, iconSrc: '/icon-techmax.png'  },
     { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'] },
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
     { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
@@ -102,7 +120,7 @@ export default function App() {
 
   if (!user) return <Login onLogin={setUser} />;
 
-  const activeIsPDV = activeTab === 'pdv';
+  const activeIsPDV = isPdvTab;
 
   return (
     <div className="flex h-screen bg-white overflow-hidden" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
@@ -147,6 +165,7 @@ export default function App() {
           {allowedItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const iconSrc = (item as any).iconSrc as string | undefined;
             return (
               <div
                 key={item.id}
@@ -156,7 +175,11 @@ export default function App() {
                 }}
                 className={`nav-item ${isActive ? 'active' : ''}`}
               >
-                <Icon size={18} />
+                {iconSrc ? (
+                  <img src={iconSrc} alt="" className="w-5 h-5 object-contain rounded shrink-0" />
+                ) : (
+                  <Icon size={18} />
+                )}
                 <span className="text-sm">{item.label}</span>
               </div>
             );
@@ -224,11 +247,16 @@ export default function App() {
               {activeTab === 'inicio' && (
                 <InicioModule
                   currentUser={user}
-                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv'); setIsSidebarOpen(false); }}
+                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv-supermax'); setIsSidebarOpen(false); }}
                 />
               )}
-              {activeTab === 'pdv' && (
+              {/* key força remount ao trocar de modo — evita vazamento
+                  de state entre PDVs (cart, sessão de caixa, etc.).
+                  Wrap num fragment com key faz o TypeScript não reclamar. */}
+              {isPdvTab && (
+                <div key={activeTab} className="contents">
                 <PDVModule
+                  pdvMode={TAB_TO_PDV_MODE[activeTab as Tab]!}
                   currentUser={user}
                   onExitToMenu={() => setIsSidebarOpen(true)}
                   onGoToInicio={() => {
@@ -244,6 +272,7 @@ export default function App() {
                   }}
                   onSwapOperator={(newUser) => setUser(newUser)}
                 />
+                </div>
               )}
               {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}
               {activeTab === 'estoque' && <EstoqueModule />}
