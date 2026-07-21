@@ -28,6 +28,15 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
   const [subTab, setSubTab] = useState<'clientes' | 'produtos' | 'servicos' | 'fornecedores' | 'equipe'>('clientes');
   const [search, setSearch] = useState('');
+  // Filtro de nicho (só relevante em produtos/serviços). 'todos' mostra tudo,
+  // ou filtra por PDV: SuperMax (supermercado), MaxLook (boutique), TechMax
+  // (eletrônicos/assistência). Coluna pdv_mode adicionada em 2026-07-20.
+  const [nichoFilter, setNichoFilter] = useState<'todos' | 'supermax' | 'maxlook' | 'techmax'>('todos');
+  const NICHO_META = {
+    supermax: { label: 'SuperMax', color: '#FFC107', dark: '#B8860B' },
+    maxlook:  { label: 'MaxLook',  color: '#D4AF37', dark: '#8B6914' },
+    techmax:  { label: 'TechMax',  color: '#F97316', dark: '#9A3412' },
+  } as const;
   const [, _setSessionUser] = useState<User | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddClient, setShowAddClient] = useState(false);
@@ -347,12 +356,14 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     (c.document || '').includes(search)
   );
 
-  const filteredProducts = products.filter(p =>
-    (p.name?.toLowerCase() || '').includes(search.toLowerCase()) ||
-    (p.ean13 || '').includes(search) ||
-    (p.id || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.category?.toLowerCase() || '').includes(search.toLowerCase())
-  );
+  const filteredProducts = products.filter(p => {
+    if (nichoFilter !== 'todos' && (p.pdvMode ?? 'supermax') !== nichoFilter) return false;
+    const q = search.toLowerCase();
+    return (p.name?.toLowerCase() || '').includes(q) ||
+      (p.ean13 || '').includes(search) ||
+      (p.id || '').toLowerCase().includes(q) ||
+      (p.category?.toLowerCase() || '').includes(q);
+  });
 
   const exportProductsPDF = () => {
     if (filteredProducts.length === 0) {
@@ -544,10 +555,12 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     (s.document || '').includes(search)
   );
 
-  const filteredServices = services.filter(s => 
-    (s.name?.toLowerCase() || '').includes(search.toLowerCase()) || 
-    (s.category?.toLowerCase() || '').includes(search.toLowerCase())
-  );
+  const filteredServices = services.filter(s => {
+    if (nichoFilter !== 'todos' && (s.pdvMode ?? 'supermax') !== nichoFilter) return false;
+    const q = search.toLowerCase();
+    return (s.name?.toLowerCase() || '').includes(q) ||
+      (s.category?.toLowerCase() || '').includes(q);
+  });
 
   const handleDelete = (id: string, type: string, name: string) => {
     setDeleteConfirm({ isOpen: true, id, type, name });
@@ -798,7 +811,18 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
+                          {(() => {
+                            const m = NICHO_META[(p.pdvMode ?? 'supermax') as keyof typeof NICHO_META];
+                            return (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0"
+                                style={{ background: m.color + '30', color: m.dark, border: `1px solid ${m.color}` }}>
+                                {m.label}
+                              </span>
+                            );
+                          })()}
+                        </div>
                         <div className="text-xs text-gray-500 font-mono mt-0.5">ID: {p.id}</div>
                       </div>
                     </div>
@@ -882,7 +906,18 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               {filteredServices.map((s) => (
                 <tr key={s.id} className="hover:bg-gray-50 transition-colors group">
                   <td className="p-6">
-                    <div className="font-bold text-gray-900">{s.name}</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="font-bold text-gray-900">{s.name}</div>
+                      {(() => {
+                        const m = NICHO_META[(s.pdvMode ?? 'supermax') as keyof typeof NICHO_META];
+                        return (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0"
+                            style={{ background: m.color + '30', color: m.dark, border: `1px solid ${m.color}` }}>
+                            {m.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     <div className="text-sm text-gray-600 uppercase font-black tracking-tighter opacity-60">ID: {s.id}</div>
                   </td>
                   <td className="p-6 text-sm text-gray-600">
@@ -1098,6 +1133,32 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         </div>
         
         <div className="flex gap-3 w-full xl:w-auto flex-wrap">
+          {/* Filtro por nicho — só aparece em produtos/serviços */}
+          {(subTab === 'produtos' || subTab === 'servicos') && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setNichoFilter('todos')}
+                className="px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider border-2 transition-all"
+                style={nichoFilter === 'todos'
+                  ? { background: '#0A0A0A', color: '#fff', borderColor: '#0A0A0A' }
+                  : { background: 'white', color: '#525252', borderColor: 'rgba(0,0,0,0.15)' }}
+              >Todos</button>
+              {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
+                const meta = NICHO_META[n];
+                const active = nichoFilter === n;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => setNichoFilter(n)}
+                    className="px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider border-2 transition-all"
+                    style={active
+                      ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark, boxShadow: `0 2px 8px ${meta.color}59` }
+                      : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
+                  >{meta.label}</button>
+                );
+              })}
+            </div>
+          )}
           <div className="flex-1 md:w-64 neumorphic-inset flex items-center px-4 py-2 gap-3">
             <Search size={18} className="text-gray-600" />
             <input
@@ -1140,8 +1201,16 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   setFormData({ type: 'PF' });
                   setShowAddClient(true);
                 }
-                if (subTab === 'produtos') setShowAddProduct(true);
-                if (subTab === 'servicos') setShowAddService(true);
+                if (subTab === 'produtos') {
+                  // Pré-preenche o nicho com o filtro atual (fica coerente com
+                  // o que o operador está vendo). 'todos' cai em supermax.
+                  setFormData({ pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter });
+                  setShowAddProduct(true);
+                }
+                if (subTab === 'servicos') {
+                  setFormData({ pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter });
+                  setShowAddService(true);
+                }
                 if (subTab === 'fornecedores') {
                   setFormData({ type: 'PF' });
                   setShowAddSupplier(true);
@@ -1507,6 +1576,27 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               </div>
             </div>
 
+            {/* PDV (nicho) — determina em qual PDV o produto aparece */}
+            <div className="space-y-2 lg:col-span-3">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
+              <div className="flex gap-2 flex-wrap">
+                {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
+                  const meta = NICHO_META[n];
+                  const active = (formData.pdvMode ?? 'supermax') === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pdvMode: n })}
+                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 transition-all flex items-center gap-2"
+                      style={active
+                        ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark }
+                        : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
+                    >{meta.label}</button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="space-y-2 lg:col-span-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Produto</label>
               <input
@@ -1689,17 +1779,38 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* PDV (nicho) do serviço */}
+            <div className="space-y-2 lg:col-span-3">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
+              <div className="flex gap-2 flex-wrap">
+                {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
+                  const meta = NICHO_META[n];
+                  const active = (formData.pdvMode ?? 'supermax') === n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pdvMode: n })}
+                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 transition-all"
+                      style={active
+                        ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark }
+                        : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
+                    >{meta.label}</button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="space-y-2 lg:col-span-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Serviço</label>
-              <input 
+              <input
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
-              <select 
+              <select
                 value={formData.category || 'Geral'}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"

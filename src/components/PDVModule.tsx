@@ -92,8 +92,10 @@ const PDV_MODE_META: Record<PdvMode, {
   },
 };
 
-// Produtos demo por modo — usados quando o modo não é SuperMax
-// (aí o PDV opera 100% em memória, sem tocar no DB real).
+// Produtos demo por modo — histórico. Desde 2026-07-20 (Fase 4) o PDV
+// carrega produtos reais do banco filtrados por pdv_mode, mesmo em
+// MaxLook/TechMax. Estas constantes ficam disponíveis pra usar como seed
+// SQL (INSERT INTO products ... pdv_mode='maxlook') em demos e onboarding.
 const DEMO_PRODUCTS_MAXLOOK: Product[] = [
   { id: 'ml1', name: 'Camiseta Básica Preta M', price: 49.90, costPrice: 18, category: 'Roupas',    ref: 'CAMB-M',  stock: 25, minStock: 3, unit: 'UN', ean13: '7891100000012', controlStock: true, marca: 'Hering' },
   { id: 'ml2', name: 'Calça Jeans Slim 42',      price: 149.90, costPrice: 55, category: 'Roupas',    ref: 'JEAN-42', stock: 10, minStock: 2, unit: 'UN', ean13: '7891100000029', controlStock: true, marca: 'Colcci' },
@@ -1356,30 +1358,39 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   useEffect(() => {
     let active = true;
-    // MaxLook/TechMax rodam sempre em memória — mesmo fora do treino.
-    // Produtos e clientes são demo, vendas não vão pro DB.
-    if (isTraining || isSimulationMode) {
-      const demo = pdvMode === 'maxlook' ? DEMO_PRODUCTS_MAXLOOK
-                : pdvMode === 'techmax' ? DEMO_PRODUCTS_TECHMAX
-                : TRAINING_PRODUCTS;
-      setProducts(demo);
+    // Treinamento continua efêmero: carrega TRAINING_PRODUCTS hardcoded (não
+    // toca DB). Simulação (MaxLook/TechMax) e produção (SuperMax) agora TODOS
+    // vêm do banco filtrados por pdv_mode — cadastro por nicho persiste real.
+    if (isTraining) {
+      setProducts(TRAINING_PRODUCTS);
       setClients(TRAINING_CLIENTS);
       setLoading(false);
       return () => { active = false; };
     }
     const load = () =>
       Storage.getProducts()
-        .then(p => { if (active) setProducts(p); })
+        .then(all => {
+          if (!active) return;
+          // Filtra por pdv_mode. Legado sem coluna cai em 'supermax' via storage.
+          setProducts(all.filter(p => (p.pdvMode ?? 'supermax') === pdvMode));
+        })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
 
     load();
-    Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {});
+    // Nichos usam clientes demo (limites baixos pra treinar recusa); SuperMax
+    // usa o cadastro real. Isso é intencional — clientes reais no MaxLook
+    // teria que ter um catálogo próprio de fashion e não é o foco agora.
+    if (isSimulationMode) {
+      setClients(TRAINING_CLIENTS);
+    } else {
+      Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {});
+    }
 
-    const ch = supabase.channel('pdv-products')
+    const ch = supabase.channel(`pdv-products-${pdvMode}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' },
-        () => Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {}))
+        () => { if (!isSimulationMode) Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {}); })
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };

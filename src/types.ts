@@ -26,6 +26,11 @@ export interface User {
   parentId?: string; // To track who registered whom
 }
 
+// Nicho do PDV a que um produto ou serviço pertence.
+// SuperMax = supermercado; MaxLook = boutique moda; TechMax = eletrônicos/assistência.
+// Coluna `pdv_mode` no banco. PDVModule filtra por este campo ao carregar.
+export type PdvMode = 'supermax' | 'maxlook' | 'techmax';
+
 export interface Product {
   id: string;
   name: string;
@@ -42,6 +47,8 @@ export interface Product {
   // Marca do produto — importante em MaxLook (grife) e TechMax (fabricante).
   // Opcional; renderiza como badge de destaque nos cards fashion/tech.
   marca?: string;
+  // Nicho do PDV. Default 'supermax' quando não informado (migração legada).
+  pdvMode?: PdvMode;
 }
 
 export interface Service {
@@ -52,6 +59,7 @@ export interface Service {
   price: number;
   additionalInfo: string;
   duration?: number; // minutes
+  pdvMode?: PdvMode;
 }
 
 export interface Client {

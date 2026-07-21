@@ -3,14 +3,20 @@ import { Product, Client, Service, Sale, Account, Appointment, User, CreditInsta
 
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
+  // pdv_mode (SQL snake_case) <-> pdvMode (JS camelCase) mapeado nas
+  // leituras/escritas. Legado sem coluna cai em 'supermax' (default).
   getProducts: async (): Promise<Product[]> => {
     const { data, error } = await supabase.from('products').select('*').order('name');
     if (error) throw error;
-    return (data ?? []) as Product[];
+    return (data ?? []).map((r: any) => ({
+      ...r,
+      pdvMode: r.pdv_mode ?? 'supermax',
+    })) as Product[];
   },
 
   upsertProduct: async (product: Product): Promise<void> => {
-    const { created_at, ...row } = product as any;
+    const { created_at, pdvMode, ...row } = product as any;
+    (row as any).pdv_mode = pdvMode ?? 'supermax';
     const { error } = await supabase.from('products').upsert(row);
     if (error) throw error;
   },
@@ -57,14 +63,19 @@ export const Storage = {
   },
 
   // ─── Serviços ────────────────────────────────────────────
+  // Mesmo mapeamento pdv_mode <-> pdvMode que products.
   getServices: async (): Promise<Service[]> => {
     const { data, error } = await supabase.from('services').select('*').order('name');
     if (error) throw error;
-    return (data ?? []) as Service[];
+    return (data ?? []).map((r: any) => ({
+      ...r,
+      pdvMode: r.pdv_mode ?? 'supermax',
+    })) as Service[];
   },
 
   upsertService: async (service: Service): Promise<void> => {
-    const { created_at, ...row } = service as any;
+    const { created_at, pdvMode, ...row } = service as any;
+    (row as any).pdv_mode = pdvMode ?? 'supermax';
     const { error } = await supabase.from('services').upsert(row);
     if (error) throw error;
   },
