@@ -1012,7 +1012,7 @@ const TRACK_EXTRAS: Track = {
       target: '[data-training-target="code-input"]',
       title: 'F8 — Buscar produto por nome',
       body:
-        'Etiqueta rasgada, código não bipa, cliente não sabe o nome exato? F8 (ou F10) abre a busca. Aperte F8 agora.',
+        'Etiqueta rasgada, código não bipa, cliente não sabe o nome exato? F8 abre a busca. Aperte F8 agora.',
       done: (s) => s.classicSearchOpen,
     },
     {
@@ -1103,10 +1103,10 @@ const TRACK_CASH_MGMT: Track = {
       done: (s, prev) => prev !== null && prev.supModal && !s.supModal && s.cashMovementsCount > prev.cashMovementsCount,
     },
     {
-      id: 'press-f12',
+      id: 'press-f10',
       target: '[data-training-target="code-input"]',
-      title: 'F12 — Sangria',
-      body: 'Sangria é saída de dinheiro (levar ao cofre etc.). Aperte F12.',
+      title: 'F10 — Sangria',
+      body: 'Sangria é saída de dinheiro (levar ao cofre etc.). Aperte F10 (padrão Linx/VR — menu supervisor).',
       done: (s) => s.sangriaModal,
     },
     {
@@ -1119,9 +1119,9 @@ const TRACK_CASH_MGMT: Track = {
     {
       id: 'click-close',
       target: '[data-training-target="close-cash-btn"]',
-      title: 'Fechar o caixa (Ctrl+L)',
+      title: 'Fechar o caixa (F12 ou Ctrl+L)',
       body:
-        'Fim de turno: aperte Ctrl+L para iniciar o fechamento do caixa. O botão FECHAR CAIXA no topo direito faz o mesmo — o atalho é só o caminho pelo teclado.',
+        'Fim de turno: aperte F12 (padrão Linx/VR — menu gerencial) ou Ctrl+L para iniciar o fechamento do caixa. O botão FECHAR CAIXA no topo direito faz o mesmo — os atalhos são só o caminho pelo teclado.',
       done: (s) => s.closeCashModal,
     },
     {

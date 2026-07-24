@@ -11,6 +11,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber, maskCpfCnpj } from '../lib/masks';
 import { PDFReport } from '../lib/pdfReport';
+import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
 
 // Produtos fictícios usados só no Modo Treinamento — não vão pro Supabase.
@@ -925,6 +926,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     amount: number;
     parcelas: number;
     uuid: string;
+    qrDataUrl?: string;
   } | null>(null);
   // Modal Troca/Devolução (padrão LogMax MaxLook): busca venda pelos 6
   // últimos chars do id nas vendas locais (trainingSalesHistory), lista
@@ -1197,7 +1199,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [valeAuthDigits, setValeAuthDigits] = useState('');
   // Fix #23 — lista de últimos cupons disponíveis para reimpressão.
   const [reprintList, setReprintList] = useState<Sale[] | null>(null);
-  // Navegação por teclado em listas (fiado, busca F8/F10, reimpressão).
+  // Navegação por teclado em listas (fiado, busca F8, reimpressão).
   const [clientPickerIdx, setClientPickerIdx] = useState(0);
   const [classicSearchIdx, setClassicSearchIdx] = useState(0);
   const [reprintListIdx, setReprintListIdx] = useState(0);
@@ -2159,8 +2161,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
-      // F9 — cancelar venda (qualquer tela, exceto se modal/picker)
-      if (e.key === 'F9') {
+      // F3 / F9 — cancelar cupom (padrão Linx/VR usa F3; F9 mantido como
+      // alias por muscle memory). F3 no checkout é picker PIX/VALE/FIADO
+      // (handler abaixo, linha ~2220) — então F3=cancelar só na leitura.
+      if (e.key === 'F9' || (e.key === 'F3' && !checkoutMode)) {
         e.preventDefault();
         if (modalOpen || pickerOpen) return;
         cancelEntireSale();
@@ -2315,8 +2319,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
-      // F8 / F10 — só na leitura (busca por nome)
-      if (e.key === 'F8' || e.key === 'F10') {
+      // F8 — só na leitura (busca por nome). F10 foi realocado para SANGRIA
+      // (padrão Linx/VR: menu supervisor / sangria fica em F10).
+      if (e.key === 'F8') {
         e.preventDefault();
         if (modalOpen || pickerOpen || checkoutMode) return;
         setClassicSearchTerm('');
@@ -2324,8 +2329,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
-      // F11 — Suprimento · F12 — Sangria (só na leitura, com caixa aberto)
-      if (e.key === 'F11' || e.key === 'F12') {
+      // F10 — Sangria · F11 — Suprimento (só na leitura, com caixa aberto).
+      // Padrão Linx/VR: F10 = sangria/menu supervisor, F11 = suprimento.
+      if (e.key === 'F10' || e.key === 'F11') {
         e.preventDefault();
         if (modalOpen || pickerOpen || checkoutMode) return;
         if (!cashSession) {
@@ -2334,6 +2340,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         }
         if (e.key === 'F11') openSuprimentoModal();
         else openSangriaModal();
+        return;
+      }
+
+      // F12 — Fechar caixa (padrão gerencial Linx/VR). Ctrl+L continua
+      // funcionando como alias (botão dedicado no header).
+      if (e.key === 'F12') {
+        e.preventDefault();
+        if (modalOpen || pickerOpen || checkoutMode) return;
+        if (cart.length > 0) return;
+        document.querySelector<HTMLButtonElement>('[data-training-target="close-cash-btn"]')?.click();
         return;
       }
 
@@ -2639,7 +2655,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
     const uuid = crypto.randomUUID();
-    const payload = `MAX-PIX-${uuid}`;
+    // URL absoluta pra Área do Cliente do MaxBank (câmera nativa do celular
+    // abre direto). Fallback `MAX-PIX-<uuid>` quando envs do MaxBank vazias.
+    const payload = buildPixQrValue(uuid);
     try {
       if (!runsLocalOnly) {
         const { error: insertErr } = await supabase
@@ -2735,6 +2753,35 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [pixModalOpen, pixUuid, pixAmount, isTraining]);
+
+  // Realtime cartão: espelho do listener Pix acima. Quando o visitante
+  // autoriza na Área do Cliente do MaxBank, cartao_pendentes.status vira
+  // 'pago' — pegamos o UPDATE, gravamos o Payment e disparamos o
+  // auto-finalize (mesma finalize_sale_atomic). Operador não precisa
+  // clicar em "PAGAMENTO RECEBIDO" — o botão manual segue como fallback.
+  const cartaoConfirmedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!cartaoModal || runsLocalOnly) return;
+    const { uuid, metodo, amount, parcelas } = cartaoModal;
+    const channel = supabase
+      .channel(`cartao-${uuid}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'cartao_pendentes', filter: `id=eq.${uuid}` },
+        (payload) => {
+          const status = (payload.new as any)?.status;
+          if (status !== 'pago' || cartaoConfirmedRef.current.has(uuid)) return;
+          cartaoConfirmedRef.current.add(uuid);
+          const payment: Payment = metodo === 'credito'
+            ? { method: 'credito', amount, installments: parcelas }
+            : { method: 'debito', amount };
+          setPayments(prev => [...prev, payment]);
+          setCartaoModal(null);
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [cartaoModal, runsLocalOnly]);
 
   const confirmFiadoClient = (client: Client) => {
     if (clientPickerMode === 'link') {
@@ -2952,14 +2999,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     if (method === 'credito') {
-      // Abre overlay MaxPay (mesmo fluxo do débito, com parcelas). O useEffect
-      // que fecha o cartaoModal grava o Payment e dispara auto-finalize.
-      setCartaoModal({
-        metodo: 'credito',
-        amount: total,
-        parcelas: nichoParcelas,
-        uuid: crypto.randomUUID(),
-      });
+      // Abre overlay MaxPay (mesmo fluxo do débito, com parcelas). Real mode:
+      // grava cartao_pendentes + gera QR pra visitante autorizar no MaxBank.
+      // Simulação (runsLocalOnly): só UUID em memória — autoconfirm em 4s.
+      await abrirCartaoMaquininha('credito', total, nichoParcelas);
       return;
     }
     if (method === 'fiado') {
@@ -2980,12 +3023,95 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     // Débito: overlay MaxPay igual crédito (sem parcelas).
-    setCartaoModal({
-      metodo: 'debito',
-      amount: total,
-      parcelas: 1,
-      uuid: crypto.randomUUID(),
-    });
+    await abrirCartaoMaquininha('debito', total, 1);
+  };
+
+  // Abre o overlay MaxPay. Real mode: INSERT em cartao_pendentes + QR bitmap
+  // com URL absoluta do MaxBank. Simulação: só UUID/valor em memória.
+  const abrirCartaoMaquininha = async (metodo: 'debito' | 'credito', amount: number, parcelas: number) => {
+    const uuid = crypto.randomUUID();
+    let qrDataUrl: string | undefined;
+    try {
+      if (!runsLocalOnly) {
+        const { error: insertErr } = await supabase
+          .from('cartao_pendentes')
+          .insert({
+            id: uuid,
+            valor: parseFloat(amount.toFixed(2)),
+            metodo,
+            parcelas,
+            operador_id: currentUser.id,
+          });
+        if (insertErr) throw insertErr;
+        qrDataUrl = await QRCode.toDataURL(
+          buildCartaoQrValue(uuid),
+          { width: 280, margin: 2, errorCorrectionLevel: 'M' },
+        );
+      }
+      setCartaoModal({ metodo, amount, parcelas, uuid, qrDataUrl });
+    } catch (err: any) {
+      showAlert({
+        title: 'Erro ao abrir MaxPay',
+        message: err?.message ? String(err.message) : String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  // Confirma manualmente o pagamento com cartão em real mode. O operador
+  // clica quando vê o aluno concluir na Área do Cliente do MaxBank —
+  // fallback pro caso do realtime não disparar (rede ruim etc).
+  // Segue o mesmo padrão do confirmPixPayment: guarda via ref pra não
+  // dobrar payment se o realtime chegar em corrida, e adiciona à lista
+  // (não substitui) pra preservar pagamento misto.
+  const confirmCartaoPayment = async () => {
+    if (!cartaoModal) return;
+    const { uuid, metodo, amount, parcelas } = cartaoModal;
+    if (cartaoConfirmedRef.current.has(uuid)) {
+      setCartaoModal(null);
+      return;
+    }
+    cartaoConfirmedRef.current.add(uuid);
+    try {
+      if (!runsLocalOnly) {
+        const { error } = await supabase.rpc('confirmar_cartao_pendente', { p_id: uuid });
+        if (error && (error as any).code !== 'P0002') throw error;
+      }
+      const payment: Payment = metodo === 'credito'
+        ? { method: 'credito', amount, installments: parcelas }
+        : { method: 'debito', amount };
+      setPayments(prev => [...prev, payment]);
+      setCartaoModal(null);
+    } catch (err: any) {
+      // Rollback do guard — deixa o operador tentar de novo.
+      cartaoConfirmedRef.current.delete(uuid);
+      showAlert({
+        title: 'Erro ao confirmar cartão',
+        message: err?.message ? String(err.message) : String(err),
+        variant: 'error',
+      });
+    }
+  };
+
+  // Cancelamento: fecha o modal e marca cartao_pendentes='cancelado' no
+  // real mode se ainda estiver aguardando (evita lixo no banco e desliga
+  // a policy anon SELECT pra que aluno que abrir o link depois veja
+  // "cobrança já processada" em vez de conseguir pagar uma venda abortada).
+  // Espelha cancelPixPayment.
+  const cancelCartaoPayment = async () => {
+    if (!cartaoModal) return;
+    const { uuid } = cartaoModal;
+    if (!runsLocalOnly && !cartaoConfirmedRef.current.has(uuid)) {
+      try {
+        await supabase
+          .from('cartao_pendentes')
+          .update({ status: 'cancelado' })
+          .eq('id', uuid);
+      } catch (err) {
+        console.warn('Falha ao cancelar cartão pendente:', err);
+      }
+    }
+    setCartaoModal(null);
   };
 
   // Auto-confirma MaxPay em simulação (imita fluxo realtime cartao_pendentes
@@ -3713,13 +3839,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     Enter (campo vazio) = SUBTOTAL
                   </span>
                   <span className="opacity-40">·</span>
-                  <span><b>F4</b> / <b>F5</b> Subtotal</span>
+                  <span><b>F4</b> Subtotal · <b>F5</b> Pagamentos</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F8</b> / <b>F10</b> Buscar produto</span>
+                  <span><b>F8</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
                   <span><b>↑↓</b> Escolher item · <b>Del</b> Cancelar</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F9</b> / <b>Esc</b> Cancelar venda</span>
+                  <span><b>F3</b> / <b>F9</b> / <b>Esc</b> Cancelar cupom</span>
                   <span className="opacity-40">·</span>
                   <span><b>N*EAN</b> ou <b>N×EAN</b> Qtd (decimal aceito: <b>0,350*EAN</b>)</span>
                   <span className="opacity-40">·</span>
@@ -3727,7 +3853,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   <span className="opacity-40">·</span>
                   <span><b>F7</b> Consulta preço</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F11</b> Suprimento · <b>F12</b> Sangria</span>
+                  <span><b>F10</b> Sangria · <b>F11</b> Suprimento · <b>F12</b> Fechar caixa</span>
                 </div>
               </div>
             </>
@@ -4843,7 +4969,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       </span>
                     </div>
                     <p className="text-xs text-gray-700 leading-relaxed">
-                      Após o último item, pressione <b>Enter</b> no campo <b>CÓDIGO</b> vazio (ou <b>F4/F5</b>).
+                      Após o último item, pressione <b>Enter</b> no campo <b>CÓDIGO</b> vazio (ou <b>F4</b> Subtotal / <b>F5</b> Pagamentos).
                     </p>
                     <p className="text-[11px] text-gray-500 mt-2">
                       💡 Botão <b>FECHAR VENDA</b> verde também serve.
@@ -4938,11 +5064,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       <span className="text-gray-800">Quantidade — ex: <b>3*789...</b> ou <b>3x789...</b></span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
-                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F4 / F5</kbd>
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F4</kbd>
                       <span className="text-gray-800">Subtotal — abrir fechamento</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
-                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F8 / F10</kbd>
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F5</kbd>
+                      <span className="text-gray-800">Pagamentos (foca DESCONTO no checkout)</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F8</kbd>
                       <span className="text-gray-800">Buscar produto por nome</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
@@ -4950,8 +5080,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       <span className="text-gray-800">Cancelar último item lido</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
-                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F9</kbd>
-                      <span className="text-gray-800">Cancelar a venda inteira</span>
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F3 / F9</kbd>
+                      <span className="text-gray-800">Cancelar o cupom inteiro (padrão Linx/VR)</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
                       <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Esc</kbd>
@@ -4980,8 +5110,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       <span className="text-gray-800"><b>Reimprimir</b> última venda (fora de venda)</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
-                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+L</kbd>
-                      <span className="text-gray-800"><b>Fechar caixa</b> · encerrar turno</span>
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F12 · Ctrl+L</kbd>
+                      <span className="text-gray-800"><b>Fechar caixa</b> · encerrar turno (padrão Linx/VR)</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F10</kbd>
+                      <span className="text-gray-800"><b>Sangria</b> · retirada de dinheiro</span>
+                    </div>
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F11</kbd>
+                      <span className="text-gray-800"><b>Suprimento</b> · entrada de dinheiro</span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
                       <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+M</kbd>
@@ -5159,7 +5297,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   Aguardando confirmação do MaxBank...
                 </div>
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
-                  MAX-PIX-{pixUuid}
+                  {buildPixQrValue(pixUuid)}
                 </div>
                 <div className="flex gap-3 w-full pt-2">
                   <button
@@ -5195,7 +5333,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             ref={(el) => { if (el && cartaoModal && !el.contains(document.activeElement)) el.focus(); }}
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCartaoModal(null); }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelCartaoPayment(); }
               else { e.stopPropagation(); }
             }}
           >
@@ -5206,7 +5344,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <span className="font-black tracking-wide text-sm uppercase flex items-center gap-2">
                   <CreditCard size={16} /> MaxPay · {cartaoModal.metodo === 'credito' ? 'Cartão de Crédito' : 'Cartão de Débito'}
                 </span>
-                <button onClick={() => setCartaoModal(null)} className="hover:opacity-70" tabIndex={-1}>
+                <button onClick={cancelCartaoPayment} className="hover:opacity-70" tabIndex={-1}>
                   <X size={20} />
                 </button>
               </div>
@@ -5216,12 +5354,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 </div>
                 <div className="w-56 h-56 flex items-center justify-center border-2 border-gray-300 rounded-lg"
                   style={{ background: '#f8fafc' }}>
-                  <div className="flex flex-col items-center gap-3">
-                    <CreditCard size={80} strokeWidth={1.2} className="text-gray-400" />
-                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                      Aguardando cartão
+                  {cartaoModal.qrDataUrl ? (
+                    <img src={cartaoModal.qrDataUrl} alt="QR MaxPay" className="w-52 h-52" />
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <CreditCard size={80} strokeWidth={1.2} className="text-gray-400" />
+                      <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                        Aguardando cartão
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
                 <div className="text-center">
                   <div className="text-xs uppercase tracking-wider text-gray-500">VALOR</div>
@@ -5242,15 +5384,31 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   Aguardando autorização MaxPay...
                 </div>
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
-                  MAX-CARTAO-{cartaoModal.uuid}
+                  {buildCartaoQrValue(cartaoModal.uuid)}
                 </div>
-                <button
-                  onClick={() => setCartaoModal(null)}
-                  className="w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
-                  style={{ borderColor: '#9ca3af' }}
-                >
-                  CANCELAR
-                </button>
+                <div className={runsLocalOnly ? 'w-full' : 'flex gap-3 w-full'}>
+                  <button
+                    onClick={cancelCartaoPayment}
+                    className={runsLocalOnly
+                      ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'
+                      : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
+                    style={{ borderColor: '#9ca3af' }}
+                  >
+                    CANCELAR
+                  </button>
+                  {!runsLocalOnly && (
+                    // Real mode: operador confirma manualmente após ver o
+                    // aluno autorizar na Área do Cliente do MaxBank. Mesmo
+                    // padrão do botão PAGAMENTO RECEBIDO do Pix.
+                    <button
+                      onClick={confirmCartaoPayment}
+                      className="flex-1 px-4 py-3 text-white font-bold"
+                      style={{ background: MONEY }}
+                    >
+                      PAGAMENTO RECEBIDO
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
