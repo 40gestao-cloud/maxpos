@@ -2659,7 +2659,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // abre direto). Fallback `MAX-PIX-<uuid>` quando envs do MaxBank vazias.
     const payload = buildPixQrValue(uuid);
     try {
-      if (!runsLocalOnly) {
+      if (!isTraining) {
         const { error: insertErr } = await supabase
           .from('pix_pendentes')
           .insert({
@@ -2690,7 +2690,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     pixConfirmedRef.current.add(pixUuid);
-    if (runsLocalOnly) {
+    if (isTraining) {
       setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
       setPartialAmount('');
       setPixModalOpen(false);
@@ -2728,7 +2728,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
   useEffect(() => {
     if (!pixModalOpen || !pixUuid) return;
-    if (runsLocalOnly) return;
+    if (isTraining) return;
     const channel = supabase
       .channel(`pix-${pixUuid}`)
       .on(
@@ -2762,7 +2762,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // RECEBIDO segue como fallback manual em rede ruim.
   const cartaoConfirmedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!cartaoModal || runsLocalOnly) return;
+    if (!cartaoModal || isTraining) return;
     const { uuid, metodo, amount, parcelas } = cartaoModal;
     const channel = supabase
       .channel(`cartao-${uuid}`)
@@ -2782,7 +2782,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [cartaoModal, runsLocalOnly]);
+  }, [cartaoModal, isTraining]);
 
   const confirmFiadoClient = (client: Client) => {
     if (clientPickerMode === 'link') {
@@ -3033,7 +3033,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     const uuid = crypto.randomUUID();
     let qrDataUrl: string | undefined;
     try {
-      if (!runsLocalOnly) {
+      if (!isTraining) {
         const { error: insertErr } = await supabase
           .from('cartao_pendentes')
           .insert({
@@ -3074,7 +3074,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     cartaoConfirmedRef.current.add(uuid);
     try {
-      if (!runsLocalOnly) {
+      if (!isTraining) {
         const { error } = await supabase.rpc('confirmar_cartao_pendente', { p_id: uuid });
         if (error && (error as any).code !== 'P0002') throw error;
       }
@@ -3102,7 +3102,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const cancelCartaoPayment = async () => {
     if (!cartaoModal) return;
     const { uuid } = cartaoModal;
-    if (!runsLocalOnly && !cartaoConfirmedRef.current.has(uuid)) {
+    if (!isTraining && !cartaoConfirmedRef.current.has(uuid)) {
       try {
         await supabase
           .from('cartao_pendentes')
@@ -3120,7 +3120,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // do operador ver o QR — igual maquininha real.
   useEffect(() => {
     if (!cartaoModal) return;
-    if (!runsLocalOnly) return;
+    if (!isTraining) return;
     const t = setTimeout(() => {
       const payment: Payment = cartaoModal.metodo === 'credito'
         ? { method: 'credito', amount: cartaoModal.amount, installments: cartaoModal.parcelas }
@@ -3129,17 +3129,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setCartaoModal(null);
     }, 4000);
     return () => clearTimeout(t);
-  }, [cartaoModal, runsLocalOnly]);
+  }, [cartaoModal, isTraining]);
 
   // Auto-confirma PIX em simulação — mesmo padrão: sem botão manual, delay
   // curto simula cliente escaneando o QR e confirmando no MaxBank.
   useEffect(() => {
     if (!pixModalOpen) return;
-    if (!runsLocalOnly) return;
+    if (!isTraining) return;
     const t = setTimeout(() => { confirmPixPayment(); }, 5000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pixModalOpen, runsLocalOnly]);
+  }, [pixModalOpen, isTraining]);
 
   // Auto-finalize para simulação: assim que qualquer modal confirma e o
   // total é coberto, dispara finalizeSale — em SuperMax o operador confirma
@@ -5303,12 +5303,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <div className="flex gap-3 w-full pt-2">
                   <button
                     onClick={cancelPixPayment}
-                    className={runsLocalOnly ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50' : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
+                    className={isTraining ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50' : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
                     style={{ borderColor: '#9ca3af' }}
                   >
                     CANCELAR
                   </button>
-                  {!runsLocalOnly && (
+                  {!isTraining && (
                     // Simulação (nichos + treinamento) NÃO tem botão manual:
                     // o realtime do MaxBank confirma sozinho via setTimeout no
                     // useEffect. Padrão LogMax — operador não pode auto-forçar.
@@ -5387,17 +5387,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
                   {buildCartaoQrValue(cartaoModal.uuid)}
                 </div>
-                <div className={runsLocalOnly ? 'w-full' : 'flex gap-3 w-full'}>
+                <div className={isTraining ? 'w-full' : 'flex gap-3 w-full'}>
                   <button
                     onClick={cancelCartaoPayment}
-                    className={runsLocalOnly
+                    className={isTraining
                       ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'
                       : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
                     style={{ borderColor: '#9ca3af' }}
                   >
                     CANCELAR
                   </button>
-                  {!runsLocalOnly && (
+                  {!isTraining && (
                     // Real mode: operador confirma manualmente após ver o
                     // aluno autorizar na Área do Cliente do MaxBank. Mesmo
                     // padrão do botão PAGAMENTO RECEBIDO do Pix.
