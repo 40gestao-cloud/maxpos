@@ -2754,11 +2754,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     return () => { supabase.removeChannel(channel); };
   }, [pixModalOpen, pixUuid, pixAmount, isTraining]);
 
-  // Realtime cartão: espelho do listener Pix acima. Quando o visitante
-  // autoriza na Área do Cliente do MaxBank, cartao_pendentes.status vira
-  // 'pago' — pegamos o UPDATE, gravamos o Payment e disparamos o
-  // auto-finalize (mesma finalize_sale_atomic). Operador não precisa
-  // clicar em "PAGAMENTO RECEBIDO" — o botão manual segue como fallback.
+  // Realtime cartão: espelho do listener Pix acima, mas cartão no
+  // ecossistema LogMax transita pra 'autorizado' (não 'pago'), tanto via
+  // MaxPay/MaxBank operador (autorizar_cartao_maxbank) quanto via visitante
+  // (confirmar_cartao_pendente). Pegamos o UPDATE, gravamos o Payment e
+  // disparamos o auto-finalize (finalize_sale_atomic). Botão PAGAMENTO
+  // RECEBIDO segue como fallback manual em rede ruim.
   const cartaoConfirmedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!cartaoModal || runsLocalOnly) return;
@@ -2770,7 +2771,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         { event: 'UPDATE', schema: 'public', table: 'cartao_pendentes', filter: `id=eq.${uuid}` },
         (payload) => {
           const status = (payload.new as any)?.status;
-          if (status !== 'pago' || cartaoConfirmedRef.current.has(uuid)) return;
+          if (status !== 'autorizado' || cartaoConfirmedRef.current.has(uuid)) return;
           cartaoConfirmedRef.current.add(uuid);
           const payment: Payment = metodo === 'credito'
             ? { method: 'credito', amount, installments: parcelas }
