@@ -1,6 +1,52 @@
 import { supabase } from './supabase';
 import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
 
+// Uma linha de `sales` (com sale_items/sale_payments embutidos) virando Sale.
+// Três leituras diferentes montavam este objeto na mão e já divergiam entre si
+// — a de reimpressão trazia discount/cpfCnpjNota, getSales não. Com os campos
+// de nicho entrando, centralizar evita a próxima divergência.
+function mapSaleRow(row: any): Sale {
+  return {
+    id: row.id,
+    date: row.date,
+    total: Number(row.total),
+    clientId: row.clientId ?? undefined,
+    vendedorId: row.vendedorId ?? undefined,
+    status: row.status,
+    discount: Number(row.discount ?? 0),
+    cpfCnpjNota: row.cpfCnpjNota ?? undefined,
+    // Origem da venda + campos que só MaxLook/TechMax preenchem. Venda
+    // anterior ao patch 2026-08-17 cai em 'supermax', que era o único PDV
+    // que gravava.
+    pdvMode: row.pdv_mode ?? 'supermax',
+    vendedorNome: row.vendedor_nome ?? undefined,
+    imeiSerial: row.imei_serial ?? undefined,
+    tipoAtendimento: row.tipo_atendimento ?? undefined,
+    defeitoRelatado: row.defeito_relatado ?? undefined,
+    items: (row.sale_items ?? []).map((item: any) => ({
+      id: item.productId ?? item.id,
+      name: item.name,
+      price: Number(item.price),
+      quantity: Number(item.quantity),
+      costPrice: Number(item.costPrice ?? 0),
+      category: item.category ?? '',
+      ref: item.ref ?? '',
+      unit: item.unit ?? 'UN',
+      ean13: item.ean13,
+      controlStock: item.controlStock ?? true,
+      stock: Number(item.stock ?? 0),
+      minStock: item.minStock ?? 0,
+      discount: Number(item.discount ?? 0),
+    })),
+    payments: (row.sale_payments ?? []).map((p: any) => ({
+      method: p.method,
+      amount: Number(p.amount),
+      installments: p.installments ?? undefined,
+      clientId: p.clientId ?? undefined,
+    })),
+  } as Sale;
+}
+
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
   // pdv_mode (SQL snake_case) <-> pdvMode (JS camelCase) mapeado nas
@@ -150,34 +196,7 @@ export const Storage = {
       .order('date', { ascending: false });
     if (error) throw error;
 
-    return (data ?? []).map((s: any) => ({
-      id: s.id,
-      date: s.date,
-      total: s.total,
-      clientId: s.clientId,
-      vendedorId: s.vendedorId,
-      status: s.status,
-      items: (s.sale_items ?? []).map((item: any) => ({
-        id: item.productId ?? item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-        costPrice: item.costPrice ?? 0,
-        category: item.category ?? '',
-        ref: item.ref ?? '',
-        unit: item.unit ?? 'UN',
-        ean13: item.ean13,
-        controlStock: item.controlStock ?? true,
-        stock: item.stock ?? 0,
-        minStock: item.minStock ?? 0,
-      })),
-      payments: (s.sale_payments ?? []).map((p: any) => ({
-        method: p.method,
-        amount: p.amount,
-        installments: p.installments ?? undefined,
-        clientId: p.clientId ?? undefined,
-      })),
-    })) as Sale[];
+    return (data ?? []).map(mapSaleRow);
   },
 
   saveSale: async (sale: Sale): Promise<void> => {
@@ -188,6 +207,11 @@ export const Storage = {
       clientId: sale.clientId,
       vendedorId: sale.vendedorId,
       status: sale.status,
+      pdv_mode: sale.pdvMode ?? 'supermax',
+      vendedor_nome: sale.vendedorNome ?? null,
+      imei_serial: sale.imeiSerial ?? null,
+      tipo_atendimento: sale.tipoAtendimento ?? null,
+      defeito_relatado: sale.defeitoRelatado ?? null,
     });
     if (saleErr) throw saleErr;
 
@@ -498,8 +522,6 @@ export const Storage = {
   },
 
   // Última venda concluída pelo operador (preferindo a sessão atual, se houver)
-  // Últimas N vendas do operador (na sessão atual, se informada) — usada na
-  // tela de reimpressão para o operador escolher qual cupom reimprimir.
   // Estorna uma venda finalizada: devolve estoque, cancela dívida em fiado,
   // marca status='reversed'. Backend: reverse_sale_atomic RPC (patch
   // 2026-07-20_reverse_sale_atomic.sql). Idempotente na server-side.
@@ -520,43 +542,16 @@ export const Storage = {
       .order('date', { ascending: false })
       .limit(limit);
     if (error) throw error;
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      date: row.date,
-      total: Number(row.total),
-      clientId: row.clientId ?? undefined,
-      vendedorId: row.vendedorId ?? undefined,
-      status: row.status,
-      discount: Number(row.discount ?? 0),
-      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
-      items: (row.sale_items ?? []).map((item: any) => ({
-        id: item.productId ?? item.id,
-        name: item.name,
-        price: Number(item.price),
-        quantity: Number(item.quantity),
-        costPrice: Number(item.costPrice ?? 0),
-        category: item.category ?? '',
-        ref: item.ref ?? '',
-        unit: item.unit ?? 'UN',
-        ean13: item.ean13,
-        controlStock: item.controlStock ?? true,
-        stock: Number(item.stock ?? 0),
-        minStock: item.minStock ?? 0,
-        discount: Number(item.discount ?? 0),
-      })),
-      payments: (row.sale_payments ?? []).map((p: any) => ({
-        method: p.method,
-        amount: Number(p.amount),
-        installments: p.installments ?? undefined,
-        clientId: p.clientId ?? undefined,
-      })),
-    })) as Sale[];
+    return (data ?? []).map(mapSaleRow);
   },
 
+  // pdvMode: reimpressao do MaxLook nao deve listar cupom do SuperMax.
+  // Omitido => todos os PDVs (comportamento anterior ao patch 2026-08-17).
   getRecentSalesForReprint: async (
     operadorId: string,
     sessionId?: string | null,
     limit: number = 10,
+    pdvMode?: string,
   ): Promise<Sale[]> => {
     let q = supabase
       .from('sales')
@@ -566,39 +561,32 @@ export const Storage = {
       .order('date', { ascending: false })
       .limit(limit);
     if (sessionId) q = q.eq('sessionId', sessionId);
+    if (pdvMode) q = q.eq('pdv_mode', pdvMode);
     const { data, error } = await q;
     if (error) throw error;
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      date: row.date,
-      total: Number(row.total),
-      clientId: row.clientId ?? undefined,
-      vendedorId: row.vendedorId ?? undefined,
-      status: row.status,
-      discount: Number(row.discount ?? 0),
-      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
-      items: (row.sale_items ?? []).map((item: any) => ({
-        id: item.productId ?? item.id,
-        name: item.name,
-        price: Number(item.price),
-        quantity: Number(item.quantity),
-        costPrice: Number(item.costPrice ?? 0),
-        category: item.category ?? '',
-        ref: item.ref ?? '',
-        unit: item.unit ?? 'UN',
-        ean13: item.ean13,
-        controlStock: item.controlStock ?? true,
-        stock: Number(item.stock ?? 0),
-        minStock: item.minStock ?? 0,
-        discount: Number(item.discount ?? 0),
-      })),
-      payments: (row.sale_payments ?? []).map((p: any) => ({
-        method: p.method,
-        amount: Number(p.amount),
-        installments: p.installments ?? undefined,
-        clientId: p.clientId ?? undefined,
-      })),
-    })) as Sale[];
+    return (data ?? []).map(mapSaleRow);
+  },
+
+  // Devolucao/troca busca a venda pelos 6 ultimos caracteres do id impresso
+  // no recibo. `id` e TEXT (uuid gerado no cliente), entao ilike com sufixo
+  // resolve sem precisar de coluna extra. Escopado por PDV pra uma filial nao
+  // estornar cupom da outra.
+  getSaleByShortId: async (shortId: string, pdvMode?: string): Promise<Sale | null> => {
+    let q = supabase
+      .from('sales')
+      .select('*, sale_items(*), sale_payments(*)')
+      .ilike('id', `%${shortId}`)
+      .eq('status', 'completed')
+      .limit(2);
+    if (pdvMode) q = q.eq('pdv_mode', pdvMode);
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = data ?? [];
+    // Sufixo de 6 chars nao e unico por construcao. Com mais de um match o
+    // operador precisa do id completo — devolver o "primeiro" estornaria a
+    // venda errada.
+    if (rows.length !== 1) return null;
+    return mapSaleRow(rows[0]);
   },
 
   getLastSaleForReprint: async (operadorId: string, sessionId?: string | null): Promise<Sale | null> => {
@@ -614,37 +602,7 @@ export const Storage = {
     if (error) throw error;
     const row: any = (data ?? [])[0];
     if (!row) return null;
-    return {
-      id: row.id,
-      date: row.date,
-      total: Number(row.total),
-      clientId: row.clientId ?? undefined,
-      vendedorId: row.vendedorId ?? undefined,
-      status: row.status,
-      discount: Number(row.discount ?? 0),
-      cpfCnpjNota: row.cpfCnpjNota ?? undefined,
-      items: (row.sale_items ?? []).map((item: any) => ({
-        id: item.productId ?? item.id,
-        name: item.name,
-        price: Number(item.price),
-        quantity: Number(item.quantity),
-        costPrice: Number(item.costPrice ?? 0),
-        category: item.category ?? '',
-        ref: item.ref ?? '',
-        unit: item.unit ?? 'UN',
-        ean13: item.ean13,
-        controlStock: item.controlStock ?? true,
-        stock: Number(item.stock ?? 0),
-        minStock: item.minStock ?? 0,
-        discount: Number(item.discount ?? 0),
-      })),
-      payments: (row.sale_payments ?? []).map((p: any) => ({
-        method: p.method,
-        amount: Number(p.amount),
-        installments: p.installments ?? undefined,
-        clientId: p.clientId ?? undefined,
-      })),
-    } as Sale;
+    return mapSaleRow(row);
   },
 
   // ─── Auditoria ───────────────────────────────────────────

@@ -896,14 +896,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // aba separada. Um remount (key={activeTab}) garante state limpo ao
   // trocar de PDV.
   const modeMeta = PDV_MODE_META[pdvMode];
-  // Modos MaxLook/TechMax NUNCA tocam no DB — são simulação demonstrativa
-  // do ecossistema Max pra vitrine. Só SuperMax segue o fluxo real.
+  // MaxLook/TechMax são filiais de verdade, não vitrine: produtos vêm do
+  // banco, o pagamento cria cobrança real em pix_pendentes/cartao_pendentes
+  // e o MaxBank debita o saldo do aluno. `isSimulationMode` sobrou apenas
+  // como "não é o SuperMax", governando LAYOUT e atalhos — nunca mais se o
+  // dado é real.
   const isSimulationMode = pdvMode !== 'supermax';
-  // Roda 100% em memória: treinamento OU simulação de nicho. Todos os
-  // caminhos que hoje têm `if (isTraining) { ...local; return; }` também
-  // devem entrar quando isSimulationMode=true — SuperMax é o único que
-  // conversa com o DB real.
-  const runsLocalOnly = isTraining || isSimulationMode;
+  // Roda 100% em memória: só o MODO TREINAMENTO. Antes isto incluía os
+  // nichos, e o resultado era que MaxLook/TechMax cobravam de verdade (o
+  // saldo caía no MaxBank) mas não gravavam a venda nem baixavam estoque —
+  // dinheiro saía sem contrapartida no PDV.
+  const runsLocalOnly = isTraining;
   // Campos específicos por nicho (MaxLook: vendedor / TechMax: IMEI + OS):
   const [saleVendedor, setSaleVendedor] = useState('');
   const [saleImeiSerial, setSaleImeiSerial] = useState('');
@@ -1307,34 +1310,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen,
       postSaleReceipt, valeAuthModal, reprintList]);
 
-  // localStorage key para persistir cashSession de nichos entre remounts.
-  // Escopado por modo pra cada PDV ter caixa independente (MaxLook != TechMax).
-  // Treinamento NÃO persiste — é intencional efêmero.
-  const nichoCashKey = isSimulationMode && !isTraining
-    ? `maxpos.pdv.${pdvMode}.cashSession`
-    : null;
-
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
     let active = true;
     if (runsLocalOnly) {
-      // Nicho (MaxLook/TechMax): tenta recuperar caixa salvo antes de forçar
-      // fluxo de abertura — assim sair/voltar do PDV mantém o caixa aberto,
-      // igual SuperMax faz via Supabase.
-      if (nichoCashKey) {
-        try {
-          const raw = localStorage.getItem(nichoCashKey);
-          if (raw) {
-            const saved = JSON.parse(raw) as CashSession;
-            if (saved?.status === 'aberto' && saved.operadorId === currentUser.id) {
-              setCashSession(saved);
-              setCashSessionLoaded(true);
-              return;
-            }
-          }
-        } catch { /* corrompido — cai no fluxo de abertura */ }
-      }
-      // Treinamento/simulação sem caixa salvo: força fluxo de abertura.
+      // Treinamento: sem caixa salvo, força fluxo de abertura.
       setCashSession(null);
       setOpenCashFundo(maskCurrency(0));
       setOpenCashModal(true);
@@ -1380,23 +1360,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         .finally(() => { if (active) setLoading(false); });
 
     load();
-    // Nichos usam clientes demo (limites baixos pra treinar recusa); SuperMax
-    // usa o cadastro real. Isso é intencional — clientes reais no MaxLook
-    // teria que ter um catálogo próprio de fashion e não é o foco agora.
-    if (isSimulationMode) {
-      setClients(TRAINING_CLIENTS);
-    } else {
-      Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {});
-    }
+    // Os 3 PDVs usam o cadastro real de clientes. Os nichos usavam
+    // TRAINING_CLIENTS, e com a venda passando a gravar isso lançaria fiado
+    // no id de um cliente que não existe em `clients` — o débito de saldo
+    // viraria no-op silencioso.
+    Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {});
 
     const ch = supabase.channel(`pdv-products-${pdvMode}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' },
-        () => { if (!isSimulationMode) Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {}); })
+        () => { Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {}); })
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, [isTraining, isSimulationMode, pdvMode]);
+  }, [isTraining, pdvMode]);
 
   const addToCart = (product: Product, qty: number = 1) => {
     // Arredonda em 3 casas para conter erro de ponto flutuante em qtd de balança
@@ -1709,7 +1686,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setQuickClientsCount(0);
     if (runsLocalOnly) {
       const s: CashSession = {
-        id: nichoCashKey ? `sim-${pdvMode}-${Date.now()}` : 'training-session',
+        id: 'training-session',
         operadorId: currentUser.id,
         aberturaAt: new Date().toISOString(),
         fundoTroco: fundo,
@@ -1718,10 +1695,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setCashSession(s);
       setOpenCashModal(false);
       setOpenCashFundo('');
-      // Persiste caixa do nicho — sair/voltar do PDV mantém aberto.
-      if (nichoCashKey) {
-        try { localStorage.setItem(nichoCashKey, JSON.stringify(s)); } catch { /* quota — segue sem persistir */ }
-      }
       return;
     }
     try {
@@ -1858,9 +1831,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     const diff = parseFloat((contado - closeCashExpected.total).toFixed(2));
     if (runsLocalOnly) {
-      // Só no MODO TREINAMENTO forçamos a prática de SOBRA/FALTA — simulação
-      // MaxLook/TechMax não bloqueia (o operador está vitrinando o fluxo).
-      if (isTraining && Math.abs(diff) <= 0.001) {
+      // Modo treinamento força a prática de SOBRA/FALTA: fechar batendo
+      // certinho não exercita o relatório de divergência, que é o caso comum
+      // no caixa real.
+      if (Math.abs(diff) <= 0.001) {
         showAlert({
           title: 'Pratique SOBRA ou FALTA',
           message: 'Digite um valor DIFERENTE do sugerido para praticar o relatório de divergência. No caixa real, contado ≠ esperado é o cenário mais comum.',
@@ -1873,10 +1847,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       // cashSession === null como fim do cenário cash-mgmt, marca completo
       // e mostra a tela de conclusão como nos outros cenários.
       setCashSession(null);
-      // Nicho: limpa o caixa persistido pra próxima entrada abrir modal novamente.
-      if (nichoCashKey) {
-        try { localStorage.removeItem(nichoCashKey); } catch { /* ignora */ }
-      }
       setCloseCashModal(false);
       setCloseCashContado('');
       setCloseCashObs('');
@@ -2075,7 +2045,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     try {
-      const list = await Storage.getRecentSalesForReprint(currentUser.id, cashSession?.id ?? null, 10);
+      const list = await Storage.getRecentSalesForReprint(currentUser.id, cashSession?.id ?? null, 10, pdvMode);
       if (list.length === 0) {
         showAlert({ title: 'Sem venda anterior', message: 'Nenhuma venda concluída por este operador para reimprimir.', variant: 'info' });
         return;
@@ -2666,6 +2636,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             id: uuid,
             valor: finalAmount,
             operador_id: currentUser.id,
+            // Origem: os 3 PDVs dividem esta instancia e a maquininha
+            // MaxPay escolhe a cobranca por valor + metodo. Sem isto, duas
+            // vendas de mesmo valor em lojas diferentes viram a mesma.
+            pdv_mode: pdvMode,
           });
         if (insertErr) throw insertErr;
       }
@@ -2894,6 +2868,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             sessionId: cashSession?.id ?? null,
             discount: saleDiscount,
             cpfCnpjNota: cpfNota || null,
+            // Origem da venda + campos de nicho. Eram montados em `newSale`
+            // (e apareciam no recibo) mas nunca chegavam ao banco: o
+            // relatório não separava as 3 filiais, a OS do TechMax não
+            // existia no DB e IMEI/vendedor se perdiam.
+            pdvMode: newSale.pdvMode ?? null,
+            vendedorNome: newSale.vendedorNome ?? null,
+            imeiSerial: newSale.imeiSerial ?? null,
+            tipoAtendimento: newSale.tipoAtendimento ?? null,
+            defeitoRelatado: newSale.defeitoRelatado ?? null,
             items: newSale.items,
             payments: newSale.payments,
           },
@@ -3012,10 +2995,35 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
       const c = clients.find(cl => cl.id === nichoClienteFiadoId);
-      if (c && c.creditLimit && (c.balance + total) > c.creditLimit) {
+      if (!c) {
+        showAlert({ title: 'Cliente não encontrado', message: 'Selecione o cliente novamente.', variant: 'warning' });
+        return;
+      }
+      // Mesma regra do SuperMax (confirmFiadoClient): balance NEGATIVO é
+      // dívida. Somar balance ao total invertia o sinal e liberava fiado pra
+      // quem já devia — passou despercebido enquanto o nicho usava clientes
+      // demo, que nasciam com balance 0.
+      if (c.creditLimit <= 0) {
+        setFiadoRejectionCount(n => n + 1);
         showAlert({
-          title: 'Limite de fiado estourado',
-          message: `${c.name} tem limite R$ ${c.creditLimit.toFixed(2).replace('.', ',')}. Saldo atual R$ ${c.balance.toFixed(2).replace('.', ',')} + venda R$ ${total.toFixed(2).replace('.', ',')} = R$ ${(c.balance + total).toFixed(2).replace('.', ',')}.`,
+          title: 'Cliente sem limite de crédito',
+          message: `${c.name} não tem limite de crédito cadastrado. Atualize o cadastro do cliente antes de lançar fiado.`,
+          variant: 'warning',
+        });
+        return;
+      }
+      const dividaAtual = c.balance < 0 ? -c.balance : 0;
+      const disponivel = c.creditLimit - dividaAtual;
+      if (total > disponivel + 0.001) {
+        setFiadoRejectionCount(n => n + 1);
+        showAlert({
+          title: 'Limite de crédito excedido',
+          message:
+            `${c.name}\n` +
+            `· Limite: R$ ${c.creditLimit.toFixed(2).replace('.', ',')}\n` +
+            `· Já deve: R$ ${dividaAtual.toFixed(2).replace('.', ',')}\n` +
+            `· Disponível: R$ ${Math.max(0, disponivel).toFixed(2).replace('.', ',')}\n` +
+            `· Lançamento: R$ ${total.toFixed(2).replace('.', ',')}`,
           variant: 'warning',
         });
         return;
@@ -3042,6 +3050,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             metodo,
             parcelas,
             operador_id: currentUser.id,
+            pdv_mode: pdvMode,
           });
         if (insertErr) throw insertErr;
         qrDataUrl = await QRCode.toDataURL(
@@ -3167,16 +3176,29 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     });
   };
 
-  // Busca a venda pelos 6 últimos chars do id em trainingSalesHistory (simulação
-  // local). No LogMax bate no DB via ilike — aqui filtramos o array em memória.
-  const buscarVendaParaDevolucao = () => {
+  // Busca a venda pelos 6 últimos chars do id impressos no recibo. Em
+  // treinamento filtra o array em memória; nos 3 PDVs reais bate no banco
+  // via ilike, escopado por pdv_mode (MaxLook não estorna cupom do TechMax).
+  const buscarVendaParaDevolucao = async () => {
     if (!devolucaoModal) return;
     const termo = devolucaoModal.busca.trim().toUpperCase();
     if (!termo) return;
     setDevolucaoModal(d => d ? { ...d, buscando: true, erro: null, venda: null, qtds: {} } : d);
-    const encontrada = trainingSalesHistory.find(s =>
-      s.id.slice(-6).toUpperCase() === termo && s.status !== 'reversed'
-    );
+
+    let encontrada: Sale | null = null;
+    try {
+      encontrada = runsLocalOnly
+        ? (trainingSalesHistory.find(s =>
+            s.id.slice(-6).toUpperCase() === termo && s.status !== 'reversed') ?? null)
+        : await Storage.getSaleByShortId(termo, pdvMode);
+    } catch (err: any) {
+      setDevolucaoModal(d => d ? {
+        ...d, buscando: false,
+        erro: err?.message ? String(err.message) : 'Falha ao consultar a venda.',
+      } : d);
+      return;
+    }
+
     if (!encontrada) {
       setDevolucaoModal(d => d ? {
         ...d, buscando: false,
@@ -3184,29 +3206,33 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       } : d);
       return;
     }
-    const formaPag = encontrada.payments[0]?.method === 'fiado' ? 'Fiado'
-                   : encontrada.payments[0]?.method === 'credito' ? 'Cartão Crédito'
-                   : encontrada.payments[0]?.method === 'debito' ? 'Cartão Débito'
-                   : encontrada.payments[0]?.method === 'pix' ? 'PIX'
+    const venda = encontrada;
+    const formaPag = venda.payments[0]?.method === 'fiado' ? 'Fiado'
+                   : venda.payments[0]?.method === 'credito' ? 'Cartão Crédito'
+                   : venda.payments[0]?.method === 'debito' ? 'Cartão Débito'
+                   : venda.payments[0]?.method === 'pix' ? 'PIX'
                    : 'Dinheiro';
-    const itens: DevolucaoItem[] = encontrada.items.map(it => ({
+    const itens: DevolucaoItem[] = venda.items.map(it => ({
       productId: it.id,
       name: it.name,
       qty: it.quantity,
       price: it.price,
-      jaDevolvido: 0, // simulação: cada venda pode ser devolvida uma vez
+      jaDevolvido: 0, // estorno é da venda inteira: ou devolveu tudo, ou nada
     }));
     setDevolucaoModal(d => d ? {
       ...d,
       buscando: false,
-      venda: { id: encontrada.id, shortId: encontrada.id.slice(-6).toUpperCase(), formaPagamento: formaPag, itens },
-      qtds: Object.fromEntries(itens.map(it => [it.productId, ''])),
+      venda: { id: venda.id, shortId: venda.id.slice(-6).toUpperCase(), formaPagamento: formaPag, itens },
+      // Pré-preenche com a quantidade vendida: o estorno suportado hoje é
+      // integral, então este é o único preenchimento que conclui.
+      qtds: Object.fromEntries(itens.map(it => [it.productId, String(it.qty)])),
     } : d);
   };
 
-  const confirmarDevolucao = () => {
+  const confirmarDevolucao = async () => {
     if (!devolucaoModal?.venda) return;
-    const itensSelecionados = devolucaoModal.venda.itens
+    const venda = devolucaoModal.venda;
+    const itensSelecionados = venda.itens
       .map(it => ({ ...it, qtdDevolver: parseFloat((devolucaoModal.qtds[it.productId] ?? '').replace(',', '.')) || 0 }))
       .filter(it => it.qtdDevolver > 0);
     if (itensSelecionados.length === 0) {
@@ -3226,25 +3252,61 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       });
       return;
     }
-    setDevolucaoModal(d => d ? { ...d, processando: true } : d);
-    // Devolve estoque em memória.
-    setProducts(prev => prev.map(p => {
-      const devolvido = itensSelecionados.find(it => it.productId === p.id);
-      if (!devolvido || p.controlStock === false) return p;
-      return { ...p, stock: (p.stock ?? 0) + devolvido.qtdDevolver };
-    }));
-    // Marca venda como reversed (não pode ser devolvida de novo).
-    setTrainingSalesHistory(prev => prev.map(s =>
-      s.id === devolucaoModal.venda!.id ? { ...s, status: 'reversed' } : s
-    ));
-    setDevolucaoModal(null);
-    showAlert({
-      title: 'Devolução processada',
-      message: `Estoque atualizado. ${devolucaoModal.venda.formaPagamento === 'Fiado' || devolucaoModal.venda.formaPagamento === 'Cartão Crédito'
-        ? 'Ajuste manualmente em Financeiro → Contas a Receber.'
-        : 'Cliente pode ser reembolsado.'}`,
-      variant: 'info',
+
+    // reverse_sale_atomic estorna a venda inteira (devolve todo o estoque,
+    // cancela o fiado e marca status='reversed'). Não existe estorno parcial
+    // no backend, então devolver só parte dos itens deixaria o banco
+    // divergente do que a tela mostrou. Barra e explica.
+    const integral = venda.itens.every(it => {
+      const sel = itensSelecionados.find(x => x.productId === it.productId);
+      return sel && Math.abs(sel.qtdDevolver - it.qty) < 0.001;
     });
+    if (!integral) {
+      showAlert({
+        title: 'Devolução parcial não suportada',
+        message:
+          'O estorno cancela a venda inteira: devolve todo o estoque e limpa o fiado.\n\n' +
+          'Para devolver só parte dos itens, estorne o cupom completo e refaça a venda ' +
+          'apenas com o que o cliente vai levar.',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    setDevolucaoModal(d => d ? { ...d, processando: true } : d);
+    try {
+      if (runsLocalOnly) {
+        setProducts(prev => prev.map(p => {
+          const devolvido = itensSelecionados.find(it => it.productId === p.id);
+          if (!devolvido || p.controlStock === false) return p;
+          return { ...p, stock: (p.stock ?? 0) + devolvido.qtdDevolver };
+        }));
+        setTrainingSalesHistory(prev => prev.map(s =>
+          s.id === venda.id ? { ...s, status: 'reversed' } : s
+        ));
+      } else {
+        await Storage.reverseSale(venda.id);
+        // Estoque voltou no servidor — recarrega pra tela não ficar atrasada.
+        const fresh = await Storage.getProducts();
+        setProducts(fresh.filter(p => (p.pdvMode ?? 'supermax') === pdvMode));
+      }
+      setReversalsCount(c => c + 1);
+      setDevolucaoModal(null);
+      showAlert({
+        title: 'Devolução processada',
+        message: `Estoque atualizado. ${venda.formaPagamento === 'Fiado' || venda.formaPagamento === 'Cartão Crédito'
+          ? 'Ajuste manualmente em Financeiro → Contas a Receber.'
+          : 'Cliente pode ser reembolsado.'}`,
+        variant: 'info',
+      });
+    } catch (err: any) {
+      setDevolucaoModal(d => d ? { ...d, processando: false } : d);
+      showAlert({
+        title: 'Erro ao estornar',
+        message: err?.message ? String(err.message) : String(err),
+        variant: 'error',
+      });
+    }
   };
 
   // Abre o card de confirmação para cancelar um item específico do carrinho.
@@ -3484,15 +3546,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   title="Modo Treinamento — nada é salvo"
                 >
                   🎓 TREINAMENTO
-                </span>
-              )}
-              {isSimulationMode && !isTraining && (
-                <span
-                  className="ml-2 px-3 py-1.5 rounded-md text-sm uppercase font-black tracking-widest shrink-0 border-2 flex items-center gap-1.5"
-                  style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
-                  title={`${modeMeta.label} é uma simulação demonstrativa — vendas não persistem no banco.`}
-                >
-                  ✨ SIMULAÇÃO
                 </span>
               )}
               {cashSession && (
