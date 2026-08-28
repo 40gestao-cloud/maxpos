@@ -49,10 +49,25 @@ export interface Product {
   marca?: string;
   // Nicho do PDV. Default 'supermax' quando não informado (migração legada).
   pdvMode?: PdvMode;
+  /** Marcado para aparecer no carrossel da tela de login. */
+  vitrine?: boolean;
 }
 
 // Categoria de produto/serviço como cadastro. Antes era texto livre digitado
 // em cada produto, o que deixava "Bebidas" e "bebidas" virarem duas gavetas.
+// Item do carrossel público da tela de login. Vem da RPC get_vitrine_publica,
+// que devolve um subconjunto seguro de `products` — sem custo nem estoque,
+// porque isto trafega para quem ainda não autenticou.
+export interface VitrineItem {
+  id: string;
+  name: string;
+  image?: string;
+  price: number;
+  marca?: string;
+  category?: string;
+  pdvMode: PdvMode;
+}
+
 export interface Category {
   id: string;
   name: string;

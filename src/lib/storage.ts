@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Category, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
+import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
 
 // Uma linha de `sales` (com sale_items/sale_payments embutidos) virando Sale.
 // Três leituras diferentes montavam este objeto na mão e já divergiam entre si
@@ -80,13 +80,39 @@ export const Storage = {
   getProductsLite: async (): Promise<Product[]> => {
     const { data, error } = await supabase
       .from('products')
-      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode')
+      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine')
       .order('name');
     if (error) throw error;
     return (data ?? []).map((r: any) => ({
       ...r,
       pdvMode: r.pdv_mode ?? 'supermax',
     })) as Product[];
+  },
+
+  // ─── Vitrine (carrossel da tela de login) ────────────────
+  // Leitura PUBLICA via RPC: a tela de login roda sem sessao, e a policy de
+  // `products` e só para authenticated. A RPC e SECURITY DEFINER com lista
+  // explicita de colunas — custo e estoque nunca saem.
+  getVitrinePublica: async (): Promise<VitrineItem[]> => {
+    const { data, error } = await supabase.rpc('get_vitrine_publica');
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      image: r.image,
+      price: Number(r.price ?? 0),
+      marca: r.marca ?? undefined,
+      category: r.category ?? undefined,
+      pdvMode: r.pdv_mode ?? 'supermax',
+    })) as VitrineItem[];
+  },
+
+  setVitrine: async (productId: string, naVitrine: boolean): Promise<void> => {
+    const { error } = await supabase
+      .from('products')
+      .update({ vitrine: naVitrine })
+      .eq('id', productId);
+    if (error) throw error;
   },
 
   // ─── Categorias ──────────────────────────────────────────

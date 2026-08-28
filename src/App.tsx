@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
   DollarSign, BarChart3, Wallet,
-  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2
+  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2, Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -19,6 +19,7 @@ import EstoqueModule from './components/EstoqueModule';
 import FinanceiroModule from './components/FinanceiroModule';
 import FolhaPagamentoModule from './components/FolhaPagamentoModule';
 import RelatoriosModule from './components/RelatoriosModule';
+import VitrineModule from './components/VitrineModule';
 import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
 import FilialSelector from './components/FilialSelector';
@@ -38,7 +39,7 @@ type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornec
 type Tab =
   | 'inicio' | 'pdv'
   | `cadastros-${SubCadastro}`
-  | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'configuracoes';
+  | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'vitrine' | 'configuracoes';
 
 const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
   { id: 'categorias',   label: 'Categorias' },
@@ -167,6 +168,7 @@ function AppInterno() {
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
     { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
     { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
+    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
     { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
     { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
   ];
@@ -444,6 +446,7 @@ function AppInterno() {
               {activeTab === 'financeiro' && <FinanceiroModule />}
               {activeTab === 'folha' && <FolhaPagamentoModule />}
               {activeTab === 'relatorios' && <RelatoriosModule />}
+              {activeTab === 'vitrine' && <VitrineModule />}
               {activeTab === 'configuracoes' && <ConfiguracoesModule onUserUpdate={setUser} />}
             </motion.div>
           </AnimatePresence>

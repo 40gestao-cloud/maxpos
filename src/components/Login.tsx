@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { User, LogIn, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { Storage } from '../lib/storage';
+import { VitrineCarousel } from './VitrineCarousel';
 
 interface LoginProps {
   onLogin: (user: any) => void;
@@ -38,8 +39,21 @@ export default function Login({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-main flex items-center justify-center p-6">
-      <div className="w-full max-w-md neumorphic p-10 space-y-8">
+    // Duas colunas no modelo do LogMax: vitrine à esquerda (só desktop) e
+    // login à direita, agrupados num container central — em tela widescreen
+    // os dois ficavam colados nas bordas. No mobile a vitrine sai e o card de
+    // login volta a ser o único conteúdo, centralizado.
+    <div
+      className="min-h-screen w-full flex items-center justify-center relative overflow-hidden"
+      style={{ background: '#172554' }}
+    >
+      <div className="w-full max-w-6xl flex flex-col md:flex-row md:min-h-screen items-center">
+        <div className="hidden md:flex md:flex-1 md:min-h-screen items-center justify-center">
+          <VitrineCarousel />
+        </div>
+
+        <div className="flex-1 flex items-center justify-center p-6 md:p-10 w-full">
+      <div className="w-full max-w-md bg-white rounded-2xl border-4 p-10 space-y-8" style={{ borderColor: '#FFC107' }}>
         <div className="text-center">
           <div className="w-40 h-40 mx-auto flex items-center justify-center mb-4 overflow-hidden">
             <img src="/icon-maxpos.png" alt="MaxPOS" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
@@ -106,6 +120,8 @@ export default function Login({ onLogin }: LoginProps) {
 
         <div className="pt-6 text-center">
           <img src="/icon-assinatura-modoclaro.png" alt="Assinatura" className="mx-auto h-12" />
+        </div>
+      </div>
         </div>
       </div>
     </div>
