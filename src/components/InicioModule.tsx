@@ -11,9 +11,9 @@ interface InicioModuleProps {
   onStartTraining?: () => void;
 }
 
-const YELLOW = '#FFC107';
-const YELLOW_DARK = '#B8860B';
-const NAVY_DARK = '#172554';
+const YELLOW = 'var(--accent)';
+const YELLOW_DARK = 'var(--accent-dark)';
+const NAVY_DARK = 'var(--navy)';
 
 export default function InicioModule({ currentUser, onStartTraining }: InicioModuleProps) {
   const now = new Date();

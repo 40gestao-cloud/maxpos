@@ -107,9 +107,9 @@ export default function EstoqueModule() {
   // o card nao pular de tamanho quando o dado chega.
   const stats = [
     { label: 'Estoque Crítico', value: criticalProducts.length.toString(), skelW: '2.5rem', icon: AlertTriangle, accent: '#b91c1c', desc: 'Produtos abaixo do mínimo' },
-    { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: '#172554', desc: 'Total investido', tint: '#FFC107' },
-    { label: 'Movimentações', value: visibleMoves.length.toString(), skelW: '3rem', icon: TrendingUp, accent: '#172554', desc: 'Saídas registradas' },
-    { label: 'Total de Itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, accent: '#172554', desc: 'Unidades em estoque' },
+    { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: 'var(--navy)', desc: 'Total investido', tint: 'var(--accent)' },
+    { label: 'Movimentações', value: visibleMoves.length.toString(), skelW: '3rem', icon: TrendingUp, accent: 'var(--navy)', desc: 'Saídas registradas' },
+    { label: 'Total de Itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, accent: 'var(--navy)', desc: 'Unidades em estoque' },
   ] as Array<{ label: string; value: string; skelW: string; icon: any; accent: string; desc: string; tint?: string }>;
 
   return (
@@ -153,7 +153,7 @@ export default function EstoqueModule() {
           <div className="flex-1 overflow-y-auto max-h-[460px] custom-scrollbar pr-1">
             {loading ? (
               <div className="flex justify-center py-12">
-                <div className="w-10 h-10 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+                <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
               </div>
             ) : criticalProducts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-gray-400">
@@ -198,7 +198,7 @@ export default function EstoqueModule() {
               {dismissedCount > 0 && (
                 <button
                   onClick={restoreAllMoves}
-                  className="text-xs font-bold text-[#172554] hover:underline"
+                  className="text-xs font-bold text-[var(--navy)] hover:underline"
                   title={`Restaurar ${dismissedCount} ${dismissedCount === 1 ? 'movimentação apagada' : 'movimentações apagadas'}`}
                 >
                   Mostrar todas
@@ -213,7 +213,7 @@ export default function EstoqueModule() {
           <div className="overflow-y-auto max-h-[460px] custom-scrollbar pr-1">
             {loading ? (
               <div className="flex justify-center py-12">
-                <div className="w-10 h-10 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+                <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
               </div>
             ) : recentMoves.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-gray-400">

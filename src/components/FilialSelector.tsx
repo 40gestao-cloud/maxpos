@@ -39,54 +39,48 @@ export default function FilialSelector({
         </button>
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-10">
-        <div className="text-center mb-10">
+      {/* justify-start (e não center): os textos sobem para o alto da área e
+          sobra espaço para os cards crescerem sem empurrar nada. */}
+      <main className="flex-1 flex flex-col items-center justify-start px-6 pt-10 pb-12">
+        <div className="text-center mb-8">
           <p className="text-sm font-bold uppercase tracking-[0.25em]" style={{ color: '#FFC107' }}>
             Olá, {operador.split(' ')[0]}
           </p>
           <h2 className="mt-2 text-3xl md:text-4xl font-black text-white tracking-tight">
             Em qual empresa você vai operar?
           </h2>
-          <p className="mt-3 text-sm text-white/70 max-w-lg mx-auto">
-            Cada empresa tem produtos, caixa, estoque e resultado próprios.
-            Você pode trocar a qualquer momento pelo botão no topo.
-          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 w-full max-w-4xl">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
           {FILIAIS.map(f => {
             const m = FILIAL_META[f];
             return (
               <button
                 key={f}
                 onClick={() => onEscolher(f)}
-                className="group rounded-2xl p-6 flex flex-col items-center text-center transition-all border-2 hover:-translate-y-1 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-offset-[#172554]"
+                title={`${m.label} — ${m.descricao}`}
+                className="fs-card-shimmer group rounded-2xl p-4 flex flex-col items-center text-center transition-all border-2 hover:-translate-y-1 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-offset-[#172554]"
                 style={{
                   background: 'rgba(255,255,255,0.04)',
                   borderColor: `${m.color}66`,
                   ['--tw-ring-color' as string]: m.color,
+                  // Cores do shimmer: o pulso corre na cor da própria empresa.
+                  ['--fs-bd-hv' as string]: `${m.color}b3`,
+                  ['--fs-peak' as string]: m.color,
                 }}
               >
-                {/* Moldura unificada; só a cor da placa muda, porque o fundo
+                {/* O card inteiro é o botão — sem "Entrar" separado, que
+                    sugeria um segundo alvo dentro de algo já clicável.
+                    Moldura unificada; só a cor da placa muda, porque o fundo
                     vem embutido em cada PNG (ver FILIAL_META.plate). */}
                 <div
-                  className="w-24 h-24 rounded-xl p-2 flex items-center justify-center border-2 mb-4 transition-transform group-hover:scale-105"
+                  className="w-full aspect-square rounded-2xl p-4 flex items-center justify-center border-2 transition-transform group-hover:scale-105"
                   style={{ background: m.plate, borderColor: m.color }}
                 >
-                  <img src={m.logo} alt="" className="w-full h-full object-contain" />
+                  {/* alt com o nome: sem texto no card, é o que sobra pro
+                      leitor de tela e pra quando a imagem não carregar. */}
+                  <img src={m.logo} alt={m.label} className="w-full h-full object-contain" />
                 </div>
-                <span className="text-xl font-black tracking-tight" style={{ color: m.color }}>
-                  {m.label}
-                </span>
-                <span className="mt-1 text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">
-                  {m.descricao}
-                </span>
-                <span
-                  className="mt-5 w-full py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-colors"
-                  style={{ background: m.color, color: m.fg }}
-                >
-                  Entrar
-                </span>
               </button>
             );
           })}

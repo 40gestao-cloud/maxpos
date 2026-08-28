@@ -197,8 +197,8 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     <div className="space-y-8 animate-in fade-in duration-500">
       {alertHost}
       <div className="flex items-center gap-4 mb-2">
-        <div className="p-3 bg-[#FFC107]/10 rounded-2xl">
-          <Settings className="text-[#FFC107]" size={24} />
+        <div className="p-3 bg-[var(--accent)]/10 rounded-2xl">
+          <Settings className="text-[var(--accent)]" size={24} />
         </div>
         <div>
           <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Configurações</h2>
@@ -212,9 +212,9 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
             key={t.id}
             onClick={() => setSubTab(t.id)}
             className={`px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide border-2 transition-all text-white glass-blue shimmer ${
-              subTab === t.id ? 'ring-2 ring-offset-2 ring-[#FFC107]' : 'opacity-80 hover:opacity-100'
+              subTab === t.id ? 'ring-2 ring-offset-2 ring-[var(--accent)]' : 'opacity-80 hover:opacity-100'
             }`}
-            style={{ borderColor: '#FFC107' }}
+            style={{ borderColor: 'var(--accent)' }}
           >
             <span className="relative z-[2]">{t.label}</span>
           </button>
@@ -226,7 +226,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Profile Card */}
             <div className="neumorphic p-8 space-y-6">
-              <h3 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] flex items-center gap-2">
+              <h3 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] flex items-center gap-2">
                 <Camera size={16} /> Perfil do Operador
               </h3>
 
@@ -239,7 +239,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
                       <div className="text-4xl font-black text-gray-600/20 uppercase">{user?.name?.charAt(0)}</div>
                     )}
                   </div>
-                  <label className="absolute bottom-0 right-0 p-3 bg-[#FFC107] text-black rounded-full cursor-pointer hover:scale-110 transition-transform shadow-xl">
+                  <label className="absolute bottom-0 right-0 p-3 bg-[var(--accent)] text-black rounded-full cursor-pointer hover:scale-110 transition-transform shadow-xl">
                     <Camera size={18} />
                     <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
                   </label>
@@ -259,7 +259,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
             <button
               onClick={handleSave}
               disabled={saving}
-              className="bg-[#FFC107] text-black font-black px-12 py-4 rounded-2xl flex items-center gap-3 hover:scale-105 transition-all shadow-xl active:scale-95 uppercase text-xs tracking-[0.2em] disabled:opacity-60"
+              className="bg-[var(--accent)] text-black font-black px-12 py-4 rounded-2xl flex items-center gap-3 hover:scale-105 transition-all shadow-xl active:scale-95 uppercase text-xs tracking-[0.2em] disabled:opacity-60"
             >
               {saving ? (
                 <>
@@ -301,7 +301,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       {subTab === 'auditoria' && canAudit && (
         <div className="space-y-5">
           <div className="neumorphic p-5 space-y-4">
-            <h3 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] flex items-center gap-2">
+            <h3 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] flex items-center gap-2">
               <Filter size={16} /> Filtros
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -367,7 +367,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
               <button
                 onClick={loadAudit}
                 disabled={auditLoading}
-                className="bg-[#FFC107] text-black font-black px-5 py-2 rounded-lg flex items-center gap-2 hover:scale-105 active:scale-95 transition-all uppercase text-xs tracking-widest disabled:opacity-50"
+                className="bg-[var(--accent)] text-black font-black px-5 py-2 rounded-lg flex items-center gap-2 hover:scale-105 active:scale-95 transition-all uppercase text-xs tracking-widest disabled:opacity-50"
               >
                 {auditLoading ? (
                   <><div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" /> CARREGANDO</>
@@ -388,7 +388,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
           </div>
 
           <div className="neumorphic overflow-hidden">
-            <div className="px-5 py-3 border-b-2 border-gray-200 flex items-center justify-between" style={{ background: '#172554' }}>
+            <div className="px-5 py-3 border-b-2 border-gray-200 flex items-center justify-between" style={{ background: 'var(--navy)' }}>
               <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] flex items-center gap-2">
                 <FileSearch size={16} /> Log de Operações
               </h3>
@@ -411,7 +411,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className="bg-[#FFC107] text-black text-xs uppercase font-black tracking-wider">
+                <thead className="bg-[var(--accent)] text-black text-xs uppercase font-black tracking-wider">
                   <tr>
                     <th className="px-4 py-2 w-8"></th>
                     <th className="px-4 py-2">Data/Hora</th>

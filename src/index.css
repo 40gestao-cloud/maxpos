@@ -78,14 +78,20 @@ select:-webkit-autofill {
      sumia sobre o branco do card: a superfície ficava sem limite visível e
      vários cards só ganhavam contorno no hover. Tingir com a cor da marca
      dá o limite e mantém o card dentro do trio branco/azul/amarelo.        */
-  --border:         rgba(23, 37, 84, 0.28);  /* borda padrão de card       */
-  --border-strong:  rgba(23, 37, 84, 0.55);  /* inputs/botões interativos  */
-  --border-hover:   rgba(23, 37, 84, 0.55);  /* realce de card clicável    */
+  /* Cor da marca em CANAIS (não hex) pra poder compor alfa com rgb(... / a).
+     Trocada por empresa mais abaixo — é o que faz o sistema inteiro mudar de
+     cara ao entrar em MaxLook ou TechMax, em vez das três usarem o navy do
+     SuperMax e a identidade viver só num badge. */
+  --brand-rgb:      23 37 84;
+  --border:         rgb(var(--brand-rgb) / 0.28);  /* borda padrão de card  */
+  --border-strong:  rgb(var(--brand-rgb) / 0.55);  /* inputs/botões         */
+  --border-hover:   rgb(var(--brand-rgb) / 0.55);  /* realce de clicável    */
   --text-main:      #111827;   /* texto principal                        */
   --text-muted:     #6b7280;   /* texto secundário                       */
   --accent:         #FFC107;   /* amarelo MaxPOS (header, destaques)     */
   --accent-dark:    #B8860B;   /* dourado para bordas/sub-header amarelo */
-  --navy:           #172554;   /* azul-marinho (sub-headers/tabelas)     */
+  --accent-fg:      #172554;   /* texto legível SOBRE o accent           */
+  --navy:           rgb(var(--brand-rgb));  /* cor escura da marca       */
   --money:          #15803d;   /* verde dinheiro (valores/positivos)     */
   --danger:         #b91c1c;   /* vermelho (erros)                       */
 
@@ -93,6 +99,30 @@ select:-webkit-autofill {
   --shadow-dark:    transparent;
   --shadow-light:   transparent;
 }
+
+/* ── Identidade por empresa ──
+   O atributo `data-filial` é posto no elemento raiz pelo App a partir da
+   empresa da sessão. Só os TOKENS mudam; nenhum componente precisa saber em
+   qual loja está.
+
+   SuperMax mantém azul-marinho + amarelo (é o supermercado, e a marca do
+   MaxPOS nasceu com ela). MaxLook e TechMax passam a ter o preto como cor
+   escura — boutique e loja de eletrônicos não são azul-marinho — mudando só
+   o acento: bege na moda, laranja na tecnologia. */
+[data-filial='maxlook'] {
+  --brand-rgb:   10 10 10;     /* preto */
+  --accent:      #c9a882;      /* bege */
+  --accent-dark: #8a5a3b;
+  --accent-fg:   #1c1207;      /* texto escuro sobre o bege */
+}
+
+[data-filial='techmax'] {
+  --brand-rgb:   10 10 10;     /* preto */
+  --accent:      #f97316;      /* laranja */
+  --accent-dark: #c2410c;
+  --accent-fg:   #ffffff;      /* branco sobre o laranja */
+}
+
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -174,13 +204,13 @@ select:-webkit-autofill {
      está aqui" — e é o mesmo indicador das abas de Cadastros. */
   .nav-item.active {
     background: var(--accent);
-    color: var(--navy);
+    color: var(--accent-fg);
     font-weight: 800;
   }
 
   .nav-item.active:hover {
     background: var(--accent);
-    color: var(--navy);
+    color: var(--accent-fg);
   }
 }
 
@@ -478,4 +508,61 @@ body {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
+}
+
+/* ── Seletor de empresa — shimmer correndo na borda do card ──
+   Portado do LogMax (.fs-card-shimmer). Um conic-gradient girando, recortado
+   num anel de 1.5px por mask-composite: o miolo do card fica de fora, então o
+   brilho anda só na moldura.
+
+   @property é o que torna isso possível: sem registrar --fs-angle como
+   <angle>, o navegador trata a variável como texto e não interpola — a
+   animação ficaria travada. E anima-se o ÂNGULO, não transform:rotate, que
+   distorceria visivelmente por causa do aspect ratio do card.
+
+   As cores saem das vars que cada card declara inline (--fs-bd-hv, --fs-peak),
+   então SuperMax corre azul, MaxLook bege e TechMax laranja sem uma regra por
+   empresa. O resto do conic é transparente de propósito: pintar o anel inteiro
+   dobraria a borda que o card já tem e o engrossaria. */
+@property --fs-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.fs-card-shimmer {
+  position: relative;
+}
+
+.fs-card-shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--fs-angle),
+    transparent 0deg,
+    transparent 68deg,
+    var(--fs-bd-hv) 92deg,
+    var(--fs-peak, var(--fs-bd-hv)) 104deg,
+    var(--fs-bd-hv) 116deg,
+    transparent 140deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: fs-border-spin 4.5s linear infinite;
+  pointer-events: none;
+  z-index: 4;
+}
+
+@keyframes fs-border-spin {
+  to { --fs-angle: 360deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fs-card-shimmer::before { animation: none; }
 }

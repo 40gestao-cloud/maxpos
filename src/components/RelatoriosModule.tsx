@@ -111,7 +111,7 @@ export default function RelatoriosModule() {
           dos panos, o que e justamente o que a separacao veio evitar. */}
       <div className="neumorphic neumorphic-accent p-6 flex flex-wrap justify-between items-center gap-4">
         <div className="flex gap-4 items-center">
-          <div className="w-14 h-14 neumorphic-inset flex items-center justify-center" style={{ color: '#172554' }}>
+          <div className="w-14 h-14 neumorphic-inset flex items-center justify-center" style={{ color: 'var(--navy)' }}>
             <BarChart3 size={28} />
           </div>
           <div>
@@ -129,7 +129,7 @@ export default function RelatoriosModule() {
 
       {loading ? (
         <div className="flex justify-center py-20 opacity-40">
-          <div className="w-10 h-10 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+          <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -141,10 +141,10 @@ export default function RelatoriosModule() {
               {chartData.map((d, i) => (
                 <div
                   key={i}
-                  className="flex-1 bg-[#FFC107]/20 hover:bg-[#FFC107] transition-all cursor-pointer rounded-t-lg relative group"
+                  className="flex-1 bg-[var(--accent)]/20 hover:bg-[var(--accent)] transition-all cursor-pointer rounded-t-lg relative group"
                   style={{ height: `${d.height}%` }}
                 >
-                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black text-[#172554] text-sm font-black px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black text-[var(--navy)] text-sm font-black px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                     R$ {d.val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
@@ -170,7 +170,7 @@ export default function RelatoriosModule() {
               {dismissedTopCount > 0 && (
                 <button
                   onClick={restoreAllTop}
-                  className="text-xs font-bold text-[#172554] hover:underline"
+                  className="text-xs font-bold text-[var(--navy)] hover:underline"
                   title={`Restaurar ${dismissedTopCount} produto${dismissedTopCount === 1 ? '' : 's'} apagado${dismissedTopCount === 1 ? '' : 's'}`}
                 >
                   Mostrar todos
@@ -182,7 +182,7 @@ export default function RelatoriosModule() {
                 <div key={p.key} className="space-y-2 group">
                   <div className="flex justify-between items-center text-sm font-bold gap-2">
                     <span className="text-gray-900 truncate flex-1">{p.label}</span>
-                    <span className="text-[#172554] shrink-0">{p.percent} ({p.qty})</span>
+                    <span className="text-[var(--navy)] shrink-0">{p.percent} ({p.qty})</span>
                     <button
                       onClick={() => dismissTop(p.key)}
                       className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
@@ -192,7 +192,7 @@ export default function RelatoriosModule() {
                     </button>
                   </div>
                   <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#FFC107]" style={{ width: p.percent }} />
+                    <div className="h-full bg-[var(--accent)]" style={{ width: p.percent }} />
                   </div>
                 </div>
               ))}

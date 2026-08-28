@@ -93,7 +93,7 @@ export default function Login({ onLogin }: LoginProps) {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="text-gray-600 hover:text-[#FFC107] transition-colors"
+                className="text-gray-600 hover:text-[var(--accent)] transition-colors"
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
@@ -105,7 +105,7 @@ export default function Login({ onLogin }: LoginProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#FFC107] text-black font-black py-4 rounded-xl hover:bg-[#ffca2c] transition-all transform active:scale-95 shadow-[0_0_30px_rgba(255,193,7,0.2)] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-[var(--accent)] text-black font-black py-4 rounded-xl hover:bg-[#ffca2c] transition-all transform active:scale-95 shadow-[0_0_30px_rgba(255,193,7,0.2)] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading ? (
               <span className="flex items-center gap-2">

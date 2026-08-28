@@ -254,7 +254,7 @@ export default function FinanceiroModule() {
     { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, color: 'text-emerald-500', icon: DollarSign },
     { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, color: 'text-blue-500', icon: ArrowUpCircle },
     { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, color: 'text-red-500', icon: ArrowDownCircle },
-    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, color: 'text-[#FFC107]', icon: CreditCard },
+    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, color: 'text-[var(--accent)]', icon: CreditCard },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
@@ -385,7 +385,7 @@ export default function FinanceiroModule() {
       {/* Add Account Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[#FFC107]">
+          <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[var(--accent)]">
             <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-gray-600 hover:text-red-500 transition-colors">
               <X size={24} />
             </button>
@@ -442,7 +442,7 @@ export default function FinanceiroModule() {
                       key={s}
                       onClick={() => setFormData({ ...formData, status: s })}
                       className={`flex-1 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all ${
-                        formData.status === s ? 'bg-[#FFC107] text-black' : 'neumorphic-inset text-gray-600'
+                        formData.status === s ? 'bg-[var(--accent)] text-black' : 'neumorphic-inset text-gray-600'
                       }`}
                     >
                       {s === 'pending' ? 'Pendente' : 'Pago'}
@@ -454,7 +454,7 @@ export default function FinanceiroModule() {
 
             <button
               onClick={handleAddAccount}
-              className="w-full bg-[#FFC107] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-all uppercase text-xs tracking-widest hover:opacity-90"
+              className="w-full bg-[var(--accent)] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-all uppercase text-xs tracking-widest hover:opacity-90"
             >
               Lançar no Sistema
             </button>
@@ -468,11 +468,11 @@ export default function FinanceiroModule() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
             <h3 className="text-base md:text-lg font-bold flex items-center gap-2 text-gray-900">
-              <History className="text-[#FFC107]" /> Fluxo de Caixa Recente
+              <History className="text-[var(--accent)]" /> Fluxo de Caixa Recente
               {dismissedFlowCount > 0 && (
                 <button
                   onClick={restoreAllFlow}
-                  className="ml-2 text-xs font-bold text-[#172554] hover:underline"
+                  className="ml-2 text-xs font-bold text-[var(--navy)] hover:underline"
                   title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} apagado${dismissedFlowCount === 1 ? '' : 's'} da visualização`}
                 >
                   Mostrar todas
@@ -486,7 +486,7 @@ export default function FinanceiroModule() {
                     key={tab}
                     onClick={() => setActiveTab(tab)}
                     className={`px-3 py-2 sm:py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-1 sm:flex-none ${
-                      activeTab === tab ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'
+                      activeTab === tab ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     {tab === 'all' ? 'Tudo' : tab === 'payable' ? 'Pagar' : 'Receber'}
@@ -496,13 +496,13 @@ export default function FinanceiroModule() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowFilters(!showFilters)}
-                  className={`p-3 sm:p-2 neumorphic-inset transition-colors ${showFilters ? 'text-[#FFC107] border border-[#FFC107]/30' : 'text-gray-600 hover:text-gray-900'}`}
+                  className={`p-3 sm:p-2 neumorphic-inset transition-colors ${showFilters ? 'text-[var(--accent)] border border-[var(--accent)]/30' : 'text-gray-600 hover:text-gray-900'}`}
                 >
                   <Filter size={14} />
                 </button>
                 <button
                   onClick={handlePrintReport}
-                  className="flex items-center justify-center gap-2 text-sm font-black text-[#172554] uppercase tracking-widest bg-[#FFC107]/5 px-4 py-3 sm:py-2 rounded-lg hover:bg-[#FFC107]/10 transition-colors flex-1 sm:flex-none"
+                  className="flex items-center justify-center gap-2 text-sm font-black text-[var(--navy)] uppercase tracking-widest bg-[var(--accent)]/5 px-4 py-3 sm:py-2 rounded-lg hover:bg-[var(--accent)]/10 transition-colors flex-1 sm:flex-none"
                 >
                   <Printer size={14} /> <span className="sm:inline">Gerar PDF</span>
                 </button>
@@ -549,7 +549,7 @@ export default function FinanceiroModule() {
           <div className="space-y-4">
             {loading && (
               <div className="flex justify-center py-10 opacity-40">
-                <div className="w-8 h-8 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
               </div>
             )}
 

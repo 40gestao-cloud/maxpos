@@ -189,7 +189,7 @@ function AppInterno() {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 opacity-60">
-          <div className="w-12 h-12 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+          <div className="w-12 h-12 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
           <p className="text-xs font-bold uppercase tracking-widest text-gray-600">Carregando...</p>
         </div>
       </div>
@@ -213,7 +213,14 @@ function AppInterno() {
   const activeIsPDV = isPdvTab;
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+    // data-filial troca os tokens de marca (index.css). Fica na raiz pra que
+    // TUDO herde — sidebar, header, cards, bordas — sem cada componente
+    // precisar saber em qual empresa está.
+    <div
+      data-filial={filialAtiva ?? 'supermax'}
+      className="flex h-screen bg-white overflow-hidden"
+      style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+    >
       {/* Sidebar Overlay — mobile sempre, PDV em qualquer largura */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -238,18 +245,18 @@ function AppInterno() {
            navy, e a coluna branca embaixo fazia essa faixa parecer órfã. Com a
            sidebar inteira navy, o "chrome" (topo + esquerda) vira moldura e o
            branco passa a significar só uma coisa: área de trabalho. */
-        style={{ background: '#172554' }}
+        style={{ background: 'var(--navy)' }}
       >
         {/* Logo bar — navy com acento amarelo (alinhado ao header) */}
-        <div className="h-[72px] px-5 flex items-center border-b-4" style={{ background: '#172554', borderColor: '#FFC107' }}>
+        <div className="h-[72px] px-5 flex items-center border-b-4" style={{ background: 'var(--navy)', borderColor: 'var(--accent)' }}>
           <div className="flex items-center justify-between gap-3 w-full">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 bg-white rounded p-1 overflow-hidden border-2 shrink-0" style={{ borderColor: '#FFC107' }}>
+              <div className="w-10 h-10 bg-white rounded p-1 overflow-hidden border-2 shrink-0" style={{ borderColor: 'var(--accent)' }}>
                 <img src="/icon-maxpos.png" alt="MaxPOS" className="w-full h-full object-contain" />
               </div>
               <div className="min-w-0">
                 <h2 className="text-lg font-black text-white tracking-tight leading-none">MaxPOS</h2>
-                <p className="text-[11px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#FFC107' }}>ERP / PDV</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider mt-0.5" style={{ color: 'var(--accent)' }}>ERP / PDV</p>
               </div>
             </div>
             <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-1 text-white shrink-0"><X size={20} /></button>
@@ -348,7 +355,7 @@ function AppInterno() {
       <main className="flex-1 flex flex-col min-w-0 bg-white">
         {/* Header — navy com acento amarelo (mesma altura do logo bar) */}
         {!activeIsPDV && (
-          <header className="h-[72px] px-6 flex items-center justify-between border-b-4 z-10" style={{ background: '#172554', borderColor: '#FFC107' }}>
+          <header className="h-[72px] px-6 flex items-center justify-between border-b-4 z-10" style={{ background: 'var(--navy)', borderColor: 'var(--accent)' }}>
             <div className="flex items-center gap-4">
               <button
                 onClick={() => setIsSidebarOpen(true)}
@@ -357,7 +364,7 @@ function AppInterno() {
                 <Menu size={20} />
               </button>
               <div className="flex items-center gap-3">
-                <LayoutDashboard size={24} style={{ color: '#FFC107' }} />
+                <LayoutDashboard size={24} style={{ color: 'var(--accent)' }} />
                 <h1 className="text-xl font-black text-white tracking-tight uppercase">
                   {tituloDaAba}
                 </h1>
@@ -383,10 +390,10 @@ function AppInterno() {
                 <span className="hidden sm:inline">{FILIAL_META[filialAtiva ?? 'supermax'].label}</span>
               </button>
               <div className="text-right hidden sm:block">
-                <p className="text-xs font-bold uppercase tracking-wider leading-none mb-1" style={{ color: '#FFC107' }}>Operador</p>
+                <p className="text-xs font-bold uppercase tracking-wider leading-none mb-1" style={{ color: 'var(--accent)' }}>Operador</p>
                 <p className="font-bold text-base text-white">{user.name}</p>
               </div>
-              <div className="w-11 h-11 rounded-full bg-white border-2 flex items-center justify-center overflow-hidden" style={{ borderColor: '#FFC107' }}>
+              <div className="w-11 h-11 rounded-full bg-white border-2 flex items-center justify-center overflow-hidden" style={{ borderColor: 'var(--accent)' }}>
                 {user.avatar ? (
                   <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (

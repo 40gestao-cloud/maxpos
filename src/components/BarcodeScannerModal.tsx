@@ -83,7 +83,7 @@ export default function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerM
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
       <div className="neumorphic p-6 max-w-sm w-full bg-card space-y-4 relative animate-in zoom-in duration-300">
         <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-black text-[#172554] uppercase tracking-widest leading-none flex items-center gap-2">
+          <h3 className="text-lg font-black text-[var(--navy)] uppercase tracking-widest leading-none flex items-center gap-2">
             <Camera size={20} /> Leitor
           </h3>
           <button 
@@ -104,7 +104,7 @@ export default function BarcodeScannerModal({ onScan, onClose }: BarcodeScannerM
           )}
           {hasPermission === null && (
             <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-black/5 text-black">
-               <div className="w-10 h-10 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin mb-4" />
+               <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin mb-4" />
                <p className="font-bold text-sm text-black">Iniciando Câmera...</p>
                <p className="text-[10px] text-black/50 mt-2 font-black uppercase tracking-widest">Permita o acesso quando solicitado</p>
             </div>

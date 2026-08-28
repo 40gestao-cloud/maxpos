@@ -150,7 +150,7 @@ export default function FolhaPagamentoModule() {
         <div className="neumorphic p-4 md:p-6 relative overflow-hidden">
           <div className="flex justify-between items-start mb-2 relative z-10">
             <span className="text-[8px] md:text-sm text-gray-600 font-black uppercase tracking-widest leading-tight">Colaboradores na folha</span>
-            <Users size={14} className="text-[#FFC107] opacity-40" />
+            <Users size={14} className="text-[var(--accent)] opacity-40" />
           </div>
           <h3 className="text-sm md:text-2xl font-black text-gray-900 relative z-10">
             {loading
@@ -189,19 +189,19 @@ export default function FolhaPagamentoModule() {
         className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95 w-full"
       >
         <div className="flex items-center gap-4">
-          <div className="p-4 rounded-2xl bg-[#FFC107]/10 text-[#FFC107]"><Plus size={24} /></div>
+          <div className="p-4 rounded-2xl bg-[var(--accent)]/10 text-[var(--accent)]"><Plus size={24} /></div>
           <div className="text-left">
             <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Lançar Folha de Pagamento</h4>
             <p className="text-sm text-gray-600 uppercase font-bold">Vincula um colaborador da Equipe ao mês selecionado</p>
           </div>
         </div>
-        <Plus size={24} className="text-[#FFC107] opacity-20 group-hover:opacity-100 transition-opacity" />
+        <Plus size={24} className="text-[var(--accent)] opacity-20 group-hover:opacity-100 transition-opacity" />
       </button>
 
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[#FFC107]">
+          <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[var(--accent)]">
             <button onClick={() => { setShowAddModal(false); resetForm(); }} className="absolute top-4 right-4 text-gray-600 hover:text-red-500 transition-colors">
               <X size={24} />
             </button>
@@ -267,7 +267,7 @@ export default function FolhaPagamentoModule() {
 
             <button
               onClick={handleAddFolha}
-              className="w-full bg-[#FFC107] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-all uppercase text-xs tracking-widest hover:opacity-90"
+              className="w-full bg-[var(--accent)] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-all uppercase text-xs tracking-widest hover:opacity-90"
             >
               Lançar Folha
             </button>
@@ -278,13 +278,13 @@ export default function FolhaPagamentoModule() {
       {/* List */}
       <div className="neumorphic p-4 md:p-8">
         <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2 text-gray-900">
-          <Wallet className="text-[#FFC107]" /> Folhas de {mesRef}
+          <Wallet className="text-[var(--accent)]" /> Folhas de {mesRef}
         </h3>
 
         <div className="space-y-4">
           {loading && (
             <div className="flex justify-center py-10 opacity-40">
-              <div className="w-8 h-8 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
             </div>
           )}
 
@@ -298,7 +298,7 @@ export default function FolhaPagamentoModule() {
           {folhas.map(f => (
             <div key={f.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 neumorphic-inset gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto min-w-0">
-                <div className="p-2 rounded-lg bg-[#FFC107]/10 text-[#FFC107] shrink-0">
+                <div className="p-2 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] shrink-0">
                   <Users size={18} />
                 </div>
                 <div className="min-w-0">

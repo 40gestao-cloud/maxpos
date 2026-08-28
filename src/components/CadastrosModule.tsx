@@ -831,7 +831,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           c.name.toLowerCase().includes(search.toLowerCase()));
         return (
           <table className="w-full text-left min-w-[720px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-4">Categoria</th>
                 <th className="px-5 py-4">PDV</th>
@@ -853,12 +853,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     </div>
                   </td>
                   <td className="px-5 py-4"><FilialBadge modo={c.pdvMode} /></td>
-                  <td className="px-5 py-4 text-right tabular-nums font-bold" style={{ color: '#172554' }}>{usos(c.name)}</td>
+                  <td className="px-5 py-4 text-right tabular-nums font-bold" style={{ color: 'var(--navy)' }}>{usos(c.name)}</td>
                   <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-2">
                       <button onClick={() => setCatForm(c)} title="Editar"
                         className="p-2 rounded-lg border-2 hover:bg-yellow-50"
-                        style={{ borderColor: '#172554', color: '#172554' }}>
+                        style={{ borderColor: 'var(--navy)', color: 'var(--navy)' }}>
                         <Edit2 size={16} />
                       </button>
                       <button onClick={() => excluirCategoria(c)} title="Excluir"
@@ -882,7 +882,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       case 'equipe':
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="p-6">Membro</th>
                 <th className="p-6">Cargo</th>
@@ -896,7 +896,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 <tr key={u.id} className="hover:bg-gray-50 transition-colors">
                   <td className="p-6">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[#FFC107]/20 flex items-center justify-center text-[#172554] font-black text-xs">
+                      <div className="w-8 h-8 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--navy)] font-black text-xs">
                         {u.name.charAt(0)}
                       </div>
                       <span className="font-bold text-gray-900">{u.name}</span>
@@ -939,7 +939,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       case 'produtos':
         return (
           <table className="w-full text-left min-w-[1000px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-3">Produto</th>
                 <th className="px-5 py-3">Categoria</th>
@@ -990,11 +990,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="px-5 py-4 text-right tabular-nums text-base text-gray-700">
                     {formatBRL(p.costPrice)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold" style={{ color: '#172554' }}>
+                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold" style={{ color: 'var(--navy)' }}>
                     {formatBRL(p.price)}
                   </td>
                   <td className="px-5 py-4 text-right tabular-nums">
-                    <div className="font-bold text-base" style={{ color: '#172554' }}>{margem.toFixed(1)}%</div>
+                    <div className="font-bold text-base" style={{ color: 'var(--navy)' }}>{margem.toFixed(1)}%</div>
                   </td>
                   <td className="px-5 py-4 text-right">
                     {p.controlStock === false ? (
@@ -1049,7 +1049,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       case 'servicos':
         return (
           <table className="w-full text-left min-w-[900px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="p-6">Serviço</th>
                 <th className="p-6">Categoria</th>
@@ -1075,7 +1075,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="p-6 font-mono font-black text-emerald-500">R$ {s.price.toFixed(2)}</td>
                   <td className="p-6">
                     <div className="flex flex-col">
-                      <span className="font-black text-xs text-[#172554]">
+                      <span className="font-black text-xs text-[var(--navy)]">
                         {s.price && s.costPrice ? (((s.price - s.costPrice) / s.price) * 100).toFixed(1) : '0.0'}%
                       </span>
                       <span className="text-sm text-emerald-500 font-bold">R$ {(s.price - (s.costPrice || 0)).toFixed(2)}</span>
@@ -1099,7 +1099,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </button>
                       <button
                         onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
                         title="Detalhes"
                       >
                         <ChevronRight size={16} />
@@ -1114,7 +1114,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       case 'fornecedores':
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="p-6">Fornecedor</th>
                 <th className="p-6">Tipo</th>
@@ -1156,7 +1156,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </button>
                       <button
                         onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
                         title="Detalhes"
                       >
                         <ChevronRight size={16} />
@@ -1171,7 +1171,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       default: // clientes
         return (
           <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="p-6">Cliente</th>
                 <th className="p-6">Tipo</th>
@@ -1220,7 +1220,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </button>
                       <button
                         onClick={() => handleView(client)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-all active:scale-90"
+                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
                         title="Detalhes"
                       >
                         <ChevronRight size={16} />
@@ -1273,7 +1273,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               <button
                 onClick={exportProductsPDF}
                 className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
-                style={{ borderColor: '#FFC107' }}
+                style={{ borderColor: 'var(--accent)' }}
                 title="Exportar lista filtrada em PDF"
               >
                 <FileText size={18} className="relative z-[2]" />
@@ -1282,7 +1282,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               <button
                 onClick={exportProductsExcel}
                 className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
-                style={{ borderColor: '#FFC107' }}
+                style={{ borderColor: 'var(--accent)' }}
                 title="Exportar lista filtrada em CSV/Excel"
               >
                 <FileSpreadsheet size={18} className="relative z-[2]" />
@@ -1324,7 +1324,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   setShowAddSupplier(true);
                 }
               }}
-              className="bg-[#FFC107] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase shimmer border-2 border-[#B8860B]"
+              className="bg-[var(--accent)] text-black font-black px-6 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform active:scale-95 whitespace-nowrap shadow-lg text-xs tracking-widest uppercase shimmer border-2 border-[var(--accent-dark)]"
             >
               <Plus size={20} className="relative z-[2]" />
               <span className="relative z-[2]">NOVO</span>
@@ -1337,7 +1337,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2">
+            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2">
               <UserPlus /> {editingItem ? 'EDITAR MEMBRO' : 'CADASTRAR NOVO MEMBRO'}
             </h3>
             <button onClick={() => { setShowAddUser(false); setEditingItem(null); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
@@ -1396,7 +1396,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
             </div>
             <div className="lg:col-span-4 flex justify-end">
-              <button type="submit" className="bg-[#FFC107] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button type="submit" className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'CONFIRMAR CADASTRO'}
               </button>
             </div>
@@ -1409,7 +1409,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
             </h3>
             <button onClick={() => { setShowAddClient(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
@@ -1418,13 +1418,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
               onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
               onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -1527,7 +1527,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 type="text"
                 value={maskCurrency(Math.round((formData.creditLimit || 0) * 100))}
                 onChange={e => setFormData({ ...formData, creditLimit: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-[#172554] text-sm font-black" 
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-[var(--navy)] text-sm font-black" 
                 placeholder="0,00"
               />
             </div>
@@ -1545,7 +1545,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
             {/* Address Section */}
             <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
-              <h4 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+              <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
@@ -1623,7 +1623,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('cliente')} className="bg-[#FFC107] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('cliente')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR CLIENTE'}
               </button>
             </div>
@@ -1636,7 +1636,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
             </h3>
             <button onClick={() => { setShowAddProduct(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
@@ -1782,7 +1782,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
             <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-4">
               <div className="flex items-center gap-2 mb-2">
-                <ChevronRight size={18} className="text-[#FFC107] rotate-90" />
+                <ChevronRight size={18} className="text-[var(--accent)] rotate-90" />
                 <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
               </div>
               
@@ -1798,12 +1798,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-black text-[#172554] uppercase tracking-widest ml-1">Quantidade Comprada</label>
+                  <label className="text-sm font-black text-[var(--navy)] uppercase tracking-widest ml-1">Quantidade Comprada</label>
                   <input 
                     type="number"
                     value={formData.purchasedQuantity || ''}
                     onChange={e => setFormData({ ...formData, purchasedQuantity: parseInt(e.target.value) || 0 })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold border border-[#FFC107]/30 focus:border-[#FFC107]" 
+                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold border border-[var(--accent)]/30 focus:border-[var(--accent)]" 
                     placeholder="0"
                   />
                 </div>
@@ -1827,7 +1827,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <button 
                       type="button" 
                       onClick={() => setStockModal({ isOpen: true, product: formData, action: 'sum', amount: 0 })}
-                      className="text-[#172554] font-black uppercase text-sm hover:underline tracking-widest"
+                      className="text-[var(--navy)] font-black uppercase text-sm hover:underline tracking-widest"
                     >
                       Editar estoque
                     </button>
@@ -1859,7 +1859,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     id="controlStock"
                     checked={formData.controlStock === false}
                     onChange={e => setFormData({ ...formData, controlStock: !e.target.checked })}
-                    className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[#FFC107] transition-all"
+                    className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[var(--accent)] transition-all"
                   />
                   <label htmlFor="controlStock" className="text-xs font-black text-gray-600 uppercase tracking-widest cursor-pointer select-none">
                     Não controlar estoque
@@ -1878,7 +1878,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('produto')} className="bg-[#FFC107] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('produto')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR PRODUTO'}
               </button>
             </div>
@@ -1891,7 +1891,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR SERVIÇO' : 'CADASTRAR NOVO SERVIÇO'}
             </h3>
             <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
@@ -1987,7 +1987,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('servico')} className="bg-[#FFC107] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('servico')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR SERVIÇO'}
               </button>
             </div>
@@ -2000,7 +2000,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[#172554] flex items-center gap-2 uppercase tracking-widest">
+            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
             </h3>
             <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
@@ -2009,13 +2009,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
               onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
               onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[#FFC107] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -2111,7 +2111,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
             {/* Address Section */}
             <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
-              <h4 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+              <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
@@ -2189,7 +2189,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('fornecedor')} className="bg-[#FFC107] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('fornecedor')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR FORNECEDOR'}
               </button>
             </div>
@@ -2203,8 +2203,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       {catForm && subTab === 'categorias' && (
         <div className="neumorphic neumorphic-accent p-5 flex flex-col gap-4">
           <div className="flex items-center gap-2">
-            <FolderTree size={18} style={{ color: '#172554' }} />
-            <h3 className="text-base font-black uppercase tracking-wide" style={{ color: '#172554' }}>
+            <FolderTree size={18} style={{ color: 'var(--navy)' }} />
+            <h3 className="text-base font-black uppercase tracking-wide" style={{ color: 'var(--navy)' }}>
               {categories.some(c => c.id === catForm.id) ? 'Editar categoria' : 'Nova categoria'}
             </h3>
           </div>
@@ -2246,8 +2246,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     className="w-8 h-8 rounded-full border-2 transition-transform hover:scale-110"
                     style={{
                       background: hex,
-                      borderColor: catForm.color === hex ? '#172554' : 'rgba(0,0,0,0.15)',
-                      boxShadow: catForm.color === hex ? '0 0 0 2px #FFC107' : undefined,
+                      borderColor: catForm.color === hex ? 'var(--navy)' : 'rgba(0,0,0,0.15)',
+                      boxShadow: catForm.color === hex ? '0 0 0 2px var(--accent)' : undefined,
                     }}
                   />
                 ))}
@@ -2272,13 +2272,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 onClick={salvarCategoria}
                 disabled={catSaving}
                 className="px-5 py-2 rounded-lg border-2 text-sm font-black uppercase tracking-wider text-white disabled:opacity-40"
-                style={{ background: '#172554', borderColor: '#FFC107' }}
+                style={{ background: 'var(--navy)', borderColor: 'var(--accent)' }}
               >{catSaving ? 'Salvando...' : 'Salvar'}</button>
             </div>
           </div>
           {/* Renomear mexe nos produtos: o operador precisa saber antes. */}
           {categories.some(c => c.id === catForm.id && c.name !== catForm.name.trim()) && (
-            <p className="text-xs font-bold" style={{ color: '#B8860B' }}>
+            <p className="text-xs font-bold" style={{ color: 'var(--accent-dark)' }}>
               Renomear atualiza também os produtos e serviços que usam esta categoria.
             </p>
           )}
@@ -2311,7 +2311,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:p-0">
             <div className="bg-white max-w-md w-full border-2 border-gray-300 shadow-2xl relative print:shadow-none print:border-0 print:m-0">
               {/* Header navy */}
-              <div className="px-5 py-3 flex items-center justify-between text-white print:hidden" style={{ background: '#172554' }}>
+              <div className="px-5 py-3 flex items-center justify-between text-white print:hidden" style={{ background: 'var(--navy)' }}>
                 <h3 className="text-base font-black uppercase tracking-wide">Etiqueta do Produto</h3>
                 <button
                   onClick={() => setBarcodeModal({ isOpen: false, product: null })}
@@ -2357,7 +2357,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       EAN-13 inválido — precisa ter 13 dígitos com check digit correto.
                     </p>
                   ) : eanDirty ? (
-                    <p className="text-sm font-bold" style={{ color: '#172554' }}>
+                    <p className="text-sm font-bold" style={{ color: 'var(--navy)' }}>
                       EAN válido. Clique em "Salvar no produto" para persistir.
                     </p>
                   ) : (
@@ -2510,7 +2510,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </button>
 
               <div className="flex items-center gap-6">
-                <div className="w-24 h-24 neumorphic-inset rounded-2xl flex items-center justify-center text-[#FFC107] shadow-inner">
+                <div className="w-24 h-24 neumorphic-inset rounded-2xl flex items-center justify-center text-[var(--accent)] shadow-inner">
                   {subTab === 'clientes' ? <UserIcon size={40} /> : subTab === 'produtos' ? <Barcode size={40} /> : <Shield size={40} />}
                 </div>
                 <div>
@@ -2579,7 +2579,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Limite de Crédito</span>
-                        <p className="text-sm font-black text-[#172554]">R$ {(viewingDetails.creditLimit || 0).toFixed(2)}</p>
+                        <p className="text-sm font-black text-[var(--navy)]">R$ {(viewingDetails.creditLimit || 0).toFixed(2)}</p>
                       </div>
                       <div className="space-y-1">
                         <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
@@ -2593,7 +2593,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <span className="text-sm font-black text-[#172554] uppercase tracking-widest">Endereço</span>
+                    <span className="text-sm font-black text-[var(--navy)] uppercase tracking-widest">Endereço</span>
                     <div className="neumorphic-inset p-3 bg-main/20 rounded-xl space-y-2">
                        <p className="text-xs text-gray-900">
                         {viewingDetails.address ? `${viewingDetails.address}, ${viewingDetails.number || 'S/N'}` : 'Endereço não informado'}
@@ -2634,7 +2634,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </div>
                       <div className="space-y-1 text-right">
                         <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Lucro Estimado</span>
-                        <p className="text-sm font-black text-[#172554]">
+                        <p className="text-sm font-black text-[var(--navy)]">
                           {viewingDetails.costPrice ? (((viewingDetails.price - viewingDetails.costPrice) / viewingDetails.price) * 100).toFixed(1) : '0.0'}%
                         </p>
                       </div>
@@ -2683,9 +2683,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         <div className="mt-auto p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-600 font-black uppercase tracking-widest border-t border-gray-200 bg-main/50 backdrop-blur-sm sticky bottom-0">
           <span>Mostrando {currentListLength} de {totalLength} registros</span>
           <div className="flex gap-2">
-            <button className="px-3 py-1 neumorphic-inset disabled:opacity-30 text-gray-600 hover:text-[#FFC107] transition-colors">Anterior</button>
-            <button className="px-3 py-1 neumorphic-inset text-[#FFC107] bg-main shadow-inner">1</button>
-            <button className="px-3 py-1 neumorphic-inset text-gray-600 hover:text-[#FFC107] transition-colors">Próximo</button>
+            <button className="px-3 py-1 neumorphic-inset disabled:opacity-30 text-gray-600 hover:text-[var(--accent)] transition-colors">Anterior</button>
+            <button className="px-3 py-1 neumorphic-inset text-[var(--accent)] bg-main shadow-inner">1</button>
+            <button className="px-3 py-1 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-colors">Próximo</button>
           </div>
         </div>
       </div>

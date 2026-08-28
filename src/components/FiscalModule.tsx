@@ -185,11 +185,11 @@ export default function FiscalModule() {
         </div>
       </div>
 
-      <div className="neumorphic p-8 border-l-4 border-[#FFC107]">
+      <div className="neumorphic p-8 border-l-4 border-[var(--accent)]">
         <div className="flex justify-between items-start">
           <div className="space-y-2">
             <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-900">
-              <Shield className="text-[#FFC107]" /> Status SEFAZ — Online (Simulado)
+              <Shield className="text-[var(--accent)]" /> Status SEFAZ — Online (Simulado)
             </h2>
             <p className="text-sm text-gray-600">Ambiente de Homologação • Autorização em Contingência Desativada</p>
           </div>
@@ -262,15 +262,15 @@ export default function FiscalModule() {
               </div>
             </div>
 
-            <div className="bg-[#FFC107]/5 p-6 rounded-2xl border border-[#FFC107]/10 flex gap-4">
-              <AlertCircle className="text-[#FFC107] shrink-0" size={20} />
+            <div className="bg-[var(--accent)]/5 p-6 rounded-2xl border border-[var(--accent)]/10 flex gap-4">
+              <AlertCircle className="text-[var(--accent)] shrink-0" size={20} />
               <p className="text-sm text-gray-600 leading-relaxed font-medium">
                 As NFC-e listadas ao lado são geradas a partir das vendas reais do PDV, mas a emissão é <b>simulada</b>.
                 Em produção, este módulo exige integração com Certificado Digital A1 e webservice da SEFAZ.
               </p>
             </div>
             <button
-              className="w-full bg-[#FFC107] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-transform"
+              className="w-full bg-[var(--accent)] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-transform"
               onClick={() => showAlert('Configuração salva no ambiente simulado. Em produção, será necessário certificado digital A1.')}
             >
               SALVAR CONFIGURAÇÃO
@@ -294,7 +294,7 @@ export default function FiscalModule() {
           <div className="flex-1 overflow-y-auto max-h-[460px] custom-scrollbar pr-1">
             {loading ? (
               <div className="flex justify-center py-12">
-                <div className="w-10 h-10 border-4 border-[#FFC107] border-t-transparent rounded-full animate-spin" />
+                <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
               </div>
             ) : sales.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-gray-400">
@@ -341,7 +341,7 @@ export default function FiscalModule() {
                             <p className="font-bold text-sm text-gray-900">{formatBRL(sale.total)}</p>
                             <button
                               onClick={() => emitirNFCe(sale)}
-                              className="mt-1 px-3 py-1 bg-[#FFC107] text-black font-black text-xs uppercase tracking-widest rounded active:scale-95"
+                              className="mt-1 px-3 py-1 bg-[var(--accent)] text-black font-black text-xs uppercase tracking-widest rounded active:scale-95"
                               title="Emitir NFC-e simulada"
                             >
                               EMITIR
