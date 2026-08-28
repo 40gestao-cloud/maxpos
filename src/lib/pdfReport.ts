@@ -162,13 +162,17 @@ export const PDFReport = {
     }, 500);
   },
 
-  generateFinancialReport: (accounts: Account[], sales: Sale[] = [], installmentsMap: Record<string, CreditInstallment[]> = {}) => {
+  // `loja` existe para o PDF nao contradizer a tela: com um filtro de loja
+  // ativo, o relatorio saia com as tres lojas enquanto a tela mostrava uma.
+  generateFinancialReport: (accounts: Account[], sales: Sale[] = [], installmentsMap: Record<string, CreditInstallment[]> = {}, loja?: string) => {
     const doc = new jsPDF();
     
     doc.setFontSize(20);
     doc.text('Fluxo de Caixa e Resumo Financeiro', 10, 20);
     doc.setFontSize(10);
     doc.text(`Data de Geração: ${new Date().toLocaleString()}`, 10, 28);
+    doc.text(loja ? `Loja: ${loja}` : 'Loja: todas', 10, 34);
+    doc.text('Contas a pagar/receber sao lancamentos manuais, sem loja de origem.', 10, 40);
     
     const totalSales = sales.reduce((acc, s) => acc + s.total, 0);
     const totalPayable = accounts.filter(a => a.type === 'payable').reduce((acc, a) => acc + a.amount, 0);
@@ -248,13 +252,16 @@ export const PDFReport = {
     doc.save('relatorio_financeiro.pdf');
   },
 
-  generateStockReport: (products: any[]) => {
+  generateStockReport: (products: any[], loja?: string) => {
     const doc = new jsPDF();
     
     doc.setFontSize(20);
     doc.text('Relatório de Reposição de Estoque', 10, 20);
     doc.setFontSize(10);
     doc.text(`Data: ${new Date().toLocaleDateString()}`, 10, 28);
+    // Sem a loja no cabecalho, dois relatorios de lojas diferentes ficam
+    // indistinguiveis depois de impressos.
+    doc.text(loja ? `Loja: ${loja}` : 'Loja: todas', 10, 34);
     
     const tableData = products.map((p, i) => [
       p.name,

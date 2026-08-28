@@ -31,8 +31,11 @@ import { User } from './types';
 
 type Tab = 'inicio' | 'pdv-supermax' | 'pdv-maxlook' | 'pdv-techmax' | 'cadastros' | 'estoque' | 'financeiro' | 'folha' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
 
-// Mapa tab → modo PDV. Cada PDV é uma entrada de sidebar independente,
-// com caixa próprio (via cashSession scoped por modo dentro do PDVModule).
+// Mapa tab → modo PDV. Cada PDV é uma entrada de sidebar independente, com
+// caixa próprio: `cash_sessions.pdv_mode` escopa a sessão por loja. Este
+// comentário já afirmava isso antes de ser verdade — a coluna não existia e o
+// getOpenSession buscava só por operador, então o caixa aberto no SuperMax
+// aparecia aberto também na MaxLook.
 const TAB_TO_PDV_MODE: Partial<Record<Tab, 'supermax' | 'maxlook' | 'techmax'>> = {
   'pdv-supermax': 'supermax',
   'pdv-maxlook': 'maxlook',

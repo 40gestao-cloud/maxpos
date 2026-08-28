@@ -10,6 +10,7 @@ import {
   ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { Storage } from '../lib/storage';
+import { FiltroLoja, LojaFiltro, daLoja, lojaMeta } from './FiltroLoja';
 import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
@@ -48,6 +49,7 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
 export default function FinanceiroModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
   const { showAlert, host: alertHost } = useAlertDialog();
+  const [loja, setLoja] = useState<LojaFiltro>('todas');
   const [sales, setSales] = useState<Sale[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,7 +180,15 @@ export default function FinanceiroModule() {
   // Apagar um registro do "Fluxo de Caixa Recente" reduz os
   // totalizadores correspondentemente. "Mostrar todas" restaura.
 
-  const visibleSalesForStats = sales.filter(s => !dismissedFlow.has(`sale-${s.id}`));
+  // A VENDA tem loja de origem (pdv_mode) e por isso filtra. As CONTAS de
+  // accounts nao: sao lancamentos manuais (aluguel, fornecedor, etc.) sem
+  // vinculo com PDV nenhum. Filtrar as duas juntas faria a tela afirmar
+  // "a MaxLook nao tem contas a pagar", o que e diferente de "as contas nao
+  // sao atribuidas a uma loja". Por isso `accounts` fica fora do filtro e a
+  // tela diz isso em voz alta.
+  const vendas = sales.filter(s => daLoja((s as any).pdvMode, loja));
+
+  const visibleSalesForStats = vendas.filter(s => !dismissedFlow.has(`sale-${s.id}`));
   const visibleAccountsForStats = accounts.filter(a => !dismissedFlow.has(`acc-${a.id}`));
 
   const totalSales = visibleSalesForStats.reduce((acc, s) => acc + s.total, 0);
@@ -190,13 +200,13 @@ export default function FinanceiroModule() {
     .reduce((acc, a) => acc + a.amount, 0);
 
   const handlePrintReport = async () => {
-    if (accounts.length === 0 && sales.length === 0) {
+    if (accounts.length === 0 && vendas.length === 0) {
       showAlert('Nenhuma movimentação/conta para gerar relatório.');
       return;
     }
 
     // Pré-carrega parcelas de todas as vendas a crédito parcelado
-    const creditSales = sales.filter(s => getCreditPayment(s));
+    const creditSales = vendas.filter(s => getCreditPayment(s));
     const missing = creditSales.filter(s => !installmentsMap[s.id]);
     let fullMap = { ...installmentsMap };
 
@@ -214,7 +224,7 @@ export default function FinanceiroModule() {
       setInstallmentsMap(fullMap);
     }
 
-    PDFReport.generateFinancialReport(accounts, sales, fullMap);
+    PDFReport.generateFinancialReport(accounts, vendas, fullMap, loja === 'todas' ? undefined : lojaMeta(loja).label);
   };
 
   const handleAddAccount = async () => {
@@ -287,7 +297,7 @@ export default function FinanceiroModule() {
     return matchesType && matchesStatus && matchesDate;
   });
 
-  const filteredSales = sales.filter(s => {
+  const filteredSales = vendas.filter(s => {
     if (dismissedFlow.has(`sale-${s.id}`)) return false;
     const matchesType = activeTab === 'all' || activeTab === 'receivable';
     const matchesStatus = filters.status === 'all' || filters.status === 'paid';
@@ -310,6 +320,32 @@ export default function FinanceiroModule() {
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
+      <div className="neumorphic neumorphic-accent p-5 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-black text-gray-900 uppercase tracking-wide">
+              Financeiro
+              {loja !== 'todas' && (
+                <span className="ml-2 align-middle text-[11px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-full border"
+                  style={{ background: lojaMeta(loja).color, color: lojaMeta(loja).fg, borderColor: lojaMeta(loja).dark }}>
+                  {lojaMeta(loja).label}
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-gray-600 font-bold uppercase tracking-widest mt-0.5">
+              {vendas.length} venda{vendas.length === 1 ? '' : 's'}
+              {loja === 'todas' ? ' — todas as lojas' : ` na ${lojaMeta(loja).label}`}
+            </p>
+          </div>
+          <FiltroLoja value={loja} onChange={setLoja} />
+        </div>
+        {loja !== 'todas' && (
+          <p className="text-[11px] font-bold text-gray-600 border-t pt-2" style={{ borderColor: 'var(--border)' }}>
+            O filtro vale para as <b>vendas</b>. Contas a pagar e a receber são lançamentos
+            manuais, sem loja de origem, e continuam aparecendo integralmente.
+          </p>
+        )}
+      </div>
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {stats.map((stat, i) => {

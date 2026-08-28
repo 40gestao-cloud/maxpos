@@ -536,28 +536,42 @@ export const Storage = {
   },
 
   // ─── Caixa: sessões + movimentos (sangria/suprimento) ────
-  getOpenSession: async (operadorId: string): Promise<CashSession | null> => {
+  // O caixa e POR LOJA. Sem o pdvMode aqui, o operador abria o caixa no
+  // SuperMax e o mesmo caixa aparecia aberto na aba da MaxLook — sangria,
+  // suprimento e fechamento caiam todos na mesma gaveta.
+  getOpenSession: async (operadorId: string, pdvMode: CashSession['pdvMode'] = 'supermax'): Promise<CashSession | null> => {
     const { data, error } = await supabase
       .from('cash_sessions')
       .select('*')
       .eq('operadorId', operadorId)
+      .eq('pdv_mode', pdvMode)
       .eq('status', 'aberto')
       .order('aberturaAt', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return (data as CashSession | null) ?? null;
+    if (!data) return null;
+    return { ...(data as any), pdvMode: (data as any).pdv_mode ?? 'supermax' } as CashSession;
   },
 
-  openCashSession: async (operadorId: string, fundoTroco: number): Promise<CashSession> => {
+  openCashSession: async (
+    operadorId: string,
+    fundoTroco: number,
+    pdvMode: CashSession['pdvMode'] = 'supermax',
+  ): Promise<CashSession> => {
     const session: CashSession = {
       id: crypto.randomUUID(),
       operadorId,
+      pdvMode,
       aberturaAt: new Date().toISOString(),
       fundoTroco,
       status: 'aberto',
     };
-    const { error } = await supabase.from('cash_sessions').insert(session);
+    // pdvMode (camelCase) -> pdv_mode (coluna), como em products/sales.
+    const { pdvMode: _m, ...row } = session as any;
+    const { error } = await supabase
+      .from('cash_sessions')
+      .insert({ ...row, pdv_mode: pdvMode });
     if (error) throw error;
     return session;
   },

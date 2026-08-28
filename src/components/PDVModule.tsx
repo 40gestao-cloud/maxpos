@@ -1675,7 +1675,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setCashSessionLoaded(true);
       return;
     }
-    Storage.getOpenSession(currentUser.id)
+    // pdvMode: o caixa e por LOJA. Sem ele, abrir o caixa no SuperMax fazia a
+    // aba da MaxLook achar que ja tinha caixa aberto, e as duas lojas passavam
+    // a lancar sangria, suprimento e fechamento na mesma gaveta.
+    Storage.getOpenSession(currentUser.id, pdvMode)
       .then(s => {
         if (!active) return;
         setCashSession(s);
@@ -1690,7 +1693,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       })
       .finally(() => { if (active) setCashSessionLoaded(true); });
     return () => { active = false; };
-  }, [currentUser.id, isTraining, runsLocalOnly]);
+  }, [currentUser.id, isTraining, runsLocalOnly, pdvMode]);
 
   useEffect(() => {
     let active = true;
@@ -2067,6 +2070,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       const s: CashSession = {
         id: 'training-session',
         operadorId: currentUser.id,
+        pdvMode,
         aberturaAt: new Date().toISOString(),
         fundoTroco: fundo,
         status: 'aberto',
@@ -2077,7 +2081,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     try {
-      const s = await Storage.openCashSession(currentUser.id, fundo);
+      const s = await Storage.openCashSession(currentUser.id, fundo, pdvMode);
       setCashSession(s);
       setOpenCashModal(false);
       setOpenCashFundo('');

@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, X, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
+import { FiltroLoja, LojaFiltro, daLoja, lojaMeta } from './FiltroLoja';
 import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { formatBRL } from '../lib/masks';
@@ -16,6 +17,7 @@ const DISMISSED_MOVES_KEY = 'estoque_dismissed_moves';
 
 export default function EstoqueModule() {
   const { showAlert, host: alertHost } = useAlertDialog();
+  const [loja, setLoja] = useState<LojaFiltro>('todas');
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,20 +69,26 @@ export default function EstoqueModule() {
     return () => { active = false; supabase.removeChannel(ch); };
   }, []);
 
-  const criticalProducts = products.filter(p => p.controlStock !== false && p.stock <= (p.minStock ?? 5));
+  // Toda a tela lê destas listas. Antes somava as três lojas: o "estoque
+  // crítico" juntava arroz, camiseta e celular numa lista só, e o valor
+  // parado era o do grupo, não o da loja que o gerente administra.
+  const produtos = products.filter(p => daLoja(p.pdvMode, loja));
+  const vendas = sales.filter(s => daLoja((s as any).pdvMode, loja));
+
+  const criticalProducts = produtos.filter(p => p.controlStock !== false && p.stock <= (p.minStock ?? 5));
 
   const handleGeneratePurchaseReport = () => {
     if (criticalProducts.length === 0) {
       showAlert('Nenhum produto com estoque crítico no momento.');
       return;
     }
-    PDFReport.generateStockReport(criticalProducts);
+    PDFReport.generateStockReport(criticalProducts, loja === 'todas' ? undefined : lojaMeta(loja).label);
   };
 
-  const totalValue = products.reduce((acc, p) => acc + (p.costPrice || 0) * (p.stock || 0), 0);
-  const totalItems = products.reduce((acc, p) => acc + (p.stock || 0), 0);
+  const totalValue = produtos.reduce((acc, p) => acc + (p.costPrice || 0) * (p.stock || 0), 0);
+  const totalItems = produtos.reduce((acc, p) => acc + (p.stock || 0), 0);
 
-  const allMoves = sales
+  const allMoves = vendas
     .flatMap(s =>
       s.items.map((item, idx) => ({
         key: `${s.id}-${idx}`,
@@ -105,6 +113,24 @@ export default function EstoqueModule() {
   return (
     <div className="space-y-6 max-w-full">
       {alertHost}
+      <div className="neumorphic neumorphic-accent p-5 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-black text-gray-900 uppercase tracking-wide">
+            Estoque
+            {loja !== 'todas' && (
+              <span className="ml-2 align-middle text-[11px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-full border"
+                style={{ background: lojaMeta(loja).color, color: lojaMeta(loja).fg, borderColor: lojaMeta(loja).dark }}>
+                {lojaMeta(loja).label}
+              </span>
+            )}
+          </h2>
+          <p className="text-xs text-gray-600 font-bold uppercase tracking-widest mt-0.5">
+            {produtos.length} produto{produtos.length === 1 ? '' : 's'}
+            {loja === 'todas' ? ' — todas as lojas' : ` na ${lojaMeta(loja).label}`}
+          </p>
+        </div>
+        <FiltroLoja value={loja} onChange={setLoja} />
+      </div>
       {/* Stats grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => {

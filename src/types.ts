@@ -200,6 +200,8 @@ export interface CreditInstallment {
 export interface CashSession {
   id: string;
   operadorId: string;
+  /** Loja dona do caixa. Legado sem coluna conta como 'supermax'. */
+  pdvMode: PdvMode;
   aberturaAt: string;
   fundoTroco: number;
   fechamentoAt?: string | null;
