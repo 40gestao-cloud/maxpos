@@ -11,7 +11,7 @@ import autoTable from 'jspdf-autotable';
 import { Client, User, UserRole, Category } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
+import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 
@@ -673,9 +673,71 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     }
   };
 
+  // Validacao compartilhada por Cliente e Fornecedor — os dois cadastram a
+  // mesma coisa (pessoa PF/PJ) e nenhum dos dois validava NADA: dava pra
+  // gravar sem nome, com CPF invalido e em duplicata.
+  //
+  // `isValidCpfCnpj` ja existia em lib/masks.ts e nunca tinha sido chamada em
+  // lugar nenhum do app.
+  const validarPessoa = (
+    lista: any[],
+    rotulo: 'cliente' | 'fornecedor',
+  ): string | null => {
+    const nome = String(formData.name ?? '').trim();
+    if (nome.length < 2) {
+      return formData.type === 'PJ'
+        ? 'Informe a razão social.'
+        : `Informe o nome do ${rotulo}.`;
+    }
+
+    const doc = String(formData.document ?? '').replace(/\D/g, '');
+    if (doc) {
+      const esperado = formData.type === 'PJ' ? 14 : 11;
+      if (doc.length !== esperado) {
+        return formData.type === 'PJ'
+          ? 'CNPJ incompleto — são 14 dígitos.'
+          : 'CPF incompleto — são 11 dígitos.';
+      }
+      if (!isValidCpfCnpj(doc)) {
+        return `${formData.type === 'PJ' ? 'CNPJ' : 'CPF'} inválido — confira os dígitos verificadores.`;
+      }
+      // Duplicata importa no fiado: dois cadastros da mesma pessoa viram dois
+      // limites de credito, e o bloqueio por limite deixa de significar algo.
+      const jaExiste = lista.find(x =>
+        x.id !== editingItem?.id &&
+        String(x.document ?? '').replace(/\D/g, '') === doc);
+      if (jaExiste) {
+        return `Já existe ${rotulo} com este documento: ${jaExiste.name}.`;
+      }
+    }
+
+    const email = String(formData.email ?? '').trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      return 'E-mail inválido.';
+    }
+    return null;
+  };
+
+  // Trocar PF <-> PJ limpa o que era do outro tipo. Sem isso, digitar um CPF e
+  // trocar pra PJ deixava os 11 digitos no campo com rotulo de CNPJ — e o
+  // save gravava um documento que nao e nem um nem outro.
+  const trocarTipoPessoa = (tipo: 'PF' | 'PJ') => {
+    setFormData({
+      ...formData,
+      type: tipo,
+      document: '',
+      rg: tipo === 'PF' ? formData.rg : undefined,
+      ie: tipo === 'PJ' ? formData.ie : undefined,
+      tradeName: tipo === 'PJ' ? formData.tradeName : undefined,
+    });
+  };
+
   const handleSave = async (type: string) => {
     try {
       if (type === 'cliente') {
+        const erro = validarPessoa(clients, 'cliente');
+        if (erro) { showAlert(erro); return; }
+        formData.name = String(formData.name).trim();
         if (editingItem) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertClient(updated);
@@ -770,6 +832,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         }
         setShowAddService(false);
       } else if (type === 'fornecedor') {
+        const erro = validarPessoa(suppliers, 'fornecedor');
+        if (erro) { showAlert(erro); return; }
+        formData.name = String(formData.name).trim();
         if (editingItem) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertSupplier(updated);
@@ -1458,14 +1523,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
-              onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              onClick={() => trocarTipoPessoa('PF')}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
-              onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              onClick={() => trocarTipoPessoa('PJ')}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -1507,6 +1572,20 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                 placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
               />
+              {/* Erro ao DIGITAR, não só ao salvar: descobrir um dígito errado
+                  depois de preencher a ficha inteira é o pior momento.
+                  Só reclama com o documento completo — senão acusaria enquanto
+                  o operador ainda está no meio da digitação. */}
+              {(() => {
+                const d = String(formData.document ?? '').replace(/\D/g, '');
+                const cheio = formData.type === 'PJ' ? 14 : 11;
+                if (d.length !== cheio || isValidCpfCnpj(d)) return null;
+                return (
+                  <p className="text-[11px] font-bold text-red-600">
+                    {formData.type === 'PJ' ? 'CNPJ' : 'CPF'} inválido — confira os dígitos.
+                  </p>
+                );
+              })()}
             </div>
 
             {formData.type === 'PF' ? (
@@ -2092,14 +2171,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
             <button 
-              onClick={() => setFormData({ ...formData, type: 'PF' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              onClick={() => trocarTipoPessoa('PF')}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Física
             </button>
             <button 
-              onClick={() => setFormData({ ...formData, type: 'PJ' })}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
+              onClick={() => trocarTipoPessoa('PJ')}
+              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Pessoa Jurídica
             </button>
@@ -2140,6 +2219,20 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
                 placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
               />
+              {/* Erro ao DIGITAR, não só ao salvar: descobrir um dígito errado
+                  depois de preencher a ficha inteira é o pior momento.
+                  Só reclama com o documento completo — senão acusaria enquanto
+                  o operador ainda está no meio da digitação. */}
+              {(() => {
+                const d = String(formData.document ?? '').replace(/\D/g, '');
+                const cheio = formData.type === 'PJ' ? 14 : 11;
+                if (d.length !== cheio || isValidCpfCnpj(d)) return null;
+                return (
+                  <p className="text-[11px] font-bold text-red-600">
+                    {formData.type === 'PJ' ? 'CNPJ' : 'CPF'} inválido — confira os dígitos.
+                  </p>
+                );
+              })()}
             </div>
 
             {formData.type === 'PF' ? (
