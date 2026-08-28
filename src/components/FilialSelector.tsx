@@ -19,7 +19,11 @@ export default function FilialSelector({
   onSair: () => void;
 }) {
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#172554' }}>
+    // Preto puro, nao o navy: navy e a cor do SuperMax, e esta tela vem ANTES
+    // da escolha — pintar de azul dava vantagem visual a uma das tres. Preto e
+    // neutro entre elas e ainda e o fundo em que as tres placas de logo
+    // (branca, preta, branca) se comportam melhor.
+    <div className="min-h-screen flex flex-col" style={{ background: '#000000' }}>
       <header className="h-[72px] px-6 flex items-center justify-between border-b-4 shrink-0" style={{ borderColor: '#FFC107' }}>
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-white rounded p-1 border-2 shrink-0" style={{ borderColor: '#FFC107' }}>
@@ -39,10 +43,10 @@ export default function FilialSelector({
         </button>
       </header>
 
-      {/* justify-start (e não center): os textos sobem para o alto da área e
-          sobra espaço para os cards crescerem sem empurrar nada. */}
-      <main className="flex-1 flex flex-col items-center justify-start px-6 pt-10 pb-12">
-        <div className="text-center mb-8">
+      {/* justify-start mantém o bloco no alto; o pb pequeno evita a faixa
+          vazia enorme que sobrava embaixo dos cards. */}
+      <main className="flex-1 flex flex-col items-center justify-start px-6 pt-10 pb-6">
+        <div className="text-center mb-14">
           <p className="text-sm font-bold uppercase tracking-[0.25em]" style={{ color: '#FFC107' }}>
             Olá, {operador.split(' ')[0]}
           </p>
@@ -59,9 +63,9 @@ export default function FilialSelector({
                 key={f}
                 onClick={() => onEscolher(f)}
                 title={`${m.label} — ${m.descricao}`}
-                className="fs-card-shimmer group rounded-2xl p-4 flex flex-col items-center text-center transition-all border-2 hover:-translate-y-1 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-offset-[#172554]"
+                className="fs-card-shimmer group rounded-2xl p-4 flex flex-col items-center text-center transition-all border-2 hover:-translate-y-1 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
+                  background: 'rgba(255,255,255,0.06)',
                   borderColor: `${m.color}66`,
                   ['--tw-ring-color' as string]: m.color,
                   // Cores do shimmer: o pulso corre na cor da própria empresa.
