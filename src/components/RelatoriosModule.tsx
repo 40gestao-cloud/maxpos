@@ -6,14 +6,14 @@
 import { useState, useEffect } from 'react';
 import { BarChart3, PieChart, TrendingUp, Calendar, HeartCrack, X } from 'lucide-react';
 import { Storage } from '../lib/storage';
-import { FiltroLoja, LojaFiltro, daLoja, lojaMeta } from './FiltroLoja';
+import { useFilial } from '../contexts/FilialContext';
 import { supabase } from '../lib/supabase';
 
 const DISMISSED_TOP_KEY = 'relatorios_dismissed_top';
 
 export default function RelatoriosModule() {
   const [sales, setSales] = useState<any[]>([]);
-  const [loja, setLoja] = useState<LojaFiltro>('todas');
+  const { filialAtiva } = useFilial();
   const [loading, setLoading] = useState(true);
   const [dismissedTop, setDismissedTop] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set();
@@ -61,7 +61,7 @@ export default function RelatoriosModule() {
 
   // Tudo abaixo lê desta lista, não de `sales` cru: sem isso o gráfico e o
   // ranking continuariam somando as três lojas mesmo com um filtro na tela.
-  const vendas = sales.filter(s => daLoja(s.pdvMode, loja));
+  const vendas = sales.filter(s => (s.pdvMode ?? 'supermax') === filialAtiva);
 
   const last7Days = [...Array(7)].map((_, i) => {
     const d = new Date();
@@ -106,34 +106,25 @@ export default function RelatoriosModule() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="neumorphic neumorphic-accent p-6 flex flex-col gap-5">
-        <div className="flex flex-wrap justify-between items-center gap-4">
-          <div className="flex gap-4 items-center">
-            <div className="w-14 h-14 neumorphic-inset flex items-center justify-center" style={{ color: '#172554' }}>
-              <BarChart3 size={28} />
-            </div>
-            <div>
-              <h2 className="text-2xl font-black text-gray-900">
-                Análise de Performance
-                {loja !== 'todas' && (
-                  <span className="ml-2 align-middle text-[11px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-full border"
-                    style={{ background: lojaMeta(loja).color, color: lojaMeta(loja).fg, borderColor: lojaMeta(loja).dark }}>
-                    {lojaMeta(loja).label}
-                  </span>
-                )}
-              </h2>
-              <p className="text-sm text-gray-600 font-bold uppercase tracking-widest mt-1">
-                {vendas.length} venda{vendas.length === 1 ? '' : 's'}
-                {loja === 'todas' ? ' — todas as lojas' : ` na ${lojaMeta(loja).label}`}
-              </p>
-            </div>
+      {/* Sem seletor de loja: a empresa ativa e a da SESSAO, mostrada no
+          header do app. Um filtro aqui ofereceria trocar de empresa por baixo
+          dos panos, o que e justamente o que a separacao veio evitar. */}
+      <div className="neumorphic neumorphic-accent p-6 flex flex-wrap justify-between items-center gap-4">
+        <div className="flex gap-4 items-center">
+          <div className="w-14 h-14 neumorphic-inset flex items-center justify-center" style={{ color: '#172554' }}>
+            <BarChart3 size={28} />
           </div>
-          <div className="neumorphic-inset px-5 py-3 flex items-center gap-3">
-            <Calendar size={18} className="text-gray-600" />
-            <span className="text-xs font-black uppercase text-gray-600">Últimos 7 Dias</span>
+          <div>
+            <h2 className="text-2xl font-black text-gray-900">Análise de Performance</h2>
+            <p className="text-sm text-gray-600 font-bold uppercase tracking-widest mt-1">
+              {vendas.length} venda{vendas.length === 1 ? '' : 's'} registrada{vendas.length === 1 ? '' : 's'}
+            </p>
           </div>
         </div>
-        <FiltroLoja value={loja} onChange={setLoja} />
+        <div className="neumorphic-inset px-5 py-3 flex items-center gap-3">
+          <Calendar size={18} className="text-gray-600" />
+          <span className="text-xs font-black uppercase text-gray-600">Últimos 7 Dias</span>
+        </div>
       </div>
 
       {loading ? (
@@ -209,7 +200,7 @@ export default function RelatoriosModule() {
                 <div className="text-center py-10 text-gray-400">
                   <p className="text-sm font-bold">
                     {vendas.length === 0
-                      ? (loja === 'todas' ? 'Aguardando vendas...' : `Nenhuma venda na ${lojaMeta(loja).label} ainda`)
+                      ? 'Aguardando vendas...'
                       : 'Nenhum produto no ranking'}
                   </p>
                 </div>

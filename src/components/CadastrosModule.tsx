@@ -13,6 +13,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 import { useAlertDialog } from './ConfirmDialog';
+import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
@@ -42,22 +43,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // Filtro de nicho (só relevante em produtos/serviços). 'todos' mostra tudo,
   // ou filtra por PDV: SuperMax (supermercado), MaxLook (boutique), TechMax
   // (eletrônicos/assistência). Coluna pdv_mode adicionada em 2026-07-20.
-  const [nichoFilter, setNichoFilter] = useState<'todos' | 'supermax' | 'maxlook' | 'techmax'>('todos');
-  // Paleta das filiais igual à do LogMax (.filial-badge--* no index.css dele):
-  // SuperMax azul, MaxLook nude/bege, TechMax laranja. Antes SuperMax era
-  // amarelo e MaxLook dourado — as duas brigavam entre si e nenhuma batia com
-  // o outro sistema, onde o operador aprende a associar cor a filial.
-  const NICHO_META = {
-    supermax: { label: 'SuperMax', color: '#3b82f6', dark: '#1d4ed8', fg: '#ffffff' },
-    maxlook:  { label: 'MaxLook',  color: '#c9a882', dark: '#8a5a3b', fg: '#3b1f0a' },
-    techmax:  { label: 'TechMax',  color: '#f97316', dark: '#c2410c', fg: '#ffffff' },
-  } as const;
-
-  // Badge sólido — o mesmo desenho nos dois lugares que mostram filial
-  // (produtos e serviços). Antes era `color + '30'` de fundo com texto escuro,
-  // que lavava a cor e deixava as três quase iguais em telas fracas.
+  // A empresa nao e mais escolhida aqui: e a da sessao (header). Enquanto era
+  // um filtro local, dava pra cadastrar produto numa loja estando "em" outra.
+  const { filialAtiva } = useFilial();
+  const nichoFilter = filialAtiva ?? 'supermax';
+  // Badge sólido de empresa. A paleta mora no FilialContext (FILIAL_META) —
+  // estava duplicada aqui, no FiltroLoja e no PDV, e as três já tinham
+  // divergido: SuperMax chegou a ser amarelo num lugar e azul no outro.
   const FilialBadge = ({ modo }: { modo?: string | null }) => {
-    const m = NICHO_META[(modo ?? 'supermax') as keyof typeof NICHO_META] ?? NICHO_META.supermax;
+    const m = FILIAL_META[(modo ?? 'supermax') as keyof typeof FILIAL_META] ?? FILIAL_META.supermax;
     return (
       <span
         className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.15em] shrink-0 border"
@@ -404,7 +398,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   );
 
   const filteredProducts = products.filter(p => {
-    if (nichoFilter !== 'todos' && (p.pdvMode ?? 'supermax') !== nichoFilter) return false;
+    if ((p.pdvMode ?? 'supermax') !== nichoFilter) return false;
     const q = search.toLowerCase();
     return (p.name?.toLowerCase() || '').includes(q) ||
       (p.ean13 || '').includes(search) ||
@@ -603,7 +597,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   );
 
   const filteredServices = services.filter(s => {
-    if (nichoFilter !== 'todos' && (s.pdvMode ?? 'supermax') !== nichoFilter) return false;
+    if ((s.pdvMode ?? 'supermax') !== nichoFilter) return false;
     const q = search.toLowerCase();
     return (s.name?.toLowerCase() || '').includes(q) ||
       (s.category?.toLowerCase() || '').includes(q);
@@ -833,7 +827,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           products.filter((p: any) => (p.category ?? '') === nome).length +
           services.filter((s: any) => (s.category ?? '') === nome).length;
         const lista = categories.filter(c =>
-          (nichoFilter === 'todos' || (c.pdvMode ?? 'supermax') === nichoFilter) &&
+          (c.pdvMode ?? 'supermax') === nichoFilter &&
           c.name.toLowerCase().includes(search.toLowerCase()));
         return (
           <table className="w-full text-left min-w-[720px]">
@@ -878,7 +872,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               ))}
               {lista.length === 0 && (
                 <tr><td colSpan={4} className="px-5 py-12 text-center text-gray-500">
-                  Nenhuma categoria cadastrada{nichoFilter !== 'todos' ? ' para este PDV' : ''}.
+                  Nenhuma categoria cadastrada nesta empresa.
                 </td></tr>
               )}
             </tbody>
@@ -1242,7 +1236,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   };
 
   const filteredCategories = categories.filter(c =>
-    (nichoFilter === 'todos' || (c.pdvMode ?? 'supermax') === nichoFilter) &&
+    (c.pdvMode ?? 'supermax') === nichoFilter &&
     c.name.toLowerCase().includes(search.toLowerCase()));
 
   const currentListLength = subTab === 'categorias' ? filteredCategories.length :
@@ -1264,32 +1258,6 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       {alertHost}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex gap-3 w-full xl:w-auto flex-wrap items-center">
-          {/* Filtro por nicho — produtos, serviços e categorias */}
-          {(subTab === 'produtos' || subTab === 'servicos' || subTab === 'categorias') && (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setNichoFilter('todos')}
-                className="px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider border-2 transition-all"
-                style={nichoFilter === 'todos'
-                  ? { background: '#0A0A0A', color: '#fff', borderColor: '#0A0A0A' }
-                  : { background: 'white', color: '#525252', borderColor: 'rgba(0,0,0,0.15)' }}
-              >Todos</button>
-              {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
-                const meta = NICHO_META[n];
-                const active = nichoFilter === n;
-                return (
-                  <button
-                    key={n}
-                    onClick={() => setNichoFilter(n)}
-                    className="px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider border-2 transition-all"
-                    style={active
-                      ? { background: meta.color, color: meta.fg, borderColor: meta.dark, boxShadow: `0 2px 8px ${meta.color}59` }
-                      : { background: 'white', color: meta.dark, borderColor: meta.color + '60' }}
-                  >{meta.label}</button>
-                );
-              })}
-            </div>
-          )}
           <div className="flex-1 md:w-64 neumorphic-inset flex items-center px-4 py-2 gap-3">
             <Search size={18} className="text-gray-600" />
             <input
@@ -1332,7 +1300,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     id: 'C-' + crypto.randomUUID(),
                     name: '',
                     color: '#3b82f6',
-                    pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter,
+                    pdvMode: nichoFilter,
                     active: true,
                   });
                 }
@@ -1344,11 +1312,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 if (subTab === 'produtos') {
                   // Pré-preenche o nicho com o filtro atual (fica coerente com
                   // o que o operador está vendo). 'todos' cai em supermax.
-                  setFormData({ pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter });
+                  setFormData({ pdvMode: nichoFilter });
                   setShowAddProduct(true);
                 }
                 if (subTab === 'servicos') {
-                  setFormData({ pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter });
+                  setFormData({ pdvMode: nichoFilter });
                   setShowAddService(true);
                 }
                 if (subTab === 'fornecedores') {
@@ -1721,7 +1689,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
               <div className="flex gap-2 flex-wrap">
                 {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
-                  const meta = NICHO_META[n];
+                  const meta = FILIAL_META[n];
                   const active = (formData.pdvMode ?? 'supermax') === n;
                   return (
                     <button
@@ -1934,7 +1902,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
               <div className="flex gap-2 flex-wrap">
                 {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
-                  const meta = NICHO_META[n];
+                  const meta = FILIAL_META[n];
                   const active = (formData.pdvMode ?? 'supermax') === n;
                   return (
                     <button

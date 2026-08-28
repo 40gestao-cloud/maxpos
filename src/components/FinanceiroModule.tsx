@@ -10,7 +10,7 @@ import {
   ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { Storage } from '../lib/storage';
-import { FiltroLoja, LojaFiltro, daLoja, lojaMeta } from './FiltroLoja';
+import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { supabase } from '../lib/supabase';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
@@ -49,7 +49,7 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
 export default function FinanceiroModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
   const { showAlert, host: alertHost } = useAlertDialog();
-  const [loja, setLoja] = useState<LojaFiltro>('todas');
+  const { filialAtiva } = useFilial();
   const [sales, setSales] = useState<Sale[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,7 +186,7 @@ export default function FinanceiroModule() {
   // "a MaxLook nao tem contas a pagar", o que e diferente de "as contas nao
   // sao atribuidas a uma loja". Por isso `accounts` fica fora do filtro e a
   // tela diz isso em voz alta.
-  const vendas = sales.filter(s => daLoja((s as any).pdvMode, loja));
+  const vendas = sales.filter(s => ((s as any).pdvMode ?? 'supermax') === filialAtiva);
 
   const visibleSalesForStats = vendas.filter(s => !dismissedFlow.has(`sale-${s.id}`));
   const visibleAccountsForStats = accounts.filter(a => !dismissedFlow.has(`acc-${a.id}`));
@@ -224,7 +224,7 @@ export default function FinanceiroModule() {
       setInstallmentsMap(fullMap);
     }
 
-    PDFReport.generateFinancialReport(accounts, vendas, fullMap, loja === 'todas' ? undefined : lojaMeta(loja).label);
+    PDFReport.generateFinancialReport(accounts, vendas, fullMap, FILIAL_META[filialAtiva ?? 'supermax'].label);
   };
 
   const handleAddAccount = async () => {
@@ -320,32 +320,17 @@ export default function FinanceiroModule() {
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
-      <div className="neumorphic neumorphic-accent p-5 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-black text-gray-900 uppercase tracking-wide">
-              Financeiro
-              {loja !== 'todas' && (
-                <span className="ml-2 align-middle text-[11px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-full border"
-                  style={{ background: lojaMeta(loja).color, color: lojaMeta(loja).fg, borderColor: lojaMeta(loja).dark }}>
-                  {lojaMeta(loja).label}
-                </span>
-              )}
-            </h2>
-            <p className="text-xs text-gray-600 font-bold uppercase tracking-widest mt-0.5">
-              {vendas.length} venda{vendas.length === 1 ? '' : 's'}
-              {loja === 'todas' ? ' — todas as lojas' : ` na ${lojaMeta(loja).label}`}
-            </p>
-          </div>
-          <FiltroLoja value={loja} onChange={setLoja} />
-        </div>
-        {loja !== 'todas' && (
-          <p className="text-[11px] font-bold text-gray-600 border-t pt-2" style={{ borderColor: 'var(--border)' }}>
-            O filtro vale para as <b>vendas</b>. Contas a pagar e a receber são lançamentos
-            manuais, sem loja de origem, e continuam aparecendo integralmente.
-          </p>
-        )}
+      {/* Contas a pagar/receber sao lancamentos manuais, sem empresa de
+          origem: seguem visiveis em qualquer empresa. Dizer isso e melhor que
+          escondê-las e fazer a tela afirmar que a loja nao tem contas. */}
+      <div className="neumorphic neumorphic-accent p-4">
+        <p className="text-[11px] font-bold text-gray-600">
+          As <b>vendas</b> abaixo são de <b>{FILIAL_META[filialAtiva ?? 'supermax'].label}</b>.
+          Contas a pagar e a receber são lançamentos manuais, sem empresa de origem,
+          e aparecem integralmente.
+        </p>
       </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
         {stats.map((stat, i) => {

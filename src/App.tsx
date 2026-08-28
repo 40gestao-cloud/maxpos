@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
   DollarSign, BarChart3, Wallet,
-  LayoutDashboard, UserCircle, Settings, Home, ChevronDown
+  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -21,6 +21,8 @@ import FolhaPagamentoModule from './components/FolhaPagamentoModule';
 import RelatoriosModule from './components/RelatoriosModule';
 import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
+import FilialSelector from './components/FilialSelector';
+import { FilialProvider, useFilial, FILIAL_META } from './contexts/FilialContext';
 
 // Services
 import { supabase } from './lib/supabase';
@@ -34,7 +36,7 @@ import { User } from './types';
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
 type Tab =
-  | 'inicio' | 'pdv-supermax' | 'pdv-maxlook' | 'pdv-techmax'
+  | 'inicio' | 'pdv'
   | `cadastros-${SubCadastro}`
   | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'configuracoes';
 
@@ -47,18 +49,13 @@ const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
   { id: 'equipe',       label: 'Equipe' },
 ];
 
-// Mapa tab → modo PDV. Cada PDV é uma entrada de sidebar independente, com
-// caixa próprio: `cash_sessions.pdv_mode` escopa a sessão por loja. Este
-// comentário já afirmava isso antes de ser verdade — a coluna não existia e o
-// getOpenSession buscava só por operador, então o caixa aberto no SuperMax
-// aparecia aberto também na MaxLook.
-const TAB_TO_PDV_MODE: Partial<Record<Tab, 'supermax' | 'maxlook' | 'techmax'>> = {
-  'pdv-supermax': 'supermax',
-  'pdv-maxlook': 'maxlook',
-  'pdv-techmax': 'techmax',
-};
+// A loja ativa vem do FilialContext, nao mais de uma aba por PDV. Antes eram
+// tres entradas de menu ('pdv-supermax', 'pdv-maxlook', 'pdv-techmax') e o
+// operador via as tres o tempo todo, como se fossem tres secoes de uma mesma
+// empresa. Sao empresas separadas: entra-se em uma, e o sistema inteiro passa
+// a falar dela.
 
-export default function App() {
+function AppInterno() {
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [user, setUser] = useState<User | null>(null);
@@ -66,7 +63,8 @@ export default function App() {
   // Modo Treinamento: PDV em memória, nenhum dado real tocado.
   const [pdvTraining, setPdvTraining] = useState(false);
   const [cadastrosAberto, setCadastrosAberto] = useState(false);
-  const isPdvTab = activeTab === 'pdv-supermax' || activeTab === 'pdv-maxlook' || activeTab === 'pdv-techmax';
+  const { filialAtiva, escolheu, setFilialAtiva, clearFilial } = useFilial();
+  const isPdvTab = activeTab === 'pdv';
   // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
   useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
 
@@ -164,9 +162,7 @@ export default function App() {
   const pdvRoles = ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'];
   const menuItems = [
     { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
-    { id: 'pdv-supermax', icon: ShoppingCart, label: 'PDV SuperMax', roles: pdvRoles, iconSrc: '/icon-supermax.png' },
-    { id: 'pdv-maxlook',  icon: ShoppingCart, label: 'PDV MaxLook',  roles: pdvRoles, iconSrc: '/icon-maxlook.png'  },
-    { id: 'pdv-techmax',  icon: ShoppingCart, label: 'PDV TechMax',  roles: pdvRoles, iconSrc: '/icon-techmax.png'  },
+    { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: pdvRoles, iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
     { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'], grupo: true },
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
     { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
@@ -199,6 +195,18 @@ export default function App() {
   }
 
   if (!user) return <Login onLogin={setUser} />;
+
+  // Logado, mas ainda sem empresa: o seletor vem ANTES de qualquer dado. É o
+  // que faz a separação existir de fato, em vez de virar só um filtro.
+  if (!escolheu) {
+    return (
+      <FilialSelector
+        operador={user.name}
+        onEscolher={(f) => { setFilialAtiva(f); setActiveTab('inicio'); }}
+        onSair={handleLogout}
+      />
+    );
+  }
 
   const activeIsPDV = isPdvTab;
 
@@ -354,7 +362,24 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              {/* Empresa ativa + troca. Volta ao seletor em vez de abrir um
+                  dropdown: trocar de empresa troca TUDO (produtos, caixa,
+                  estoque, resultado), então merece a mesma cerimônia da
+                  entrada — e evita trocar sem perceber. */}
+              <button
+                onClick={clearFilial}
+                title="Trocar de empresa"
+                className="px-3 py-2 rounded-lg flex items-center gap-2 text-xs font-black uppercase tracking-wider border-2 transition hover:brightness-110"
+                style={{
+                  background: FILIAL_META[filialAtiva ?? 'supermax'].color,
+                  color: FILIAL_META[filialAtiva ?? 'supermax'].fg,
+                  borderColor: FILIAL_META[filialAtiva ?? 'supermax'].dark,
+                }}
+              >
+                <Building2 size={14} />
+                <span className="hidden sm:inline">{FILIAL_META[filialAtiva ?? 'supermax'].label}</span>
+              </button>
               <div className="text-right hidden sm:block">
                 <p className="text-xs font-bold uppercase tracking-wider leading-none mb-1" style={{ color: '#FFC107' }}>Operador</p>
                 <p className="font-bold text-base text-white">{user.name}</p>
@@ -374,7 +399,7 @@ export default function App() {
         <div className={`${activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'flex-1 overflow-y-auto custom-scrollbar bg-gray-50 p-6'}`}>
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab}
+              key={`${filialAtiva}-${activeTab}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
@@ -384,16 +409,17 @@ export default function App() {
               {activeTab === 'inicio' && (
                 <InicioModule
                   currentUser={user}
-                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv-supermax'); setIsSidebarOpen(false); }}
+                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv'); setIsSidebarOpen(false); }}
                 />
               )}
-              {/* key força remount ao trocar de modo — evita vazamento
-                  de state entre PDVs (cart, sessão de caixa, etc.).
-                  Wrap num fragment com key faz o TypeScript não reclamar. */}
+              {/* key pela EMPRESA: trocar de empresa tem de zerar carrinho e
+                  sessão de caixa, senão o operador levaria a venda da MaxLook
+                  pro caixa da TechMax. Antes a key era a aba, porque cada PDV
+                  era uma aba; agora só existe uma. */}
               {isPdvTab && (
-                <div key={activeTab} className="contents">
+                <div key={filialAtiva ?? 'supermax'} className="contents">
                 <PDVModule
-                  pdvMode={TAB_TO_PDV_MODE[activeTab as Tab]!}
+                  pdvMode={filialAtiva ?? 'supermax'}
                   currentUser={user}
                   onExitToMenu={() => setIsSidebarOpen(true)}
                   onGoToInicio={() => {
@@ -424,5 +450,13 @@ export default function App() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <FilialProvider>
+      <AppInterno />
+    </FilialProvider>
   );
 }
