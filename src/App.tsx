@@ -6,8 +6,8 @@
 import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
-  DollarSign, Shield, BarChart3, Wallet,
-  LayoutDashboard, UserCircle, Globe, Settings, Home
+  DollarSign, BarChart3, Wallet,
+  LayoutDashboard, UserCircle, Settings, Home, ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -18,9 +18,7 @@ import CadastrosModule from './components/CadastrosModule';
 import EstoqueModule from './components/EstoqueModule';
 import FinanceiroModule from './components/FinanceiroModule';
 import FolhaPagamentoModule from './components/FolhaPagamentoModule';
-import FiscalModule from './components/FiscalModule';
 import RelatoriosModule from './components/RelatoriosModule';
-import CatalogoModule from './components/CatalogoModule';
 import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
 
@@ -29,7 +27,25 @@ import { supabase } from './lib/supabase';
 import { Storage } from './lib/storage';
 import { User } from './types';
 
-type Tab = 'inicio' | 'pdv-supermax' | 'pdv-maxlook' | 'pdv-techmax' | 'cadastros' | 'estoque' | 'financeiro' | 'folha' | 'fiscal' | 'relatorios' | 'catalogo' | 'configuracoes';
+// Cadastros deixou de ser UMA tela com abas dentro e virou um MENU com
+// submenus, como no LogMax: cada cadastro tem a sua rota. A barra de abas
+// dentro da view empilhava seis botões + filtro + busca + exportar + novo na
+// mesma linha, e trocar de cadastro não mudava onde o operador "estava".
+type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
+
+type Tab =
+  | 'inicio' | 'pdv-supermax' | 'pdv-maxlook' | 'pdv-techmax'
+  | `cadastros-${SubCadastro}`
+  | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'configuracoes';
+
+const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
+  { id: 'categorias',   label: 'Categorias' },
+  { id: 'produtos',     label: 'Produtos' },
+  { id: 'servicos',     label: 'Serviços' },
+  { id: 'clientes',     label: 'Clientes' },
+  { id: 'fornecedores', label: 'Fornecedores' },
+  { id: 'equipe',       label: 'Equipe' },
+];
 
 // Mapa tab → modo PDV. Cada PDV é uma entrada de sidebar independente, com
 // caixa próprio: `cash_sessions.pdv_mode` escopa a sessão por loja. Este
@@ -49,6 +65,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   // Modo Treinamento: PDV em memória, nenhum dado real tocado.
   const [pdvTraining, setPdvTraining] = useState(false);
+  const [cadastrosAberto, setCadastrosAberto] = useState(false);
   const isPdvTab = activeTab === 'pdv-supermax' || activeTab === 'pdv-maxlook' || activeTab === 'pdv-techmax';
   // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
   useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
@@ -150,17 +167,25 @@ export default function App() {
     { id: 'pdv-supermax', icon: ShoppingCart, label: 'PDV SuperMax', roles: pdvRoles, iconSrc: '/icon-supermax.png' },
     { id: 'pdv-maxlook',  icon: ShoppingCart, label: 'PDV MaxLook',  roles: pdvRoles, iconSrc: '/icon-maxlook.png'  },
     { id: 'pdv-techmax',  icon: ShoppingCart, label: 'PDV TechMax',  roles: pdvRoles, iconSrc: '/icon-techmax.png'  },
-    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'] },
+    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'], grupo: true },
     { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
     { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
     { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
-    { id: 'fiscal', icon: Shield, label: 'Fiscal', roles: ['chairman', 'ceo', 'operador_geral', 'admin'] },
     { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
-    { id: 'catalogo', icon: Globe, label: 'Catálogo Online', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
     { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
   ];
 
   const allowedItems = menuItems.filter(item => user && item.roles.includes(user.role as any));
+
+  // Rota de cadastro ativa (ou null). O header mostra "Cadastros › Produtos"
+  // pra navegacao ter uma ancora: com submenu, so "Cadastros" nao diz em qual
+  // deles o operador esta.
+  const subCadastroAtivo = activeTab.startsWith('cadastros-')
+    ? (activeTab.slice('cadastros-'.length) as SubCadastro)
+    : null;
+  const tituloDaAba = subCadastroAtivo
+    ? `Cadastros › ${SUBMENUS_CADASTRO.find(x => x.id === subCadastroAtivo)?.label ?? ''}`
+    : menuItems.find((t) => t.id === activeTab)?.label;
 
   if (isLoading) {
     return (
@@ -224,8 +249,52 @@ export default function App() {
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 custom-scrollbar">
           {allowedItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
             const iconSrc = (item as any).iconSrc as string | undefined;
+
+            // Cadastros é um GRUPO: abre a lista de submenus em vez de navegar.
+            // Fica expandido enquanto o operador está em qualquer cadastro, pra
+            // ele ver onde está sem precisar reabrir.
+            if ((item as any).grupo) {
+              const dentro = activeTab.startsWith('cadastros-');
+              const aberto = cadastrosAberto || dentro;
+              return (
+                <div key={item.id}>
+                  <div
+                    onClick={() => setCadastrosAberto(o => !o)}
+                    className={`nav-item ${dentro && !aberto ? 'active' : ''}`}
+                    aria-expanded={aberto}
+                  >
+                    <Icon size={18} />
+                    <span className="text-sm flex-1">{item.label}</span>
+                    <ChevronDown
+                      size={16}
+                      className="transition-transform"
+                      style={{ transform: aberto ? 'rotate(180deg)' : 'none' }}
+                    />
+                  </div>
+                  {aberto && (
+                    <div className="mt-1 mb-1 ml-4 pl-3 flex flex-col gap-0.5"
+                      style={{ borderLeft: '2px solid rgba(255,255,255,0.18)' }}>
+                      {SUBMENUS_CADASTRO.map(sub => {
+                        const rota = `cadastros-${sub.id}` as Tab;
+                        const subAtivo = activeTab === rota;
+                        return (
+                          <div
+                            key={sub.id}
+                            onClick={() => { setActiveTab(rota); setIsSidebarOpen(false); }}
+                            className={`nav-item py-2 ${subAtivo ? 'active' : ''}`}
+                          >
+                            <span className="text-sm">{sub.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            const isActive = activeTab === item.id;
             return (
               <div
                 key={item.id}
@@ -236,7 +305,15 @@ export default function App() {
                 className={`nav-item ${isActive ? 'active' : ''}`}
               >
                 {iconSrc ? (
-                  <img src={iconSrc} alt="" className="w-5 h-5 object-contain rounded shrink-0" />
+                  // As três logos têm fundo diferente no próprio arquivo:
+                  // supermax é RGBA transparente (sumia no navy), techmax vem
+                  // com branco embutido e maxlook com PRETO (a marca é preto +
+                  // dourado). O branco do container só aparece atrás da que é
+                  // transparente; sem padding, as opacas preenchem o chip
+                  // inteiro — senão a preta virava um quadrado dentro de outro.
+                  <span className="w-6 h-6 rounded overflow-hidden bg-white flex items-center justify-center shrink-0 border" style={{ borderColor: 'rgba(255,255,255,0.35)' }}>
+                    <img src={iconSrc} alt="" className="w-full h-full object-contain" />
+                  </span>
                 ) : (
                   <Icon size={18} />
                 )}
@@ -272,7 +349,7 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <LayoutDashboard size={24} style={{ color: '#FFC107' }} />
                 <h1 className="text-xl font-black text-white tracking-tight uppercase">
-                  {menuItems.find((t) => t.id === activeTab)?.label}
+                  {tituloDaAba}
                 </h1>
               </div>
             </div>
@@ -334,13 +411,13 @@ export default function App() {
                 />
                 </div>
               )}
-              {activeTab === 'cadastros' && <CadastrosModule currentUser={user} />}
+              {subCadastroAtivo && (
+                <CadastrosModule currentUser={user} subTab={subCadastroAtivo} />
+              )}
               {activeTab === 'estoque' && <EstoqueModule />}
               {activeTab === 'financeiro' && <FinanceiroModule />}
               {activeTab === 'folha' && <FolhaPagamentoModule />}
-              {activeTab === 'fiscal' && <FiscalModule />}
               {activeTab === 'relatorios' && <RelatoriosModule />}
-              {activeTab === 'catalogo' && <CatalogoModule />}
               {activeTab === 'configuracoes' && <ConfiguracoesModule onUserUpdate={setUser} />}
             </motion.div>
           </AnimatePresence>

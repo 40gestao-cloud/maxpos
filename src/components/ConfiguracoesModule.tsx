@@ -49,15 +49,6 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
   const [user, setUser] = useState<User | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [notificationConfig, setNotificationConfig] = useState({
-    aniversario: true,
-    fiado: true,
-    estoque: true,
-    contasPagar: true,
-    contasReceber: true,
-    certificadoDigital: true,
-    pedidos: true,
-  });
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetting, setResetting] = useState(false);
@@ -81,10 +72,6 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       .then(u => {
         setUser(u);
         setAvatarPreview(u?.avatar ?? null);
-        if (u?.id) {
-          const saved = localStorage.getItem(`notif_${u.id}`);
-          if (saved) setNotificationConfig(JSON.parse(saved));
-        }
       })
       .catch(() => {});
   }, []);
@@ -172,17 +159,12 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       await Storage.setCurrentUser(updatedUser);
       setUser(updatedUser);
       onUserUpdate(updatedUser);
-      localStorage.setItem(`notif_${user.id}`, JSON.stringify(notificationConfig));
       showAlert('Configurações salvas com sucesso!');
     } catch (err: any) {
       showAlert('Erro ao salvar: ' + err.message);
     } finally {
       setSaving(false);
     }
-  };
-
-  const toggleNotification = (key: keyof typeof notificationConfig) => {
-    setNotificationConfig(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   const handleFactoryReset = async () => {
@@ -206,18 +188,8 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     setResetConfirmText('');
   };
 
-  const notificationItems = [
-    { key: 'aniversario', label: 'Aniversário' },
-    { key: 'fiado', label: 'Fiado' },
-    { key: 'estoque', label: 'Estoque' },
-    { key: 'contasPagar', label: 'Contas a pagar' },
-    { key: 'contasReceber', label: 'Contas a receber' },
-    { key: 'certificadoDigital', label: 'Certificado digital' },
-    { key: 'pedidos', label: 'Pedidos' },
-  ];
-
   const tabs: { id: SubTab; label: string; show: boolean }[] = [
-    { id: 'perfil',    label: 'Perfil & Notificações', show: true },
+    { id: 'perfil',    label: 'Perfil', show: true },
     { id: 'auditoria', label: 'Auditoria',             show: canAudit },
   ];
 
@@ -230,7 +202,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
         </div>
         <div>
           <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Configurações</h2>
-          <p className="text-xs text-gray-600 font-bold uppercase tracking-widest">Gerencie seu perfil, notificações e auditoria</p>
+          <p className="text-xs text-gray-600 font-bold uppercase tracking-widest">Gerencie seu perfil e auditoria</p>
         </div>
       </div>
 
@@ -281,35 +253,6 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
               </div>
             </div>
 
-            {/* Notifications Card */}
-            <div className="neumorphic p-8 space-y-6">
-              <h3 className="text-sm font-black text-[#172554] uppercase tracking-[0.2em] flex items-center gap-2">
-                <Bell size={16} /> Preferências de Notificações
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {notificationItems.map(item => (
-                  <label
-                    key={item.key}
-                    className="flex items-center gap-3 p-4 neumorphic-inset rounded-xl cursor-pointer group hover:bg-gray-50 transition-colors"
-                  >
-                    <div
-                      onClick={() => toggleNotification(item.key as any)}
-                      className={`w-6 h-6 rounded flex items-center justify-center transition-all ${
-                        notificationConfig[item.key as keyof typeof notificationConfig]
-                          ? 'bg-[#FFC107] text-black shadow-lg shadow-[#FFC107]/20'
-                          : 'bg-gray-100 border border-gray-200'
-                      }`}
-                    >
-                      {notificationConfig[item.key as keyof typeof notificationConfig] && <CheckCircle2 size={14} strokeWidth={3} />}
-                    </div>
-                    <span className="text-sm font-bold text-gray-900 group-hover:text-[#FFC107] transition-colors">
-                      {item.label}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
           </div>
 
           <div className="flex justify-end pt-4">

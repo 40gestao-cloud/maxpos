@@ -14,11 +14,17 @@ import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 import { useAlertDialog } from './ConfirmDialog';
 
+type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
+
 interface CadastrosModuleProps {
   currentUser: User;
+  /** Qual cadastro exibir. Vem da ROTA (submenu da sidebar), não de aba
+   *  interna: com abas dentro da view, trocar de cadastro não mudava onde o
+   *  operador estava, e o topo acumulava abas + filtro + busca + exportar. */
+  subTab: SubCadastro;
 }
 
-export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
+export default function CadastrosModule({ currentUser, subTab }: CadastrosModuleProps) {
   const { showAlert, host: alertHost } = useAlertDialog();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -27,7 +33,7 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [subTab, setSubTab] = useState<'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe'>('produtos');
+
   // Formulário de categoria (inline na própria lista — é cadastro de 3 campos,
   // modal seria peso demais pra isso).
   const [catForm, setCatForm] = useState<Category | null>(null);
@@ -275,6 +281,21 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     };
     img.src = "data:image/svg+xml;base64," + btoa(svgData);
   };
+
+  // Trocar de submenu limpa o que era daquele cadastro. Com aba interna isso
+  // acontecia no onClick; agora quem troca e a ROTA, entao mora aqui — senao
+  // o formulario de produto continuaria aberto ao cair em Clientes.
+  useEffect(() => {
+    setShowAddUser(false);
+    setShowAddProduct(false);
+    setShowAddClient(false);
+    setShowAddService(false);
+    setShowAddSupplier(false);
+    setEditingItem(null);
+    setFormData({});
+    setCatForm(null);
+    setSearch('');
+  }, [subTab]);
 
   useEffect(() => {
     _setSessionUser(currentUser);
@@ -1241,50 +1262,6 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   return (
     <div className="space-y-8 flex flex-col max-w-full">
       {alertHost}
-      {/* Navegação entre submódulos — abas de verdade (sublinhado no ativo).
-          Antes eram 5 botões azuis com borda amarela e anel, do mesmo peso
-          visual do botão "Novo": pareciam cinco ações concorrentes em vez de
-          onde-eu-estou. Aba não é botão de comando. */}
-      <div className="border-b-2" style={{ borderColor: 'rgba(23,37,84,0.15)' }}>
-        <div className="flex gap-1 overflow-x-auto custom-scrollbar-h">
-          {(['categorias', 'produtos', 'servicos', 'clientes', 'fornecedores', 'equipe'] as const).map((t) => {
-            const isActive = subTab === t;
-            const rotulo = ({
-              categorias: 'Categorias', produtos: 'Produtos', servicos: 'Serviços',
-              clientes: 'Clientes', fornecedores: 'Fornecedores', equipe: 'Equipe',
-            } as const)[t];
-            return (
-              <button
-                key={t}
-                onClick={() => {
-                  setSubTab(t);
-                  setShowAddUser(false);
-                  setShowAddProduct(false);
-                  setShowAddClient(false);
-                  setShowAddService(false);
-                  setShowAddSupplier(false);
-                  setEditingItem(null);
-                  setFormData({});
-                  setCatForm(null);
-                  setSearch('');
-                }}
-                className="relative px-4 py-3 text-sm font-black uppercase tracking-wide whitespace-nowrap transition-colors"
-                style={isActive
-                  ? { color: '#172554' }
-                  : { color: '#6b7280' }}
-              >
-                {rotulo}
-                {/* Indicador amarelo sobre a linha azul da barra */}
-                <span
-                  className="absolute left-2 right-2 -bottom-[2px] h-[3px] rounded-t"
-                  style={{ background: isActive ? '#FFC107' : 'transparent' }}
-                />
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex gap-3 w-full xl:w-auto flex-wrap items-center">
           {/* Filtro por nicho — produtos, serviços e categorias */}
