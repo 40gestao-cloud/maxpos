@@ -152,14 +152,22 @@ export default function FolhaPagamentoModule() {
             <span className="text-[8px] md:text-sm text-gray-600 font-black uppercase tracking-widest leading-tight">Colaboradores na folha</span>
             <Users size={14} className="text-[#FFC107] opacity-40" />
           </div>
-          <h3 className="text-sm md:text-2xl font-black text-gray-900 relative z-10">{loading ? '...' : folhas.length}</h3>
+          <h3 className="text-sm md:text-2xl font-black text-gray-900 relative z-10">
+            {loading
+              ? <span className="skeleton" style={{ width: '2.5rem', height: '1.5rem' }} aria-hidden="true">&nbsp;</span>
+              : folhas.length}
+          </h3>
         </div>
         <div className="neumorphic p-4 md:p-6 relative overflow-hidden">
           <div className="flex justify-between items-start mb-2 relative z-10">
             <span className="text-[8px] md:text-sm text-gray-600 font-black uppercase tracking-widest leading-tight">Total líquido do mês</span>
             <Wallet size={14} className="text-emerald-500 opacity-40" />
           </div>
-          <h3 className="text-sm md:text-2xl font-black text-emerald-500 relative z-10">{loading ? '...' : formatBRL(totalLiquido)}</h3>
+          <h3 className="text-sm md:text-2xl font-black text-emerald-500 relative z-10">
+            {loading
+              ? <span className="skeleton" style={{ width: '6rem', height: '1.5rem' }} aria-hidden="true">&nbsp;</span>
+              : formatBRL(totalLiquido)}
+          </h3>
         </div>
         <div className="neumorphic p-4 md:p-6 relative overflow-hidden col-span-2 lg:col-span-1">
           <div className="flex justify-between items-start mb-2 relative z-10">

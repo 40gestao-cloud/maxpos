@@ -357,7 +357,9 @@ export default function FinanceiroModule() {
                 <Icon size={14} className={`${stat.color} opacity-40`} />
               </div>
               <h3 className={`text-sm md:text-2xl font-black ${stat.color} relative z-10`}>
-                {loading ? '...' : stat.value}
+                {loading
+                  ? <span className="skeleton" style={{ width: '5.5rem', height: '1.5rem' }} aria-hidden="true">&nbsp;</span>
+                  : stat.value}
               </h3>
             </div>
           );

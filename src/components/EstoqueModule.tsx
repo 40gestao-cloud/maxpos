@@ -103,12 +103,14 @@ export default function EstoqueModule() {
   const recentMoves = visibleMoves.slice(0, 10);
   const dismissedCount = allMoves.length - visibleMoves.length;
 
+  // `skelW` = largura da barra enquanto carrega, proxima do valor final pra
+  // o card nao pular de tamanho quando o dado chega.
   const stats = [
-    { label: 'Estoque Crítico', value: loading ? '...' : criticalProducts.length.toString(), icon: AlertTriangle, accent: '#b91c1c', desc: 'Produtos abaixo do mínimo' },
-    { label: 'Valor Total', value: loading ? '...' : formatBRL(totalValue), icon: DollarSign, accent: '#172554', desc: 'Total investido', tint: '#FFC107' },
-    { label: 'Movimentações', value: loading ? '...' : visibleMoves.length.toString(), icon: TrendingUp, accent: '#172554', desc: 'Saídas registradas' },
-    { label: 'Total de Itens', value: loading ? '...' : totalItems.toString(), icon: Package, accent: '#172554', desc: 'Unidades em estoque' },
-  ] as Array<{ label: string; value: string; icon: any; accent: string; desc: string; tint?: string }>;
+    { label: 'Estoque Crítico', value: criticalProducts.length.toString(), skelW: '2.5rem', icon: AlertTriangle, accent: '#b91c1c', desc: 'Produtos abaixo do mínimo' },
+    { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: '#172554', desc: 'Total investido', tint: '#FFC107' },
+    { label: 'Movimentações', value: visibleMoves.length.toString(), skelW: '3rem', icon: TrendingUp, accent: '#172554', desc: 'Saídas registradas' },
+    { label: 'Total de Itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, accent: '#172554', desc: 'Unidades em estoque' },
+  ] as Array<{ label: string; value: string; skelW: string; icon: any; accent: string; desc: string; tint?: string }>;
 
   return (
     <div className="space-y-6 max-w-full">
@@ -142,7 +144,11 @@ export default function EstoqueModule() {
                 <span className="smart-stat-label">{stat.label}</span>
                 <Icon size={22} style={{ color: stat.accent }} />
               </div>
-              <div className="smart-stat-value text-3xl" style={{ color: valueColor }}>{stat.value}</div>
+              <div className="smart-stat-value text-3xl" style={{ color: valueColor }}>
+                {loading
+                  ? <span className="skeleton" style={{ width: stat.skelW, height: '1.9rem' }} aria-hidden="true">&nbsp;</span>
+                  : stat.value}
+              </div>
               <p className="text-sm text-gray-600">{stat.desc}</p>
             </div>
           );

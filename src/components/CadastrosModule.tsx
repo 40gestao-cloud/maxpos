@@ -2342,7 +2342,23 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
 
       <div className="neumorphic flex flex-col min-h-[480px] relative">
         <div className="overflow-x-auto flex-1 custom-scrollbar scroll-smooth">
-          {renderTable()}
+          {/* Enquanto carrega, linhas fantasma no lugar da tabela vazia. Esta
+              tela era a unica sem NENHUM indicador: o operador via um retangulo
+              branco e nao sabia se estava carregando ou se o cadastro estava
+              vazio de verdade. */}
+          {loading ? (
+            <div className="p-5 flex flex-col gap-3" aria-busy="true" aria-live="polite">
+              <span className="sr-only">Carregando cadastros…</span>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <span className="skeleton" style={{ width: '3rem', height: '3rem', borderRadius: '0.5rem' }} aria-hidden="true">&nbsp;</span>
+                  <span className="skeleton flex-1" style={{ height: '1rem', maxWidth: `${58 - i * 4}%` }} aria-hidden="true">&nbsp;</span>
+                  <span className="skeleton" style={{ width: '5rem', height: '1rem' }} aria-hidden="true">&nbsp;</span>
+                  <span className="skeleton" style={{ width: '4rem', height: '1rem' }} aria-hidden="true">&nbsp;</span>
+                </div>
+              ))}
+            </div>
+          ) : renderTable()}
         </div>
         
         {/* Barcode Modal */}

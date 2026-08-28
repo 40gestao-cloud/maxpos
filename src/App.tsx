@@ -194,11 +194,16 @@ export default function App() {
 
       {/* Sidebar — static (lg) quando não-PDV; fixed (overlay) quando PDV */}
       <aside
-        className={`fixed ${activeIsPDV ? 'z-[80]' : 'lg:static z-50'} inset-y-0 left-0 w-64 bg-white transition-transform duration-300 transform ${
+        className={`fixed ${activeIsPDV ? 'z-[80]' : 'lg:static z-50'} inset-y-0 left-0 w-64 transition-transform duration-300 transform ${
           isSidebarOpen
             ? 'translate-x-0'
             : `-translate-x-full ${activeIsPDV ? '' : 'lg:translate-x-0'}`
         } flex flex-col`}
+        /* Navy como o header: a barra do logo e o header do conteúdo já eram
+           navy, e a coluna branca embaixo fazia essa faixa parecer órfã. Com a
+           sidebar inteira navy, o "chrome" (topo + esquerda) vira moldura e o
+           branco passa a significar só uma coisa: área de trabalho. */
+        style={{ background: '#172554' }}
       >
         {/* Logo bar — navy com acento amarelo (alinhado ao header) */}
         <div className="h-[72px] px-5 flex items-center border-b-4" style={{ background: '#172554', borderColor: '#FFC107' }}>
@@ -216,7 +221,7 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 custom-scrollbar border-r border-gray-300">
+        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 custom-scrollbar">
           {allowedItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -241,7 +246,7 @@ export default function App() {
           })}
         </nav>
 
-        <div className="px-3 pb-3 pt-2 border-t border-r border-gray-200">
+        <div className="px-3 pb-3 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
           <button
             onClick={handleLogout}
             className="w-full px-3 py-3 flex items-center justify-center gap-2 font-bold text-sm uppercase tracking-wide glass-yellow shimmer rounded-md"

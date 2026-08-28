@@ -207,21 +207,27 @@ export default function FiscalModule() {
         <div className="smart-card flex flex-col gap-2" style={{ borderTop: '4px solid #172554' }}>
           <span className="smart-stat-label">Total de Vendas</span>
           <div className="smart-stat-value text-3xl" style={{ color: '#172554' }}>
-            {loading ? '...' : sales.length}
+            {loading
+              ? <span className="skeleton" style={{ width: '3rem', height: '1.9rem' }} aria-hidden="true">&nbsp;</span>
+              : sales.length}
           </div>
           <p className="text-sm text-gray-600">Vendas finalizadas no PDV</p>
         </div>
         <div className="smart-card flex flex-col gap-2" style={{ borderTop: '4px solid #b91c1c' }}>
           <span className="smart-stat-label">Pendentes de Emissão</span>
           <div className="smart-stat-value text-3xl" style={{ color: '#b91c1c' }}>
-            {loading ? '...' : pendentesCount}
+            {loading
+              ? <span className="skeleton" style={{ width: '3rem', height: '1.9rem' }} aria-hidden="true">&nbsp;</span>
+              : pendentesCount}
           </div>
           <p className="text-sm text-gray-600">Aguardando NFC-e simulada</p>
         </div>
         <div className="smart-card flex flex-col gap-2" style={{ borderTop: '4px solid #15803d' }}>
           <span className="smart-stat-label">Emitidas (Simuladas)</span>
           <div className="smart-stat-value text-3xl" style={{ color: '#15803d' }}>
-            {loading ? '...' : emitidasCount}
+            {loading
+              ? <span className="skeleton" style={{ width: '3rem', height: '1.9rem' }} aria-hidden="true">&nbsp;</span>
+              : emitidasCount}
           </div>
           <p className="text-sm text-gray-600">NFC-e autorizadas no ambiente</p>
         </div>

@@ -128,23 +128,31 @@ select,
     background: #e5e7eb;
   }
 
+  /* Itens da sidebar, que agora é navy. */
   .nav-item {
     @apply flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all;
-    color: var(--text-main);
+    color: rgba(255, 255, 255, 0.78);
     border: 1px solid transparent;
   }
 
   .nav-item:hover {
-    background: var(--bg-soft);
-    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.10);
+    color: #ffffff;
   }
 
+  /* Ativo em AMARELO, não em navy. Enquanto a sidebar era branca, fundo navy
+     marcava a seleção; sobre navy isso vira navy-sobre-navy e o item
+     selecionado some. O amarelo é o accent fazendo o trabalho dele — "você
+     está aqui" — e é o mesmo indicador das abas de Cadastros. */
   .nav-item.active {
-    background: var(--navy);
-    color: #ffffff;
-    border-left: 4px solid var(--accent);
-    padding-left: calc(0.75rem - 3px);
-    font-weight: 700;
+    background: var(--accent);
+    color: var(--navy);
+    font-weight: 800;
+  }
+
+  .nav-item.active:hover {
+    background: var(--accent);
+    color: var(--navy);
   }
 }
 
@@ -287,6 +295,38 @@ body {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  /* ── Skeleton de carregamento ──
+     Substitui o "..." que os KPIs mostravam enquanto os dados vinham.
+     Reticencias num numero leem como "quebrado", nao como "carregando" —
+     e numa rede lenta (auditorio, feira) o sistema passava a impressao de
+     que nao respondia. Uma barra pulsando com a largura aproximada do
+     valor final diz "vem ai" e nao mexe no layout quando o dado chega. */
+  .skeleton {
+    display: inline-block;
+    border-radius: 0.375rem;
+    background: linear-gradient(
+      90deg,
+      rgba(23, 37, 84, 0.07) 25%,
+      rgba(23, 37, 84, 0.14) 37%,
+      rgba(23, 37, 84, 0.07) 63%
+    );
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+    /* Sem isto o leitor de tela anuncia a barra como conteudo. */
+    color: transparent;
+    user-select: none;
+  }
+
+  @keyframes skeleton-shimmer {
+    0%   { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+
+  /* Respeita quem pediu menos animacao no sistema. */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; }
   }
 
   /* Botão primário: amarelo grande, texto preto */
