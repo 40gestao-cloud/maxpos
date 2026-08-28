@@ -7,6 +7,38 @@ body {
 }
 
 /* ============================================================
+   Texto não selecionável — comportamento de terminal de caixa.
+   Arrastar o dedo/mouse sobre um rótulo selecionava o texto e abria
+   o menu de seleção do navegador ("Pesquisar no Google", "Copiar"),
+   que num PDV só serve pra tirar o operador da tela. O long-press em
+   tela sensível ao toque fazia o mesmo.
+   ============================================================ */
+html,
+body {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  /* Sem isto o iOS/Android ainda abre o balão de seleção no toque longo. */
+  -webkit-touch-callout: none;
+}
+
+/* Onde o operador DIGITA a seleção continua valendo: sem isso não dá
+   pra corrigir um caractere no meio do campo, nem usar duplo clique
+   pra trocar o valor inteiro. */
+input,
+textarea,
+select,
+[contenteditable='true'],
+.selecionavel {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* ============================================================
    Paleta única (estilo PDV Supermercado) — branco, amarelo,
    azul-marinho, verde-dinheiro. Sem neumórfico.
    ============================================================ */

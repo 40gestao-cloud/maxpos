@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket, Info } from 'lucide-react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket, Info, Maximize2, Minimize2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
@@ -1302,6 +1302,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Cupom regenerado a cada venda: '------' quando não há venda em andamento.
   const [cupomSeq, setCupomSeq] = useState<string>('------');
   const [helpOpen, setHelpOpen] = useState(false);
+  // Tela cheia REAL (Fullscreen API), não um overlay CSS: no MaxPOS o PDV já
+  // ocupa toda a área do app (o header some e a sidebar vira overlay), então
+  // o que ainda rouba tela é a barra do navegador. Num terminal de caixa ela
+  // não serve pra nada e ainda dá ao operador um caminho pra sair do PDV.
+  const [fullscreen, setFullscreen] = useState(false);
   const [changeModal, setChangeModal] = useState<{ amount: number } | null>(null);
   const [thankYouOpen, setThankYouOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -1591,6 +1596,36 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     if (cart.length === 0) { setSelectedCartIdx(-1); return; }
     if (selectedCartIdx >= cart.length) setSelectedCartIdx(cart.length - 1);
   }, [cart.length, selectedCartIdx]);
+
+  // O estado precisa vir do navegador, não do nosso clique: o operador também
+  // sai da tela cheia por Esc ou F11, e aí o ícone tem de acompanhar.
+  useEffect(() => {
+    const sync = () => setFullscreen(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        // documentElement e não o container do PDV: em tela cheia de elemento,
+        // modais com `position: fixed` que vivem fora dele ficariam invisíveis.
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err: any) {
+      // Navegador pode recusar (permissão, iframe sem allow="fullscreen").
+      showAlert({
+        title: 'Tela cheia indisponível',
+        message: err?.message
+          ? `O navegador recusou: ${err.message}`
+          : 'O navegador não permitiu entrar em tela cheia. Use F11.',
+        variant: 'warning',
+      });
+    }
+  };
 
   // Ao entrar na tela de fechamento, foca direto no VALOR DESTA FORMA
   useEffect(() => {
@@ -2492,6 +2527,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       // Esc — contextual
       if (e.key === 'Escape') {
         if (modalOpen || pickerOpen) return; // modais/pickers tratam seu próprio Esc
+        // Em tela cheia, Esc é a tecla que o NAVEGADOR usa pra sair dela. Se
+        // tratássemos aqui também, o mesmo toque sairia da tela cheia E abriria
+        // "cancelar venda" — o operador perderia o carrinho tentando só voltar
+        // à janela. O próximo Esc, já fora da tela cheia, age normalmente.
+        if (document.fullscreenElement) return;
         // Se input do código tem texto, deixa o onKeyDown do input limpar
         if (isEditable && classicCode.length > 0) return;
         e.preventDefault();
@@ -3840,6 +3880,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </button>
                 )}
                 <button
+                  onClick={toggleFullscreen}
+                  className="w-9 h-9 rounded-full flex items-center justify-center border transition hover:brightness-110"
+                  style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
+                  title={fullscreen ? 'Sair da tela cheia (Esc)' : 'Tela cheia — esconde a barra do navegador'}
+                  aria-label={fullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia'}
+                >
+                  {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button
                   onClick={() => setHelpOpen(true)}
                   className="w-9 h-9 rounded-full flex items-center justify-center border transition hover:brightness-110"
                   style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
@@ -3935,6 +3984,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 <Lock size={14} /> FECHAR CAIXA
               </button>
             )}
+            <button
+              onClick={toggleFullscreen}
+              className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
+              title={fullscreen ? 'Sair da tela cheia (Esc)' : 'Tela cheia — esconde a barra do navegador'}
+              aria-label={fullscreen ? 'Sair da tela cheia' : 'Entrar em tela cheia'}
+            >
+              {fullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+            </button>
             <button
               onClick={() => setHelpOpen(true)}
               className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-black text-xl border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
@@ -5389,6 +5447,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     Operação de caixa — teclado 100%
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>⛶</kbd>
+                      <span className="text-gray-800"><b>Tela cheia</b> pelo botão no topo · <b>Esc</b> sai</span>
+                    </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
                       <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>Ctrl+R</kbd>
                       <span className="text-gray-800"><b>Reimprimir</b> última venda (fora de venda)</span>
