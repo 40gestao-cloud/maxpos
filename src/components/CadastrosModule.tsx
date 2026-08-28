@@ -693,8 +693,40 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         }
         setShowAddClient(false);
       } else if (type === 'produto') {
+        // Validacao: sem ela dava pra gravar produto sem nome e com preco 0 —
+        // no PDV isso vira uma linha em branco que fecha venda por R$ 0,00.
+        const nome = String(formData.name ?? '').trim();
+        if (nome.length < 2) {
+          showAlert('Informe o nome do produto.');
+          return;
+        }
+        const preco = Number(formData.price ?? 0);
+        if (!(preco > 0)) {
+          showAlert('Informe o preço de venda — o PDV não vende item sem preço.');
+          return;
+        }
+        const ean = String(formData.ean13 ?? '').trim();
+        if (ean && !isValidEAN13(ean)) {
+          showAlert('EAN-13 inválido. São 13 dígitos com dígito verificador — use o botão Gerar se não tiver o código do fabricante.');
+          return;
+        }
+        const custo = Number(formData.costPrice ?? 0);
+        if (custo > preco) {
+          showAlert(`Atenção: o custo (${formatBRL(custo)}) é maior que o preço de venda (${formatBRL(preco)}). A margem fica negativa. Ajuste antes de salvar.`);
+          return;
+        }
+
         const { purchasedQuantity: _pq, ...productFields } = formData as any;
         const finalStock = (formData.stock || 0) + (formData.purchasedQuantity || 0);
+        // A empresa NAO vem do formulario: e a da sessao. Deixar escolher
+        // permitia cadastrar produto na MaxLook estando dentro da TechMax.
+        productFields.pdvMode = editingItem?.pdvMode ?? nichoFilter;
+        productFields.name = nome;
+        productFields.ean13 = ean;
+        // `ref` e o codigo curto que o operador digita no PDV ("agua", "pao").
+        // Nao existia campo no formulario, entao todo produto novo nascia sem
+        // ele e nao dava pra chamar pelo codigo no caixa.
+        productFields.ref = String(formData.ref ?? '').trim();
         if (editingItem) {
           const updated = { ...editingItem, ...productFields, stock: finalStock };
           await Storage.upsertProduct(updated);
@@ -712,6 +744,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         }
         setShowAddProduct(false);
       } else if (type === 'servico') {
+        const nomeSrv = String(formData.name ?? '').trim();
+        if (nomeSrv.length < 2) { showAlert('Informe o nome do serviço.'); return; }
+        if (!(Number(formData.price ?? 0) > 0)) {
+          showAlert('Informe o preço do serviço.');
+          return;
+        }
+        formData.name = nomeSrv;
+        // Mesma regra do produto: a empresa e a da sessao.
+        (formData as any).pdvMode = editingItem?.pdvMode ?? nichoFilter;
         if (editingItem) {
           const updated = { ...editingItem, ...formData };
           await Storage.upsertService(updated);
@@ -1396,7 +1437,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
             </div>
             <div className="lg:col-span-4 flex justify-end">
-              <button type="submit" className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button type="submit" className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'CONFIRMAR CADASTRO'}
               </button>
             </div>
@@ -1623,7 +1664,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('cliente')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('cliente')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR CLIENTE'}
               </button>
             </div>
@@ -1684,34 +1725,57 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
             </div>
 
-            {/* PDV (nicho) — determina em qual PDV o produto aparece */}
+            {/* A empresa e a da SESSAO, nao uma escolha do formulario: escolher
+                aqui permitia cadastrar produto na MaxLook estando dentro da
+                TechMax. Fica como informacao pra nao virar surpresa. */}
             <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
-              <div className="flex gap-2 flex-wrap">
-                {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
-                  const meta = FILIAL_META[n];
-                  const active = (formData.pdvMode ?? 'supermax') === n;
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Empresa</label>
+              <div className="flex items-center gap-3 flex-wrap">
+                {(() => {
+                  const meta = FILIAL_META[(editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META];
                   return (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, pdvMode: n })}
-                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 transition-all flex items-center gap-2"
-                      style={active
-                        ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark }
-                        : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
-                    >{meta.label}</button>
+                    <span
+                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
+                      style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+                    >
+                      {meta.label}
+                    </span>
                   );
-                })}
+                })()}
+                <span className="text-xs text-gray-500">
+                  {editingItem
+                    ? 'O produto pertence a esta empresa.'
+                    : 'O produto será cadastrado na empresa em que você está operando.'}
+                </span>
               </div>
             </div>
             <div className="space-y-2 lg:col-span-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Produto</label>
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                Nome do Produto <span className="text-red-600">*</span>
+              </label>
               <input
                 value={formData.name || ''}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Ex.: Arroz Branco Camil 5kg"
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
               />
+            </div>
+
+            {/* REF: o codigo curto que o operador digita no caixa. Nao existia
+                campo nenhum, entao todo produto novo nascia sem ele e so podia
+                ser chamado pelo nome ou pelo EAN. */}
+            <div className="space-y-2">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Código / REF</label>
+              <input
+                value={formData.ref || ''}
+                onChange={e => setFormData({ ...formData, ref: e.target.value })}
+                placeholder="Ex.: arroz, 4011, CX-102"
+                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+              />
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Código curto digitado no PDV para chamar o produto sem leitor —
+                usado em hortifrúti e padaria, onde a etiqueta não tem barras.
+              </p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
@@ -1721,16 +1785,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
                 <option value="">— sem categoria —</option>
-                {opcoesCategoria(formData.pdvMode).map(c => (
+                {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).map(c => (
                   <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
                 ))}
                 {/* Valor antigo que não existe mais no cadastro continua
                     selecionável, senão editar o produto o apagaria em silêncio. */}
-                {formData.category && !opcoesCategoria(formData.pdvMode).some(c => c.name === formData.category) && (
+                {formData.category && !opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).some(c => c.name === formData.category) && (
                   <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
                 )}
               </select>
-              {opcoesCategoria(formData.pdvMode).length === 0 && (
+              {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).length === 0 && (
                 <p className="text-xs text-gray-500 ml-1">
                   Nenhuma categoria cadastrada — crie em <b>Cadastros → Categorias</b>.
                 </p>
@@ -1870,15 +1934,34 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
             <div className="space-y-2 lg:col-span-3">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Código EAN-13 (Barcode)</label>
-              <input 
-                value={formData.ean13 || ''}
-                onChange={e => setFormData({ ...formData, ean13: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-              />
+              <div className="flex gap-2 flex-wrap">
+                <input
+                  value={formData.ean13 || ''}
+                  onChange={e => setFormData({ ...formData, ean13: e.target.value.replace(/\D/g, '').slice(0, 13) })}
+                  placeholder="13 dígitos"
+                  inputMode="numeric"
+                  className="flex-1 min-w-[200px] neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono"
+                />
+                {/* Gerar existia só dentro do modal de etiqueta; aqui o
+                    operador digitava à mão e um dígito verificador errado só
+                    aparecia depois, ao imprimir. */}
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, ean13: generateEAN13() })}
+                  className="smart-btn-secondary"
+                >
+                  <Barcode size={16} /> GERAR
+                </button>
+              </div>
+              {formData.ean13 && !isValidEAN13(String(formData.ean13)) && (
+                <p className="text-[11px] font-bold text-red-600">
+                  EAN-13 inválido — confira os 13 dígitos e o verificador, ou use Gerar.
+                </p>
+              )}
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('produto')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('produto')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR PRODUTO'}
               </button>
             </div>
@@ -1897,25 +1980,26 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* PDV (nicho) do serviço */}
+            {/* Empresa da sessao — ver a mesma nota no formulario de produto. */}
             <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">PDV / Nicho</label>
-              <div className="flex gap-2 flex-wrap">
-                {(['supermax', 'maxlook', 'techmax'] as const).map(n => {
-                  const meta = FILIAL_META[n];
-                  const active = (formData.pdvMode ?? 'supermax') === n;
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Empresa</label>
+              <div className="flex items-center gap-3 flex-wrap">
+                {(() => {
+                  const meta = FILIAL_META[(editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META];
                   return (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, pdvMode: n })}
-                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 transition-all"
-                      style={active
-                        ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark }
-                        : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
-                    >{meta.label}</button>
+                    <span
+                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
+                      style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+                    >
+                      {meta.label}
+                    </span>
                   );
-                })}
+                })()}
+                <span className="text-xs text-gray-500">
+                  {editingItem
+                    ? 'O serviço pertence a esta empresa.'
+                    : 'O serviço será cadastrado na empresa em que você está operando.'}
+                </span>
               </div>
             </div>
             <div className="space-y-2 lg:col-span-2">
@@ -1934,10 +2018,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
                 <option value="">— sem categoria —</option>
-                {opcoesCategoria(formData.pdvMode).map(c => (
+                {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).map(c => (
                   <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
                 ))}
-                {formData.category && !opcoesCategoria(formData.pdvMode).some(c => c.name === formData.category) && (
+                {formData.category && !opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).some(c => c.name === formData.category) && (
                   <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
                 )}
               </select>
@@ -1987,7 +2071,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('servico')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('servico')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR SERVIÇO'}
               </button>
             </div>
@@ -2189,7 +2273,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </div>
 
             <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('fornecedor')} className="bg-[var(--accent)] text-black font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
+              <button onClick={() => handleSave('fornecedor')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR FORNECEDOR'}
               </button>
             </div>
