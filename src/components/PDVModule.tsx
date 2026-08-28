@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject } from 'react';
-import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket, Info } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
@@ -12,7 +12,9 @@ import { supabase } from '../lib/supabase';
 import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber, maskCpfCnpj } from '../lib/masks';
 import { PDFReport } from '../lib/pdfReport';
 import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
+import { buscarProdutos, separarQtdETermo, chaveCategoria } from '../lib/produtoBusca';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
+import { ProdutoDetalheModal } from './ProdutoDetalheModal';
 
 // Produtos fictícios usados só no Modo Treinamento — não vão pro Supabase.
 // Preços redondos para o operador conseguir contar o troco de cabeça.
@@ -208,7 +210,7 @@ const NICHO_CUPONS: Record<string, { descricao: string; tipo: 'pct' | 'fixo'; va
 function NichoLeituraView({
   products, cart, addToCart, removeFromCart, setCart, pdvMode, modeMeta,
   subtotal, total, saleDiscount, setSaleDiscount, cashSession, codeInputRef,
-  classicCode, setClassicCode, handleClassicSubmit,
+  handleClassicSubmit,
   saleVendedor, setSaleVendedor,
   saleTipoAtendimento, setSaleTipoAtendimento,
   saleImeiSerial, setSaleImeiSerial,
@@ -218,7 +220,8 @@ function NichoLeituraView({
   nichoParcelas, setNichoParcelas,
   nichoClienteFiadoId, setNichoClienteFiadoId,
   nichoCupomAplicado, setNichoCupomAplicado,
-  onQuickFinalize, onCancelSale, onOpenTrocaDevolucao,
+  onQuickFinalize, onCancelSale,
+  qtdArmada, setQtdArmada,
   fmt, RED, NAVY_DARK,
 }: {
   products: Product[];
@@ -234,9 +237,7 @@ function NichoLeituraView({
   setSaleDiscount: Dispatch<SetStateAction<number>>;
   cashSession: CashSession | null;
   codeInputRef: RefObject<HTMLInputElement>;
-  classicCode: string;
-  setClassicCode: (v: string) => void;
-  handleClassicSubmit: () => void;
+  handleClassicSubmit: (override?: string) => void;
   saleVendedor: string;
   setSaleVendedor: Dispatch<SetStateAction<string>>;
   saleTipoAtendimento: 'Venda' | 'OS';
@@ -256,7 +257,8 @@ function NichoLeituraView({
   setNichoCupomAplicado: Dispatch<SetStateAction<{ code: string; descricao: string; desconto: number } | null>>;
   onQuickFinalize: (method: Payment['method']) => void;
   onCancelSale: () => void;
-  onOpenTrocaDevolucao: () => void;
+  qtdArmada: number | null;
+  setQtdArmada: Dispatch<SetStateAction<number | null>>;
   fmt: (n: number) => string;
   RED: string;
   NAVY_DARK: string;
@@ -264,9 +266,19 @@ function NichoLeituraView({
   const [search, setSearch] = useState('');
   const [chip, setChip] = useState<string | null>(null);
   const [descontoStr, setDescontoStr] = useState('0,00');
+  // Desconto em R$ ou % (padrão LogMax). O % é só entrada — o que vai pro
+  // banco é sempre o valor em reais já convertido.
+  const [descontoModo, setDescontoModo] = useState<'valor' | 'pct'>('valor');
+  const [descontoPctStr, setDescontoPctStr] = useState('');
   const [cupomStr, setCupomStr] = useState('');
   const [cupomErro, setCupomErro] = useState<string | null>(null);
   const [selectedPay, setSelectedPay] = useState<Payment['method']>('dinheiro');
+  // Ficha do produto (padrão LogMax) — abre pelo botão ⓘ do card, nunca pelo
+  // clique do card (esse continua adicionando ao carrinho).
+  const [detalheProduto, setDetalheProduto] = useState<Product | null>(null);
+  // Abas Produtos/Carrinho (padrão LogMax) — só aparecem abaixo de lg, onde o
+  // painel de 440px não cabe ao lado da grade. Em desktop os dois convivem.
+  const [mobileTab, setMobileTab] = useState<'produtos' | 'carrinho'>('produtos');
   // Aplica cupom: valida contra NICHO_CUPONS, calcula desconto (pct do total
   // ou valor fixo), delega pro state do pai pra somar no total. Repetido =
   // recalcula (troca de cupom). Cart vazio = erro amigável.
@@ -296,15 +308,36 @@ function NichoLeituraView({
     setCupomStr('');
     setCupomErro(null);
   };
-  const chips = pdvMode === 'maxlook'
-    ? ['Roupas', 'Calçados', 'Acessórios', 'Feminino', 'Masculino']
-    : ['Smartphones', 'Notebooks', 'Acessórios', 'Peças', 'Serviços'];
-  const s = search.toLowerCase();
-  const filtered = products.filter(p => {
-    if (chip && !(p.category || '').toLowerCase().includes(chip.toLowerCase())) return false;
-    if (!s) return true;
-    return [p.name, p.ref, p.ean13, p.marca].some(v => (v || '').toString().toLowerCase().includes(s));
-  });
+  // Chips derivados das categorias que existem de verdade no cadastro deste
+  // PDV (padrão LogMax) — não mais uma lista fixa por nicho. Lista fixa
+  // deixava a gaveta vazia sempre que o cadastro usava outro nome de
+  // categoria (ex.: "Vestidos" não batia com nenhum dos chips hardcoded).
+  const categoriasChips = useMemo(() => {
+    const mapa = new Map<string, { chave: string; label: string; total: number }>();
+    for (const p of products) {
+      const label = String(p.category ?? '').trim();
+      if (!label) continue;
+      const chave = chaveCategoria(label);
+      const atual = mapa.get(chave);
+      if (atual) atual.total += 1;
+      else mapa.set(chave, { chave, label, total: 1 });
+    }
+    return [...mapa.values()].sort((a, b) =>
+      b.total - a.total || a.label.localeCompare(b.label, 'pt-BR'));
+  }, [products]);
+  const chipLabel = categoriasChips.find(c => c.chave === chip)?.label ?? chip;
+  const produtosPorCategoria = useMemo(() => products.filter(p => {
+    if (!chip) return true;
+    return chaveCategoria(p.category) === chip;
+  }), [products, chip]);
+  // Mesma gramática do CÓDIGO/F8 do SuperMax: "2*camiseta" filtra por
+  // "camiseta" com a quantidade separada; "2*" sozinho arma (ver onKeyDown
+  // da busca, abaixo) sem esconder a grade.
+  const buscaNicho = separarQtdETermo(search);
+  const filtered: Product[] = useMemo(
+    () => buscarProdutos<Product>(produtosPorCategoria, buscaNicho.termo, produtosPorCategoria.length),
+    [produtosPorCategoria, buscaNicho.termo],
+  );
   const isFashion = pdvMode === 'maxlook';
   const isTech = pdvMode === 'techmax';
   const changeQty = (id: string, delta: number) => {
@@ -317,12 +350,67 @@ function NichoLeituraView({
       })
       .filter(Boolean));
   };
-  // Espelha desconto local -> state do pai (usado no finalize).
+  // Espelha desconto local -> state do pai (usado no finalize). Em modo '%',
+  // o percentual NÃO vai pro banco: converte pra reais aqui e grava o valor,
+  // arredondado em centavos (senão sobra fração e o total não fecha).
   const commitDesconto = (raw: string) => {
     setDescontoStr(raw);
     const n = parseCurrencyToNumber(raw);
     setSaleDiscount(Math.max(0, isFinite(n) ? n : 0));
   };
+  const commitDescontoPct = (raw: string) => {
+    const limpo = raw.replace(/[^\d.,]/g, '').slice(0, 6);
+    setDescontoPctStr(limpo);
+    // Acima de 100% o desconto passaria da venda inteira.
+    const pct = Math.min(100, Math.max(0, Number(limpo.replace(',', '.')) || 0));
+    setSaleDiscount(Math.min(subtotal, Math.round(subtotal * pct) / 100));
+  };
+  // Trocar de modo zera os dois campos: manter o outro preenchido deixaria na
+  // tela um valor que não está sendo cobrado.
+  const trocarModoDesconto = (modo: 'valor' | 'pct') => {
+    setDescontoModo(modo);
+    setDescontoStr('0,00');
+    setDescontoPctStr('');
+    setSaleDiscount(0);
+  };
+  const descontoPctNum = Math.min(100, Math.max(0, Number(descontoPctStr.replace(',', '.')) || 0));
+  // Em modo %, o desconto em reais depende do subtotal — se o carrinho muda
+  // depois do percentual digitado, o valor gravado tem de acompanhar. Sem
+  // isso, "10%" de um carrinho de R$ 100 continuaria R$ 10 num carrinho de
+  // R$ 300.
+  useEffect(() => {
+    if (descontoModo !== 'pct') return;
+    setSaleDiscount(Math.min(subtotal, Math.round(subtotal * descontoPctNum) / 100));
+  }, [subtotal, descontoPctNum, descontoModo, setSaleDiscount]);
+  // Estes campos são estado LOCAL; quem zera o desconto ao fim da venda é o
+  // pai (setSaleDiscount(0)). Sem esta ressincronização o campo continuava
+  // exibindo "10,00" na venda seguinte — um desconto que não estava mais
+  // sendo cobrado. Carrinho vazio é a fronteira entre uma venda e outra, e
+  // fora dela o operador nunca é interrompido enquanto digita.
+  useEffect(() => {
+    if (cart.length > 0) return;
+    if (saleDiscount !== 0) return;
+    setDescontoStr('0,00');
+    setDescontoPctStr('');
+  }, [cart.length, saleDiscount]);
+  // Situação de crédito do cliente escolhido no Fiado (padrão LogMax).
+  // Mesma régua do finalizeSaleQuick: `balance` NEGATIVO é dívida. Mostrar
+  // isto ANTES de fechar evita o operador descobrir o bloqueio só no clique.
+  const clienteFiado = clients.find(c => c.id === nichoClienteFiadoId) ?? null;
+  const credito = clienteFiado
+    ? (() => {
+        const devedor = clienteFiado.balance < 0 ? -clienteFiado.balance : 0;
+        const limite = clienteFiado.creditLimit;
+        const disponivel = limite - devedor;
+        const semLimite = limite <= 0;
+        const estoura = semLimite || total > disponivel + 0.001;
+        return { devedor, limite, disponivel, semLimite, estoura };
+      })()
+    : null;
+  // Trava do botão FECHAR VENDA quando o fiado não passa — o motivo já está
+  // visível no painel acima, então o clique não tem por que existir.
+  const fiadoBloqueado = selectedPay === 'fiado' && (!clienteFiado || (credito?.estoura ?? false));
+
   // Dinheiro inline: troco / falta ao vivo (padrão LogMax).
   const dinheiroRecebidoNum = parseCurrencyToNumber(nichoDinheiroRecebido);
   const troco = Math.max(0, dinheiroRecebidoNum - total);
@@ -343,9 +431,36 @@ function NichoLeituraView({
   }
 
   return (
-    <div className="flex-1 flex overflow-hidden min-h-0" style={{ background: '#e5e7eb' }}>
+    <>
+    <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0" style={{ background: '#e5e7eb' }}>
+      {/* Abas Produtos/Carrinho — só abaixo de lg, onde as duas colunas não cabem */}
+      <div className="flex lg:hidden shrink-0 border-b bg-white" style={{ borderColor: modeMeta.accentDark + '30' }}>
+        <button
+          onClick={() => setMobileTab('produtos')}
+          className="flex-1 py-2.5 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition-colors"
+          style={mobileTab === 'produtos'
+            ? { color: modeMeta.accentDark, borderColor: modeMeta.accent }
+            : { color: '#9ca3af', borderColor: 'transparent' }}
+        >
+          <Package size={13} /> Produtos ({filtered.length})
+        </button>
+        <button
+          onClick={() => setMobileTab('carrinho')}
+          className="flex-1 py-2.5 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 border-b-2 transition-colors"
+          style={mobileTab === 'carrinho'
+            ? { color: modeMeta.accentDark, borderColor: modeMeta.accent }
+            : { color: '#9ca3af', borderColor: 'transparent' }}
+        >
+          <ShoppingCartHeaderIcon color={mobileTab === 'carrinho' ? modeMeta.accentDark : '#9ca3af'} /> Carrinho
+          {cart.length > 0 && (
+            <span className="min-w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black px-1"
+              style={{ background: modeMeta.accent, color: modeMeta.accentText }}>{cart.length}</span>
+          )}
+        </button>
+      </div>
+
       {/* ============ LEFT: busca + chips + grid (ações no header preto) ============ */}
-      <div className="flex-1 flex flex-col min-w-0 p-4 gap-3">
+      <div className={`flex-1 flex-col min-w-0 p-4 gap-3 min-h-0 ${mobileTab === 'produtos' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Barra de busca unificada — aceita nome, código OU EAN bipado (Enter).
             Padrão LogMax: um único input pra tudo, sem campo separado de scanner.
             Se o valor bater com um EAN/ref de produto e o usuário der Enter,
@@ -357,55 +472,95 @@ function NichoLeituraView({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
+              if (e.key === 'Escape' && (search.length > 0 || qtdArmada !== null)) {
+                // stopPropagation: sem isto o Esc também chega no handler
+                // global, que abre "CANCELAR VENDA". Limpar a busca não pode
+                // ser o mesmo gesto que descartar o carrinho.
+                e.preventDefault();
+                e.stopPropagation();
+                setQtdArmada(null);
+                setSearch('');
+                return;
+              }
               if (e.key !== 'Enter') return;
-              const q = search.trim();
-              if (!q) return;
+              const raw = search.trim();
+              if (!raw) return;
+              const parsed = separarQtdETermo(raw);
+              // "2*" sozinho (termo vazio) arma a quantidade pro próximo
+              // clique num card ou pro próximo bipe — mesma régua do SuperMax.
+              if (parsed.temMultiplicador && parsed.termo === '') {
+                e.preventDefault();
+                setQtdArmada(parsed.qtd);
+                setSearch('');
+                return;
+              }
               // Se bate exatamente com um EAN/ref, dispara scan (adiciona ao cart);
               // caso contrário deixa a busca filtrar visualmente e ignora o Enter.
               const isBip = products.some(p =>
-                (p.ean13 && p.ean13 === q) || (p.ref && p.ref.toUpperCase() === q.toUpperCase())
+                (p.ean13 && p.ean13 === parsed.termo) || (p.ref && p.ref.toUpperCase() === parsed.termo.toUpperCase())
               );
               if (isBip) {
                 e.preventDefault();
-                setClassicCode(q);
-                setTimeout(() => { handleClassicSubmit(); setSearch(''); }, 0);
+                // Passa o código direto: nada de setClassicCode + setTimeout,
+                // que lia o state velho e abria o fechamento no 1º bipe.
+                handleClassicSubmit(raw);
+                setSearch('');
               }
             }}
-            placeholder={isTech ? 'Buscar modelo, código, EAN ou bipar (Enter)...' : 'Buscar por nome, código, EAN ou bipar (Enter)...'}
+            placeholder={isTech ? 'Buscar modelo, código, EAN ou bipar (2* = quantidade)...' : 'Buscar por nome, código ou bipar (2* = quantidade)...'}
             className="w-full pl-9 pr-3 py-2.5 text-sm border-2 outline-none focus:border-blue-700 rounded-xl bg-white"
             style={{ borderColor: modeMeta.accentDark + '30' }}
             autoFocus
             autoComplete="off"
           />
+          {qtdArmada !== null && (
+            // Quantidade armada TEM de estar visível: é estado invisível que
+            // muda o resultado do próximo clique. Some sozinha quando um item
+            // a consome; Esc (ou o X) desarma.
+            <button
+              type="button"
+              onClick={() => { setQtdArmada(null); codeInputRef.current?.focus(); }}
+              title="Quantidade armada — vale para o próximo item. Clique para desarmar (Esc)."
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold"
+              style={{ background: `${modeMeta.accent}25`, color: modeMeta.accentDark, border: `1px solid ${modeMeta.accentDark}60` }}
+            >
+              {Number.isInteger(qtdArmada) ? qtdArmada : qtdArmada.toFixed(3)} × <X size={11} />
+            </button>
+          )}
         </div>
 
-        {/* Chips de categoria (padrão LogMax) */}
-        <div className="flex gap-1.5 overflow-x-auto pb-1 shrink-0" style={{ scrollbarWidth: 'thin' }}>
-          <button
-            onClick={() => setChip(null)}
-            className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2"
-            style={chip === null
-              ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
-              : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
-          >
-            Todos
-          </button>
-          {chips.map(c => {
-            const active = c === chip;
-            return (
-              <button
-                key={c}
-                onClick={() => setChip(active ? null : c)}
-                className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2"
-                style={active
-                  ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
-                  : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
-              >
-                {c}
-              </button>
-            );
-          })}
-        </div>
+        {/* Chips de categoria — montados a partir das categorias que existem no
+            cadastro deste PDV (com contagem), padrão LogMax. Com uma categoria
+            só o filtro não separa nada, então nem aparece. */}
+        {categoriasChips.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-1 shrink-0" style={{ scrollbarWidth: 'thin' }}>
+            <button
+              onClick={() => setChip(null)}
+              className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2 flex items-center gap-1.5"
+              style={chip === null
+                ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
+                : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
+            >
+              Todos <span className="tabular-nums font-black opacity-60">{products.length}</span>
+            </button>
+            {categoriasChips.map(c => {
+              const active = c.chave === chip;
+              return (
+                <button
+                  key={c.chave}
+                  onClick={() => setChip(active ? null : c.chave)}
+                  className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all border-2 flex items-center gap-1.5"
+                  style={active
+                    ? { background: modeMeta.accent, color: modeMeta.accentText, borderColor: modeMeta.accent, boxShadow: `0 2px 8px ${modeMeta.accent}59` }
+                    : { background: '#ffffff', color: '#262626', borderColor: 'rgba(0,0,0,0.15)' }}
+                >
+                  {c.label}
+                  <span className="tabular-nums font-black opacity-60">{c.total}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* GRID de produtos — 2/3 cols fashion, 1/2 cols tech horizontal.
             content-start + auto-rows-min: quando o filtro deixa poucos
@@ -426,7 +581,7 @@ function NichoLeituraView({
                 </p>
                 <p className="text-xs mt-1 max-w-[18rem] text-gray-500">
                   {chip
-                    ? <>Nenhum item em <b>{chip}</b>. <button className="underline font-bold" onClick={() => setChip(null)}>ver todos</button>.</>
+                    ? <>Nenhum item em <b>{chipLabel}</b>. <button className="underline font-bold" onClick={() => setChip(null)}>ver todos</button>.</>
                     : 'Ajuste a busca ou bipa outro código.'}
                 </p>
               </div>
@@ -435,17 +590,26 @@ function NichoLeituraView({
             filtered.map(p => {
               const semEstoque = (p.controlStock ?? true) && (p.stock ?? 999) <= 0;
               const inCart = cart.find(i => i.id === p.id);
-              const onClick = () => { if (!semEstoque) addToCart(p, 1); };
+              // Sem quantidade explícita: addToCart usa a armada (se houver) ou 1.
+              const onClick = () => {
+                if (semEstoque) return;
+                addToCart(p);
+                // No mobile, o primeiro item leva pro carrinho — senão o
+                // operador adiciona às cegas, sem ver o total subir.
+                if (window.innerWidth < 1024 && cart.length === 0) setMobileTab('carrinho');
+              };
 
               if (isFashion) {
-                // Card só-texto (padrão LogMax): marca dourada uppercase, categoria,
-                // nome do produto. Sem imagem/thumbnail — layout limpo tipo lista.
+                // Card de vitrine (padrão LogMax): foto quadrada, badge de
+                // escassez, marca dourada, categoria, nome e preço — mais o
+                // botão ⓘ que abre a ficha sem vender (stopPropagation).
+                const ultimaPeca = !semEstoque && typeof p.stock === 'number' && p.stock > 0 && p.stock <= 2;
                 return (
                   <button
                     key={p.id}
                     onClick={onClick}
                     disabled={semEstoque}
-                    className="rounded-xl px-3 py-2.5 flex flex-col gap-1 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40"
+                    className="rounded-xl p-2 flex flex-col gap-1.5 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40"
                     style={{
                       borderColor: inCart ? modeMeta.accent : 'rgba(0,0,0,0.08)',
                       background: inCart ? `${modeMeta.accent}15` : 'white',
@@ -453,11 +617,43 @@ function NichoLeituraView({
                     }}
                   >
                     {inCart && (
-                      <span className="absolute top-1.5 right-1.5 px-1.5 h-5 min-w-5 rounded-full flex items-center justify-center text-[10px] font-black"
+                      <span className="absolute top-3 right-3 px-1.5 h-5 min-w-5 rounded-full flex items-center justify-center text-[10px] font-black z-10"
                         style={{ background: modeMeta.accent, color: modeMeta.accentText }}>
                         {inCart.quantity}
                       </span>
                     )}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Ver ficha de ${p.name}`}
+                      onClick={e => { e.stopPropagation(); setDetalheProduto(p); }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setDetalheProduto(p); }
+                      }}
+                      className="absolute top-3 left-3 w-7 h-7 rounded-full flex items-center justify-center z-10 cursor-pointer"
+                      style={{ background: 'rgba(255,255,255,0.92)', color: modeMeta.accentDark, border: `1px solid ${modeMeta.accentDark}55` }}>
+                      <Info size={13} strokeWidth={2.5} />
+                    </span>
+                    <div className="w-full aspect-square rounded-lg overflow-hidden flex items-center justify-center relative"
+                      style={{ background: '#F4F1EA', border: '1px solid rgba(0,0,0,0.05)' }}>
+                      {p.image ? (
+                        <img src={p.image} alt={p.name} loading="lazy" className="w-full h-full object-cover" />
+                      ) : (
+                        <Package size={26} strokeWidth={1.5} style={{ color: '#C4BCA8' }} />
+                      )}
+                      {ultimaPeca && (
+                        <span className="absolute bottom-1 left-1 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-sm"
+                          style={{ background: '#0A0A0AD9', color: '#ffffff' }}>
+                          {p.stock === 1 ? 'Última peça' : `Últimas ${p.stock}`}
+                        </span>
+                      )}
+                      {semEstoque && (
+                        <span className="absolute bottom-1 left-1 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-sm"
+                          style={{ background: '#DC2626', color: '#ffffff' }}>
+                          Esgotado
+                        </span>
+                      )}
+                    </div>
                     {p.marca && (
                       <span className="text-[11px] font-black uppercase tracking-[0.18em] truncate"
                         style={{ color: modeMeta.accentDark }}>
@@ -470,6 +666,9 @@ function NichoLeituraView({
                       </span>
                     )}
                     <span className="text-sm font-bold text-gray-900 leading-tight line-clamp-1 truncate">{p.name}</span>
+                    <span className="text-base font-black tabular-nums mt-auto" style={{ color: modeMeta.accentDark }}>
+                      {Number(p.price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </span>
                   </button>
                 );
               }
@@ -494,6 +693,20 @@ function NichoLeituraView({
                       {inCart.quantity}
                     </span>
                   )}
+                  {/* Ficha técnica. stopPropagation porque o card inteiro é
+                      o botão de adicionar — sem isso, consultar venderia. */}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Ver ficha de ${p.name}`}
+                    onClick={e => { e.stopPropagation(); setDetalheProduto(p); }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setDetalheProduto(p); }
+                    }}
+                    className="absolute bottom-1.5 left-1.5 w-7 h-7 rounded-full flex items-center justify-center z-10 cursor-pointer"
+                    style={{ background: 'rgba(255,255,255,0.92)', color: modeMeta.accentDark, border: `1px solid ${modeMeta.accentDark}55` }}>
+                    <Info size={13} strokeWidth={2.5} />
+                  </span>
                   <div className="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
                     {p.image ? (
                       <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
@@ -543,7 +756,7 @@ function NichoLeituraView({
       </div>
 
       {/* ============ RIGHT: carrinho + pagamento inline (padrão LogMax) ============ */}
-      <div className="w-[440px] shrink-0 flex flex-col border-l bg-white" style={{ borderColor: modeMeta.accentDark + '30' }}>
+      <div className={`w-full lg:w-[440px] shrink-0 flex-col border-l bg-white min-h-0 ${mobileTab === 'carrinho' ? 'flex' : 'hidden lg:flex'}`} style={{ borderColor: modeMeta.accentDark + '30' }}>
         <div className="px-4 py-3 border-b flex items-center justify-between shrink-0" style={{ borderColor: modeMeta.accentDark + '30' }}>
           <div className="flex items-center gap-2">
             <ShoppingCartHeaderIcon color={modeMeta.accentDark} />
@@ -624,15 +837,52 @@ function NichoLeituraView({
             <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
           </div>
 
-          <div className="flex justify-between items-center gap-2">
-            <span className="text-sm text-gray-600 whitespace-nowrap">Desconto (R$)</span>
-            <input
-              value={descontoStr}
-              onChange={(e) => commitDesconto(maskCurrency(e.target.value))}
-              className="w-28 px-2 py-1 text-sm text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white"
-              style={{ borderColor: modeMeta.accentDark + '30', color: saleDiscount > 0 ? RED : '#171717' }}
-              placeholder="0,00"
-            />
+          <div className="flex flex-col gap-1">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-sm text-gray-600 flex items-center gap-1.5 whitespace-nowrap">
+                Desconto
+                <span className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: modeMeta.accentDark + '40' }}>
+                  {(['valor', 'pct'] as const).map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => trocarModoDesconto(m)}
+                      className="px-2 py-0.5 text-[10px] font-black transition-colors"
+                      style={descontoModo === m
+                        ? { background: modeMeta.accent, color: modeMeta.accentText }
+                        : { background: 'white', color: '#6b7280' }}
+                    >
+                      {m === 'valor' ? 'R$' : '%'}
+                    </button>
+                  ))}
+                </span>
+              </span>
+              {descontoModo === 'valor' ? (
+                <input
+                  value={descontoStr}
+                  onChange={(e) => commitDesconto(maskCurrency(e.target.value))}
+                  className="w-28 px-2 py-1 text-sm text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white"
+                  style={{ borderColor: modeMeta.accentDark + '30', color: saleDiscount > 0 ? RED : '#171717' }}
+                  placeholder="0,00"
+                />
+              ) : (
+                <input
+                  value={descontoPctStr}
+                  onChange={(e) => commitDescontoPct(e.target.value)}
+                  inputMode="decimal"
+                  className="w-28 px-2 py-1 text-sm text-right tabular-nums font-bold border rounded outline-none focus:border-blue-700 bg-white"
+                  style={{ borderColor: modeMeta.accentDark + '30', color: saleDiscount > 0 ? RED : '#171717' }}
+                  placeholder="0"
+                />
+              )}
+            </div>
+            {/* O percentual não vai pro banco — mostrar o valor que ele virou é
+                o que deixa o operador conferir antes de fechar. */}
+            {descontoModo === 'pct' && saleDiscount > 0 && (
+              <p className="text-[10px] text-gray-500 text-right tabular-nums">
+                {descontoPctNum.toLocaleString('pt-BR')}% de R$ {fmt(subtotal)} = −R$ {fmt(saleDiscount)}
+              </p>
+            )}
           </div>
 
           {/* Cupom com regras locais (PROMO10 10% / VIP20 20% / WELCOME R$10 fixo) */}
@@ -802,22 +1052,60 @@ function NichoLeituraView({
           )}
 
           {selectedPay === 'fiado' && cart.length > 0 && (
-            <div className="flex items-center gap-2 p-2.5 rounded-xl"
-              style={{ background: modeMeta.accent + '10', border: `1px solid ${modeMeta.accent}40` }}>
-              <UserIcon size={12} style={{ color: modeMeta.accentDark }} className="shrink-0" />
-              <select
-                value={nichoClienteFiadoId}
-                onChange={(e) => setNichoClienteFiadoId(e.target.value)}
-                className="flex-1 min-w-0 px-2 py-1 text-xs font-bold border rounded outline-none bg-white cursor-pointer"
-                style={{ borderColor: modeMeta.accentDark + '30' }}
-              >
-                <option value="">Selecione o cliente *</option>
-                {clients.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}{c.creditLimit ? ` — limite R$ ${c.creditLimit.toFixed(2).replace('.', ',')}` : ''}
-                  </option>
-                ))}
-              </select>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 p-2.5 rounded-xl"
+                style={{ background: modeMeta.accent + '10', border: `1px solid ${modeMeta.accent}40` }}>
+                <UserIcon size={12} style={{ color: modeMeta.accentDark }} className="shrink-0" />
+                <select
+                  value={nichoClienteFiadoId}
+                  onChange={(e) => setNichoClienteFiadoId(e.target.value)}
+                  className="flex-1 min-w-0 px-2 py-1 text-xs font-bold border rounded outline-none bg-white cursor-pointer"
+                  style={{ borderColor: modeMeta.accentDark + '30' }}
+                >
+                  <option value="">Selecione o cliente *</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.creditLimit ? ` — limite R$ ${c.creditLimit.toFixed(2).replace('.', ',')}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {/* Situação de crédito — aparece só quando há algo a dizer. Sem
+                  limite cadastrado e sem dívida, não há painel: o caixa não
+                  precisa de um retângulo dizendo "tudo bem". */}
+              {/* `semLimite` entra na condição porque ele TRAVA o botão de
+                  fechar: esconder o painel deixava o operador com um botão
+                  morto e nenhuma explicação na tela. */}
+              {credito && (credito.limite > 0 || credito.devedor > 0 || credito.semLimite) && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1.5 rounded-lg text-[10px]"
+                  style={{
+                    background: credito.estoura ? 'rgba(220,38,38,0.08)' : 'rgba(0,0,0,0.04)',
+                    border: `1px solid ${credito.estoura ? 'rgba(220,38,38,0.35)' : 'rgba(0,0,0,0.10)'}`,
+                  }}>
+                  {credito.semLimite ? (
+                    <span className="font-black uppercase tracking-wider" style={{ color: RED }}>
+                      Sem limite de crédito cadastrado
+                    </span>
+                  ) : (
+                    <>
+                      <span className="text-gray-600">
+                        Em aberto: <strong className="tabular-nums text-gray-800">R$ {fmt(credito.devedor)}</strong>
+                      </span>
+                      <span className="text-gray-600">
+                        Limite: <strong className="tabular-nums text-gray-800">R$ {fmt(credito.limite)}</strong>
+                      </span>
+                      <span style={credito.estoura ? { color: RED, fontWeight: 700 } : { color: '#4b5563' }}>
+                        Disponível: <strong className="tabular-nums">R$ {fmt(Math.max(0, credito.disponivel))}</strong>
+                      </span>
+                      {credito.estoura && (
+                        <span className="font-black uppercase tracking-wider w-full" style={{ color: RED }}>
+                          Lançamento de R$ {fmt(total)} excede o disponível
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -852,13 +1140,16 @@ function NichoLeituraView({
 
           <button
             onClick={() => onQuickFinalize(selectedPay)}
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || fiadoBloqueado}
+            title={fiadoBloqueado
+              ? (clienteFiado ? 'Fiado indisponível para este cliente — veja a situação de crédito acima.' : 'Selecione o cliente do fiado.')
+              : undefined}
             className="w-full py-3.5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             style={{
-              background: cart.length === 0 ? '#d4d4d4' : '#0A0A0A',
-              color: cart.length === 0 ? '#737373' : '#FFFFFF',
-              border: cart.length > 0 ? `2px solid ${modeMeta.accent}` : '2px solid transparent',
-              boxShadow: cart.length > 0
+              background: cart.length === 0 || fiadoBloqueado ? '#d4d4d4' : '#0A0A0A',
+              color: cart.length === 0 || fiadoBloqueado ? '#737373' : '#FFFFFF',
+              border: cart.length > 0 && !fiadoBloqueado ? `2px solid ${modeMeta.accent}` : '2px solid transparent',
+              boxShadow: cart.length > 0 && !fiadoBloqueado
                 ? `0 8px 24px rgba(0,0,0,0.20), 0 0 0 3px ${modeMeta.accent}40`
                 : 'none',
             }}
@@ -868,6 +1159,18 @@ function NichoLeituraView({
         </div>
       </div>
     </div>
+
+    {detalheProduto && (
+      <ProdutoDetalheModal
+        produto={detalheProduto}
+        filial={modeMeta.label}
+        accent={modeMeta.accentDark}
+        substantivo={isFashion ? 'peça' : 'unidade'}
+        onClose={() => setDetalheProduto(null)}
+        onAdd={(p) => addToCart(p)}
+      />
+    )}
+    </>
   );
 }
 
@@ -989,6 +1292,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [classicSearchTerm, setClassicSearchTerm] = useState('');
   const [classicMsg, setClassicMsg] = useState<{ type: 'err'; text: string } | null>(null);
   const [classicSuggestionIdx, setClassicSuggestionIdx] = useState(-1);
+  // Quantidade ARMADA (padrão LogMax) — "2*" sozinho no CÓDIGO arma a
+  // quantidade pro PRÓXIMO item (bipe, Enter numa sugestão, ou seleção no F8).
+  // qtdArmadaRef espelha o state pra ler o valor atual dentro de callbacks
+  // (ex.: handleClassicSubmit) sem depender de closures desatualizadas.
+  const [qtdArmada, setQtdArmada] = useState<number | null>(null);
+  const qtdArmadaRef = useRef<number | null>(null);
+  qtdArmadaRef.current = qtdArmada;
   // Cupom regenerado a cada venda: '------' quando não há venda em andamento.
   const [cupomSeq, setCupomSeq] = useState<string>('------');
   const [helpOpen, setHelpOpen] = useState(false);
@@ -1129,7 +1439,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       () => {
         setSwapOperatorModal(false);
         setOperatorSwapsCount(c => c + 1);
-        onSwapOperator(target);
+        // A listagem vem sem foto (é o que deixa o picker leve). O header do
+        // app mostra a foto do operador, então buscamos só a do escolhido —
+        // uma linha, contra os ~5 MB que a lista inteira custava.
+        if (isTraining || !target.id || target.id.startsWith('trainer-op-')) {
+          onSwapOperator(target);
+          return;
+        }
+        Storage.getUserAvatar(target.id)
+          .then(avatar => onSwapOperator(avatar ? { ...target, avatar } : target))
+          .catch(() => onSwapOperator(target));
       },
     );
   };
@@ -1350,11 +1669,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return () => { active = false; };
     }
     const load = () =>
-      Storage.getProducts()
+      // Filtro por pdv_mode vai NO SERVIDOR: puxar as três lojas pra descartar
+      // duas no cliente custava ~1,5 MB de imagens base64 por abertura de PDV.
+      Storage.getProducts(pdvMode)
         .then(all => {
           if (!active) return;
-          // Filtra por pdv_mode. Legado sem coluna cai em 'supermax' via storage.
-          setProducts(all.filter(p => (p.pdvMode ?? 'supermax') === pdvMode));
+          setProducts(all);
         })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -1375,10 +1695,23 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     return () => { active = false; supabase.removeChannel(ch); };
   }, [isTraining, pdvMode]);
 
-  const addToCart = (product: Product, qty: number = 1) => {
+  const addToCart = (product: Product, qty?: number) => {
+    // Sem quantidade explícita, vale a que estiver ARMADA — e ela vale UMA
+    // vez, como no caixa de mercado: armou 2, o próximo item sai 2, o
+    // seguinte volta a 1. Lê do ref (não do state) porque este callback às
+    // vezes roda dentro de handlers/timeouts onde uma closure velha do state
+    // erraria a conta.
+    const effectiveQty = qty ?? qtdArmadaRef.current ?? 1;
     // Arredonda em 3 casas para conter erro de ponto flutuante em qtd de balança
     // (ex.: 0,1 + 0,2 = 0.30000000000000004 → 0.300).
-    const safeQty = parseFloat(qty.toFixed(3));
+    const safeQty = parseFloat(effectiveQty.toFixed(3));
+    // Desarma em QUALQUER adição, inclusive quando a quantidade veio colada
+    // ao item ("2*7891" com 3 armado) — deixar sobrando o que o operador já
+    // acha que gastou é erro de conferência esperando pra acontecer.
+    if (qtdArmadaRef.current !== null) {
+      qtdArmadaRef.current = null;
+      setQtdArmada(null);
+    }
     let stockOK = true;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -1419,44 +1752,45 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
-  // Sugestões para o campo CÓDIGO (busca por nome / EAN / REF enquanto digita)
-  const classicQuery = (() => {
-    const raw = classicCode.trim();
-    const star = raw.search(/[*xX]/);
-    return star > 0 ? raw.slice(star + 1).trim() : raw;
-  })();
-  const classicSuggestions = (!checkoutMode && !suggestionsHidden && classicQuery.length >= 2)
-    ? products.filter(p =>
-        (p.name || '').toLowerCase().includes(classicQuery.toLowerCase()) ||
-        (p.ean13 || '').includes(classicQuery) ||
-        (p.ref || '').toLowerCase().includes(classicQuery.toLowerCase())
-      ).slice(0, 6)
+  // Sugestões para o campo CÓDIGO (busca por nome / EAN / REF enquanto digita).
+  // Usa a mesma gramática de multiplicador do handleClassicSubmit — "2*cami"
+  // já filtra por "cami" enquanto digita, não só no Enter.
+  const classicQuery = separarQtdETermo(classicCode).termo;
+  const classicSuggestions: Product[] = (!checkoutMode && !suggestionsHidden && classicQuery.length >= 2)
+    ? buscarProdutos<Product>(products, classicQuery, 8)
     : [];
 
-  const handleClassicSubmit = () => {
-    const raw = classicCode.trim();
+  // `override` existe para quem não digita no campo CÓDIGO (a busca dos
+  // nichos). Sem ele, o chamador precisava fazer setClassicCode(x) e chamar
+  // isto num setTimeout — mas a função capturada no timeout é a do render
+  // ANTERIOR, que lê o classicCode velho (vazio). O bipe do nicho caía no
+  // ramo "código vazio" e abria o fechamento em vez de lançar o produto.
+  const handleClassicSubmit = (override?: string) => {
+    const raw = (override ?? classicCode).trim();
     if (!raw) {
       if (cart.length > 0 && !checkoutMode) setCheckoutMode(true);
       return;
     }
-    let qty = 1;
-    let code = raw;
-    const star = raw.search(/[*xX]/);
-    if (star > 0) {
-      const qStr = raw.slice(0, star).replace(',', '.');
-      const cStr = raw.slice(star + 1).trim();
-      // Aceita decimal (peso) — ex.: 0.350*EAN ou 1,5*EAN
-      const parsed = parseFloat(qStr);
-      if (!isNaN(parsed) && parsed > 0 && cStr) {
-        qty = parseFloat(parsed.toFixed(3));
-        code = cStr;
-      }
+    const parsedQtd = separarQtdETermo(raw);
+    // "2*" sozinho (termo vazio) ARMA a quantidade pro PRÓXIMO item — bipe,
+    // sugestão ou item escolhido no F8 — em vez de tentar casar código já.
+    if (parsedQtd.temMultiplicador && parsedQtd.termo === '') {
+      qtdArmadaRef.current = parsedQtd.qtd;
+      setQtdArmada(parsedQtd.qtd);
+      setClassicCode('');
+      setClassicMsg(null);
+      setClassicSuggestionIdx(-1);
+      return;
     }
+    // Multiplicador colado ao item vale só para ESTE item — sem ele, addToCart
+    // usa a quantidade armada (se houver) ou 1, sozinho.
+    const explicitQty = parsedQtd.temMultiplicador ? parsedQtd.qtd : undefined;
+    const code = parsedQtd.termo;
     // Sugestão selecionada via setas → usa essa
     if (classicSuggestionIdx >= 0) {
       const picked = classicSuggestions[classicSuggestionIdx];
       if (picked) {
-        addToCart(picked, qty);
+        addToCart(picked, explicitQty);
         setClassicMsg(null);
         setClassicCode('');
         setClassicSuggestionIdx(-1);
@@ -1466,7 +1800,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // Match exato por EAN/REF (fluxo de scanner / código manual)
     const exact = products.find(p => p.ean13 === code || p.ref === code);
     if (exact) {
-      addToCart(exact, qty);
+      addToCart(exact, explicitQty);
       setClassicMsg(null);
       setClassicCode('');
       setClassicSuggestionIdx(-1);
@@ -1492,7 +1826,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       const embedded = parseInt(code.slice(7, 12), 10);
       if (scaleProduct && !isNaN(embedded) && embedded > 0) {
         const unit = (scaleProduct.unit || '').toUpperCase();
-        let scaleQty = qty;
+        // Peso embutido no EAN sempre vence — armado/multiplicador não faz
+        // sentido combinar com um valor que a balança já pesou.
+        let scaleQty = explicitQty ?? 1;
         if (unit === 'KG' || unit === 'G') {
           scaleQty = parseFloat((embedded / 1000).toFixed(3)); // gramas → kg
         } else if (scaleProduct.price > 0) {
@@ -1508,7 +1844,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     // Fallback: se houver sugestões por nome, usa a primeira
     if (classicSuggestions.length > 0) {
-      addToCart(classicSuggestions[0], qty);
+      addToCart(classicSuggestions[0], explicitQty);
       setClassicMsg(null);
       setClassicCode('');
       setClassicSuggestionIdx(-1);
@@ -1595,6 +1931,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setCart([]); setPayments([]); setLastAdded(null); setPartialAmount('');
     setClassicCode(''); setCheckoutMode(false); setCashChange(0);
     setSaleDiscount(0); setCpfNota(''); setLinkedClient(null);
+    // A quantidade armada morre com a venda — senão "3*" de um
+    // cupom cancelado sairia no primeiro item do cupom seguinte.
+    qtdArmadaRef.current = null;
+    setQtdArmada(null);
   };
   const recallSuspendedSale = () => {
     if (!suspendedSale) return;
@@ -1638,6 +1978,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSaleDiscount(0);
     setCpfNota('');
     setLinkedClient(null);
+    // A quantidade armada morre com a venda — senão "3*" de um
+    // cupom cancelado sairia no primeiro item do cupom seguinte.
+    qtdArmadaRef.current = null;
+    setQtdArmada(null);
     setCheckoutMode(false);
   }, [checkoutMode, cart.length]);
 
@@ -2097,6 +2441,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             setSaleDiscount(0);
             setCpfNota('');
             setLinkedClient(null);
+            // A quantidade armada morre com a venda — senão "3*" de um
+            // cupom cancelado sairia no primeiro item do cupom seguinte.
+            qtdArmadaRef.current = null;
+            setQtdArmada(null);
           },
         });
       };
@@ -2149,6 +2497,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         e.preventDefault();
         if (checkoutMode) {
           tryReturnToLeitura();
+        } else if (qtdArmada !== null) {
+          // Código já vazio + quantidade armada: só desarma. Sem esta guarda,
+          // um "2*" arrependido cairia direto no cancelar-venda inteira.
+          qtdArmadaRef.current = null;
+          setQtdArmada(null);
         } else {
           cancelEntireSale();
         }
@@ -2197,6 +2550,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
         const pd = payments.reduce((a, p) => a + p.amount, 0);
         if (tot - pd <= 0.001) return;
+        // F3 abre PIX/Vale/Fiado — formas de confirmação assíncrona, só valem
+        // como forma única (mesma trava dos botões do grid). F1/F2 continuam
+        // liberados: Dinheiro e Cartão aceitam misto.
+        const isMistoActive = payments.length > 0 || (parseCurrencyToNumber(partialAmount) > 0 && parseCurrencyToNumber(partialAmount) < (tot - pd) - 0.001);
+        if (e.key === 'F3' && isMistoActive) return;
         if (e.key === 'F1') handleCashClick();
         else if (e.key === 'F2') { setValePickerOpen(false); setCardPickerOpen(true); }
         else if (e.key === 'F3') { setCardPickerOpen(false); setValePickerOpen(true); }
@@ -2379,7 +2737,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, swapOperatorModal, quickClientModal, isTraining, onExitToMenu, onExitTraining, onSwapOperator]);
+  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, swapOperatorModal, quickClientModal, isTraining, onExitToMenu, onExitTraining, onSwapOperator, qtdArmada, partialAmount]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -2501,6 +2859,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSaleDiscount(0);
     setCpfNota('');
     setLinkedClient(null);
+    // A quantidade armada morre com a venda — senão "3*" de um
+    // cupom cancelado sairia no primeiro item do cupom seguinte.
+    qtdArmadaRef.current = null;
+    setQtdArmada(null);
     setSelectedCartIdx(-1);
     setSuspendedSale(null);
     setDiscountModal(null);
@@ -2543,6 +2905,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         setSaleDiscount(0);
         setCpfNota('');
         setLinkedClient(null);
+        // A quantidade armada morre com a venda — senão "3*" de um
+        // cupom cancelado sairia no primeiro item do cupom seguinte.
+        qtdArmadaRef.current = null;
+        setQtdArmada(null);
       },
     });
   };
@@ -2899,6 +3265,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       setSaleDiscount(0);
       setCpfNota('');
       setLinkedClient(null);
+      // A quantidade armada morre com a venda — senão "3*" de um
+      // cupom cancelado sairia no primeiro item do cupom seguinte.
+      qtdArmadaRef.current = null;
+      setQtdArmada(null);
       // Reset nicho fields: vendedor E tipoAtendimento persistem entre vendas
       // (mesma atendente costuma encadear; operador em modo OS continua até
       // trocar manualmente — padrão LogMax). IMEI e defeito sempre resetam
@@ -2929,7 +3299,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       const isStockError = /estoque insuficiente|nao encontrado no estoque/i.test(msg);
       if (isStockError) {
         try {
-          const fresh = await Storage.getProducts();
+          // Escopado no pdvMode: sem isso o recarregamento pós-erro trocava a
+          // lista filtrada pela lista das TRÊS lojas, e o PDV passava a exibir
+          // produto de outro nicho até o próximo reload.
+          const fresh = await Storage.getProducts(pdvMode);
           setProducts(fresh);
         } catch { /* silencia: a venda ja falhou, nao queremos mascarar */ }
       }
@@ -3287,8 +3660,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       } else {
         await Storage.reverseSale(venda.id);
         // Estoque voltou no servidor — recarrega pra tela não ficar atrasada.
-        const fresh = await Storage.getProducts();
-        setProducts(fresh.filter(p => (p.pdvMode ?? 'supermax') === pdvMode));
+        const fresh = await Storage.getProducts(pdvMode);
+        setProducts(fresh);
       }
       setReversalsCount(c => c + 1);
       setDevolucaoModal(null);
@@ -3358,11 +3731,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   {
     const fmt = (n: number) => n.toFixed(2).replace('.', ',');
     const totalItens = cart.reduce((a, i) => a + i.quantity, 0);
-    const filteredClassic = products.filter(p =>
-      (p.name || '').toLowerCase().includes(classicSearchTerm.toLowerCase()) ||
-      (p.ref || '').toLowerCase().includes(classicSearchTerm.toLowerCase()) ||
-      (p.ean13 || '').includes(classicSearchTerm)
-    ).slice(0, 60);
+    // F8 aceita a mesma gramática do campo CÓDIGO: "2*feijao" já filtra por
+    // "feijao" com a quantidade separada; "2*" sozinho arma (ver onKeyDown).
+    const buscaF8 = separarQtdETermo(classicSearchTerm);
+    const filteredClassic = buscarProdutos<Product>(products, buscaF8.termo, 60);
+    // Quantidade que o F8 vai aplicar: a digitada na própria busca, senão a
+    // armada (ou 1) — mesma régua do CÓDIGO.
+    const qtdDoF8 = buscaF8.temMultiplicador ? buscaF8.qtd : undefined;
 
     const YELLOW = '#FFC107';
     const YELLOW_DARK = '#B8860B';
@@ -3382,7 +3757,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               className="px-4 py-3 flex items-center justify-between shrink-0 gap-3"
               style={{ background: '#0A0A0A', borderBottom: `2px solid ${modeMeta.accentDark}` }}
             >
-              <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-3 min-w-0 overflow-x-auto">
                 {onExitToMenu && (
                   <button
                     onClick={tryExitToMenu}
@@ -3425,7 +3800,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       </select>
                     </div>
                     <button
-                      onClick={openReprintModal}
+                      onClick={openTrocaDevolucaoNicho}
                       className="px-3 py-2 text-xs font-black uppercase tracking-wider border rounded-lg hover:brightness-110 transition flex items-center gap-1.5"
                       style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
                       title="Troca / Devolução"
@@ -3483,7 +3858,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
             style={{ background: modeMeta.accent, borderColor: modeMeta.accentDark }}
           >
-            <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
               {onExitToMenu && (
                 <button
                   onClick={tryExitToMenu}
@@ -3548,33 +3923,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   🎓 TREINAMENTO
                 </span>
               )}
-              {cashSession && (
-                <span
-                  className="hidden md:inline-flex shrink-0 px-2.5 py-1.5 rounded-md text-xs font-black uppercase tracking-wider border-2 items-center gap-1"
-                  style={{ background: '#15803d', color: 'white', borderColor: '#14532d' }}
-                  title={`Caixa aberto às ${new Date(cashSession.aberturaAt).toLocaleTimeString('pt-BR')} · Fundo R$ ${cashSession.fundoTroco.toFixed(2).replace('.', ',')}`}
-                >
-                  CAIXA ABERTO
-                </span>
-              )}
             </div>
-            {!checkoutMode && cart.length === 0 && payments.length === 0 && (
-              <button
-                onClick={openReprintModal}
-                className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
-                style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
-                title="Reimprimir o último cupom desta sessão (Ctrl+R)"
-              >
-                <Receipt size={14} /> REIMPRIMIR
-              </button>
-            )}
             {cashSession && !checkoutMode && cart.length === 0 && payments.length === 0 && (
               <button
                 data-training-target="close-cash-btn"
                 onClick={startCloseCash}
                 className="shrink-0 px-3 py-2 rounded-md flex items-center gap-1.5 font-black uppercase tracking-wider text-xs border-2"
                 style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
-                title="Fechar caixa · encerrar turno (Ctrl+L)"
+                title={`Fechar caixa · encerrar turno (Ctrl+L) · Aberto às ${new Date(cashSession.aberturaAt).toLocaleTimeString('pt-BR')} · Fundo R$ ${cashSession.fundoTroco.toFixed(2).replace('.', ',')}`}
               >
                 <Lock size={14} /> FECHAR CAIXA
               </button>
@@ -3611,7 +3967,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     <div></div>
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
-                    {cart.map((item, idx) => {
+                    {cart.length === 0 ? (
+                      <div className="text-center text-gray-400 py-16 text-sm italic">
+                        Bipe ou digite o código do produto para iniciar.
+                      </div>
+                    ) : cart.map((item, idx) => {
                       const bruto = item.price * item.quantity;
                       const desc = item.discount ?? 0;
                       const liquido = bruto - desc;
@@ -3620,6 +3980,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       const controla = (live?.controlStock ?? item.controlStock ?? true);
                       const baseStock = live?.stock ?? item.stock ?? 0;
                       const restante = parseFloat((baseStock - item.quantity).toFixed(3));
+                      const ruptura = controla && item.quantity > baseStock;
                       return (
                         <div
                           key={item.id}
@@ -3635,6 +3996,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                           <div className="text-gray-500 truncate">{item.ean13 || item.ref || '—'}</div>
                           <div className="truncate font-semibold flex items-center gap-2 min-w-0">
                             <span className="truncate">{(item.name || '').toUpperCase()}</span>
+                            {ruptura && (
+                              <span
+                                className="shrink-0 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded border"
+                                style={{ background: '#fef3c7', color: '#92400e', borderColor: '#f59e0b' }}
+                                title={`Estoque: ${fmtQty(baseStock, item.unit)} · Vendendo: ${fmtQty(item.quantity, item.unit)}`}
+                              >
+                                Ruptura
+                              </span>
+                            )}
                             <button
                               onClick={() => openItemDiscountModal(item.id)}
                               tabIndex={-1}
@@ -3741,6 +4111,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 )}
                 <div className="flex items-center gap-3">
                   <span className="text-2xl font-bold text-gray-700 shrink-0">CÓDIGO:</span>
+                  {qtdArmada !== null && (
+                    // A quantidade armada TEM de estar visível: é estado invisível
+                    // que muda o resultado do próximo bipe/clique. Some sozinha
+                    // quando um item a consome; Esc desarma.
+                    <button
+                      type="button"
+                      onClick={() => { qtdArmadaRef.current = null; setQtdArmada(null); codeInputRef.current?.focus(); }}
+                      className="shrink-0 px-3 py-1 text-xl font-black tabular-nums border-2"
+                      style={{ background: YELLOW, color: NAVY_DARK, borderColor: YELLOW_DARK }}
+                      title="Quantidade armada — vale para o próximo item. Clique para desarmar (Esc)."
+                    >
+                      {fmtQty(qtdArmada)} ×
+                    </button>
+                  )}
                   <div className="relative">
                     <input
                       data-training-target="code-input"
@@ -3784,6 +4168,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                             setSelectedCartIdx(-1);
                             e.stopPropagation();
                           } else {
+                            // Esc é o "desisti": limpa o campo E desarma a quantidade.
+                            qtdArmadaRef.current = null;
+                            setQtdArmada(null);
                             setClassicCode('');
                             setClassicSuggestionIdx(-1);
                           }
@@ -3901,7 +4288,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   <span className="opacity-40">·</span>
                   <span><b>F3</b> / <b>F9</b> / <b>Esc</b> Cancelar cupom</span>
                   <span className="opacity-40">·</span>
-                  <span><b>N*EAN</b> ou <b>N×EAN</b> Qtd (decimal aceito: <b>0,350*EAN</b>)</span>
+                  <span><b>2*</b> Qtd — sozinho arma p/ o próximo item, ou <b>2*EAN</b> / <b>2*nome</b> (peso: <b>0,350*</b>)</span>
                   <span className="opacity-40">·</span>
                   <span><b>F6</b> Desconto</span>
                   <span className="opacity-40">·</span>
@@ -3929,8 +4316,6 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               setSaleDiscount={setSaleDiscount}
               cashSession={cashSession}
               codeInputRef={codeInputRef}
-              classicCode={classicCode}
-              setClassicCode={setClassicCode}
               handleClassicSubmit={handleClassicSubmit}
               saleVendedor={saleVendedor}
               setSaleVendedor={setSaleVendedor}
@@ -3951,84 +4336,74 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               setNichoCupomAplicado={setNichoCupomAplicado}
               onQuickFinalize={finalizeSaleQuick}
               onCancelSale={cancelSale}
-              onOpenTrocaDevolucao={openTrocaDevolucaoNicho}
+              qtdArmada={qtdArmada}
+              setQtdArmada={setQtdArmada}
               fmt={fmt}
               RED={RED}
               NAVY_DARK={NAVY_DARK}
             />
           )}
 
-          {/* ============ TELA DE PAGAMENTO ============ */}
+          {/* ============ TELA DE PAGAMENTO — modal expandido (padrão LogMax) ============
+              Antes trocava a tela inteira (logo gigante + colunas + rodapé próprio).
+              Agora é um overlay: a leitura continua montada atrás, e o pagamento
+              vira o protagonista — formas de pagamento logo no topo, sem scroll. */}
           {checkoutMode && (
-            <>
-              <div className="flex-1 flex overflow-hidden min-h-0">
-                {/* Left: payment methods + values */}
-                {/* Left column: MaxPOS logo no topo + valor parcial + cards menores embaixo */}
-                <div className="flex-1 flex flex-col border-r border-gray-300 bg-white min-w-0">
-                  {/* LOGO MaxPOS — ocupa o espaço onde os cards estavam antes */}
-                  <div
-                    className="flex flex-col items-center justify-center py-10 px-6 border-b border-gray-200"
-                    style={{ background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)' }}
-                  >
-                    <div
-                      className="text-7xl font-black tracking-tight leading-none"
-                      style={{
-                        color: NAVY_DARK,
-                        textShadow: '0 2px 0 rgba(255,255,255,0.6), 0 4px 14px rgba(23,37,84,0.15)',
-                        letterSpacing: '-0.04em',
-                      }}
-                    >
-                      MAX<span style={{ color: YELLOW_DARK }}>POS</span>
-                    </div>
-                    <div
-                      className="mt-2 px-4 py-1 text-xs font-black uppercase tracking-[0.4em] rounded-full"
-                      style={{ background: YELLOW, color: NAVY_DARK, border: `1px solid ${YELLOW_DARK}` }}
-                    >
-                      Fechamento de Venda
-                    </div>
+            <div
+              className="flex-1 flex items-start justify-center overflow-y-auto p-4"
+              style={{ background: 'rgba(0,0,0,0.7)' }}
+            >
+              <div className="bg-white border-4 max-w-2xl w-full shadow-2xl my-4" style={{ borderColor: NAVY_DARK }}>
+                {/* Header navy — Total a pagar + Restante (some só com pagamento em curso) */}
+                <div className="px-5 py-4 text-white flex items-center justify-between gap-3" style={{ background: NAVY_DARK }}>
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Total a pagar</div>
+                    <div className="text-3xl font-black tabular-nums">R$ {fmt(total)}</div>
                   </div>
-
-                  {/* Banner misto + Valor parcial + PAGAMENTOS LANÇADOS + cards (cards "lá embaixo") */}
-                  <div className="flex-1 flex flex-col px-6 pt-5 pb-4 overflow-y-auto custom-scrollbar min-h-0">
-                    <div
-                      className="mb-4 px-3 py-2 flex items-start gap-2 border-l-4 rounded-r"
-                      style={{ background: '#eff6ff', borderColor: NAVY_DARK }}
-                    >
-                      <Split size={16} style={{ color: NAVY_DARK }} className="mt-0.5 shrink-0" />
-                      <div className="text-xs leading-snug" style={{ color: NAVY_DARK }}>
-                        <b>Pagamento misto liberado.</b> Informe o valor parcial e escolha a forma — repita para combinar dinheiro, PIX, cartão e fiado.
+                  {payments.length > 0 && (
+                    <div className="text-right">
+                      <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Restante</div>
+                      <div className="text-3xl font-black tabular-nums" style={{ color: remaining <= 0.001 ? '#22c55e' : YELLOW }}>
+                        R$ {fmt(Math.max(remaining, 0))}
                       </div>
                     </div>
+                  )}
+                  <button onClick={tryReturnToLeitura} className="text-white p-1 shrink-0" tabIndex={-1} title="Voltar para a leitura (Esc)">
+                    <X size={20} />
+                  </button>
+                </div>
 
-                    <div className="mb-4 max-w-md">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante · Tab vai para as formas)</span></label>
-                      <input
-                        ref={partialAmountRef}
-                        value={partialAmount}
-                        onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            // Padrão supermercado (Bematech/Linx): Enter NUNCA assume forma de pagamento.
-                            // Sempre foca o primeiro botão (DINHEIRO) — operador escolhe explicitamente F1/F2/F3.
-                            const first = document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]');
-                            first?.focus();
-                          }
-                        }}
-                        placeholder={`Restante: ${maskCurrency(Math.round(Math.max(remaining, 0) * 100))}`}
-                        className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-2 focus:ring-blue-500/30"
-                        style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
-                      />
-                      {/* Fix #9 — feedback inline quando valor digitado passa do restante. */}
-                      {partialAmount && parseCurrencyToNumber(partialAmount) > remaining + 0.001 && remaining > 0 && (
-                        <p className="mt-1 text-[11px] font-bold" style={{ color: YELLOW_DARK }}>
-                          ⚠ Valor maior que o restante (R$ {fmt(remaining)}) — será lançado só R$ {fmt(remaining)}.
-                        </p>
-                      )}
-                    </div>
+                {/* Valor desta forma + pagamentos lançados */}
+                <div className="px-6 pt-4">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">
+                    VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante · PIX, Vale e Fiado só como forma única)</span>
+                  </label>
+                  <input
+                    ref={partialAmountRef}
+                    value={partialAmount}
+                    onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        // Padrão supermercado (Bematech/Linx): Enter NUNCA assume forma de pagamento.
+                        // Sempre foca o primeiro botão (DINHEIRO) — operador escolhe explicitamente F1/F2/F3.
+                        const first = document.querySelector<HTMLButtonElement>('[data-pay-method="dinheiro"]');
+                        first?.focus();
+                      }
+                    }}
+                    placeholder={`Restante: ${maskCurrency(Math.round(Math.max(remaining, 0) * 100))}`}
+                    className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-2 focus:ring-blue-500/30"
+                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                  />
+                  {/* Fix #9 — feedback inline quando valor digitado passa do restante. */}
+                  {partialAmount && parseCurrencyToNumber(partialAmount) > remaining + 0.001 && remaining > 0 && (
+                    <p className="mt-1 text-[11px] font-bold" style={{ color: YELLOW_DARK }}>
+                      ⚠ Valor maior que o restante (R$ {fmt(remaining)}) — será lançado só R$ {fmt(remaining)}.
+                    </p>
+                  )}
 
-                    {/* Pagamentos Lançados — abaixo do VALOR DESTA FORMA */}
-                    <div className="mb-4 max-w-md border-2 rounded overflow-hidden" style={{ borderColor: NAVY_DARK }}>
+                  {payments.length > 0 && (
+                    <div className="mt-3 border-2 rounded overflow-hidden" style={{ borderColor: NAVY_DARK }}>
                       <div className="px-3 py-1.5 flex items-center justify-between" style={{ background: NAVY_DARK }}>
                         <span className="text-[11px] font-black uppercase tracking-wider text-white">Pagamentos Lançados</span>
                         <span
@@ -4038,76 +4413,82 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                           {payments.length} {payments.length === 1 ? 'forma' : 'formas'}
                         </span>
                       </div>
-                      <div data-training-target="payments-list" className="p-2 space-y-1.5 bg-white max-h-56 overflow-y-auto custom-scrollbar">
-                        {payments.length === 0 ? (
-                          <div className="text-gray-400 text-xs py-3 text-center italic">
-                            — nenhum pagamento lançado —
-                          </div>
-                        ) : (
-                          payments.map((p, i) => {
-                            const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale-Alimentação' };
-                            let label = labels[p.method] ?? p.method;
-                            if (p.method === 'credito' && p.installments && p.installments > 1) {
-                              label = `Crédito ${p.installments}x (R$ ${fmt(p.amount / p.installments)}/parc.)`;
-                            } else if (p.method === 'fiado' && p.clientName) {
-                              label = `Fiado — ${p.clientName}`;
-                            }
-                            const isEditing = editingPaymentIdx === i;
-                            return (
-                              <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-300 px-2.5 py-1.5 gap-2 rounded">
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[11px] font-bold text-gray-700 uppercase tracking-wide truncate">{label}</div>
-                                  {isEditing ? (
-                                    <input
-                                      autoFocus
-                                      value={editingPaymentValue}
-                                      onChange={(e) => setEditingPaymentValue(maskCurrency(e.target.value))}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') { e.preventDefault(); commitEditPayment(); }
-                                        else if (e.key === 'Escape') { e.preventDefault(); setEditingPaymentIdx(null); setEditingPaymentValue(''); }
-                                      }}
-                                      // Fix #14 — blur agora CANCELA a edição (mais previsível).
-                                      // Para confirmar, Enter ou clicar no lápis novamente.
-                                      onBlur={() => { setEditingPaymentIdx(null); setEditingPaymentValue(''); }}
-                                      className="w-full mt-0.5 bg-white border-2 text-sm font-bold text-gray-900 outline-none px-1.5 py-0.5 tabular-nums focus:border-blue-700"
-                                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
-                                    />
-                                  ) : (
-                                    <span className="text-base font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.amount)}</span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    // Em modo edição, preventDefault no mousedown evita o blur
-                                    // do input (que agora cancela) — assim o click confirma.
-                                    onMouseDown={isEditing ? (e) => e.preventDefault() : undefined}
-                                    onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
-                                    className="p-1.5 rounded glass-blue shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                                    title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor (Enter)'}
-                                  >
-                                    <Pencil size={12} className="relative z-[2]" />
-                                  </button>
-                                  <button
-                                    onClick={() => removePayment(i)}
-                                    className="p-1.5 rounded glass-red shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                                    title="Remover (Enter / Del)"
-                                  >
-                                    <Trash2 size={12} className="relative z-[2]" />
-                                  </button>
-                                </div>
+                      <div data-training-target="payments-list" className="p-2 space-y-1.5 bg-white max-h-40 overflow-y-auto custom-scrollbar">
+                        {payments.map((p, i) => {
+                          const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale-Alimentação' };
+                          let label = labels[p.method] ?? p.method;
+                          if (p.method === 'credito' && p.installments && p.installments > 1) {
+                            label = `Crédito ${p.installments}x (R$ ${fmt(p.amount / p.installments)}/parc.)`;
+                          } else if (p.method === 'fiado' && p.clientName) {
+                            label = `Fiado — ${p.clientName}`;
+                          }
+                          const isEditing = editingPaymentIdx === i;
+                          return (
+                            <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-300 px-2.5 py-1.5 gap-2 rounded">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] font-bold text-gray-700 uppercase tracking-wide truncate">{label}</div>
+                                {isEditing ? (
+                                  <input
+                                    autoFocus
+                                    value={editingPaymentValue}
+                                    onChange={(e) => setEditingPaymentValue(maskCurrency(e.target.value))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') { e.preventDefault(); commitEditPayment(); }
+                                      else if (e.key === 'Escape') { e.preventDefault(); setEditingPaymentIdx(null); setEditingPaymentValue(''); }
+                                    }}
+                                    // Fix #14 — blur agora CANCELA a edição (mais previsível).
+                                    // Para confirmar, Enter ou clicar no lápis novamente.
+                                    onBlur={() => { setEditingPaymentIdx(null); setEditingPaymentValue(''); }}
+                                    className="w-full mt-0.5 bg-white border-2 text-sm font-bold text-gray-900 outline-none px-1.5 py-0.5 tabular-nums focus:border-blue-700"
+                                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                                  />
+                                ) : (
+                                  <span className="text-base font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.amount)}</span>
+                                )}
                               </div>
-                            );
-                          })
-                        )}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  // Em modo edição, preventDefault no mousedown evita o blur
+                                  // do input (que agora cancela) — assim o click confirma.
+                                  onMouseDown={isEditing ? (e) => e.preventDefault() : undefined}
+                                  onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
+                                  className="p-1.5 rounded glass-blue shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                  title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor (Enter)'}
+                                >
+                                  <Pencil size={12} className="relative z-[2]" />
+                                </button>
+                                <button
+                                  onClick={() => removePayment(i)}
+                                  className="p-1.5 rounded glass-red shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                                  title="Remover (Enter / Del)"
+                                >
+                                  <Trash2 size={12} className="relative z-[2]" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
+                  )}
+                </div>
 
-                    {/* Espaço menor para subir os cards um pouco */}
-                    <div className="h-4" />
-
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span></h3>
-                    <div className="relative grid grid-cols-3 sm:grid-cols-6 gap-2">
-                      {[
+                {/* Grid de formas de pagamento — protagonista da tela, logo abaixo
+                    do valor parcial (era o que sobrava no fim de um scroll). */}
+                <div className="px-6 pt-4">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">
+                    FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span>
+                  </h3>
+                  <div className="relative grid grid-cols-3 gap-2">
+                    {(() => {
+                      // PIX, Vale e Fiado dependem de confirmação assíncrona
+                      // (RPC/pix_pendentes ou lançamento em contas a receber pelo
+                      // valor cheio) — não dá pra fatiar como Dinheiro/Cartão.
+                      // Mesma trava do LogMax, estendida ao Vale por depender do
+                      // mesmo tipo de confirmação do PIX.
+                      const partialNum = parseCurrencyToNumber(partialAmount);
+                      const isMistoActive = payments.length > 0 || (partialNum > 0 && partialNum < remaining - 0.001);
+                      return [
                         { id: 'dinheiro', label: 'DINHEIRO', icon: DollarSign, hint: 'F1' },
                         { id: 'credito', label: 'CRÉDITO', icon: CreditCard, hint: 'F2' },
                         { id: 'debito', label: 'DÉBITO', icon: Banknote, hint: 'F2' },
@@ -4116,6 +4497,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         { id: 'fiado', label: 'FIADO', icon: Users, hint: 'F3' },
                       ].map((m, mIdx, arr) => {
                         const Icon = m.icon;
+                        const isMistoOnly = m.id === 'pix' || m.id === 'vale' || m.id === 'fiado';
+                        const isDisabled = remaining <= 0 || (isMistoActive && isMistoOnly);
                         return (
                           <button
                             key={m.id}
@@ -4139,313 +4522,182 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                                 document.querySelector<HTMLButtonElement>(`[data-pay-method="${prev.id}"]`)?.focus();
                               }
                             }}
-                            disabled={remaining <= 0}
-                            className="relative border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 transition py-2.5 flex flex-col items-center gap-1 disabled:opacity-30 rounded"
+                            disabled={isDisabled}
+                            title={isMistoActive && isMistoOnly ? `${m.label} só funciona como forma única — limpe os pagamentos lançados pra usar` : undefined}
+                            className="relative border-2 bg-white text-gray-900 hover:border-blue-700 hover:text-blue-700 focus:outline-none focus-visible:border-blue-700 focus-visible:text-blue-700 focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 transition py-4 flex flex-col items-center gap-1.5 disabled:opacity-30 rounded"
                             style={{ borderColor: '#9ca3af' }}
                           >
                             {m.hint && (
-                              <span className="absolute top-0.5 right-1 text-[9px] font-black text-gray-400 tracking-wider">{m.hint}</span>
+                              <span className="absolute top-1 right-1.5 text-[9px] font-black text-gray-400 tracking-wider">{m.hint}</span>
                             )}
-                            <Icon size={20} />
+                            <Icon size={26} />
                             <span className="text-[11px] font-bold tracking-wide">{m.label}</span>
                           </button>
                         );
-                      })}
+                      });
+                    })()}
 
-                      {/* Picker flutuante F2 — Cartão (Crédito / Débito) */}
-                      {cardPickerOpen && (
-                        <div
-                          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
-                          style={{ borderColor: NAVY_DARK }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCardPickerOpen(false); }
-                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i + 1) % 2); }
-                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i - 1 + 2) % 2); }
-                            else if (e.key === 'Enter') {
-                              e.preventDefault(); e.stopPropagation();
-                              const idx = cardPickerIdx;
+                    {/* Picker flutuante F2 — Cartão (Crédito / Débito) */}
+                    {cardPickerOpen && (
+                      <div
+                        className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
+                        style={{ borderColor: NAVY_DARK }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCardPickerOpen(false); }
+                          else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i + 1) % 2); }
+                          else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setCardPickerIdx(i => (i - 1 + 2) % 2); }
+                          else if (e.key === 'Enter') {
+                            e.preventDefault(); e.stopPropagation();
+                            const idx = cardPickerIdx;
+                            setCardPickerOpen(false);
+                            setCardPickerIdx(0);
+                            // Aguardar fechamento antes de disparar (evita disputa com isAnyPaymentModalOpen)
+                            setTimeout(() => { if (idx === 0) handleCreditClick(); else addPayment('debito'); }, 0);
+                          }
+                        }}
+                        tabIndex={-1}
+                        ref={(el) => { if (el && cardPickerOpen) el.focus(); }}
+                      >
+                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
+                          F2 · Cartão — ↑↓ navegar · Enter selecionar · Esc fechar
+                        </div>
+                        {['CRÉDITO', 'DÉBITO'].map((label, idx) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onMouseEnter={() => setCardPickerIdx(idx)}
+                            onClick={() => {
                               setCardPickerOpen(false);
+                              if (idx === 0) handleCreditClick();
+                              else addPayment('debito');
                               setCardPickerIdx(0);
-                              // Aguardar fechamento antes de disparar (evita disputa com isAnyPaymentModalOpen)
-                              setTimeout(() => { if (idx === 0) handleCreditClick(); else addPayment('debito'); }, 0);
-                            }
-                          }}
-                          tabIndex={-1}
-                          ref={(el) => { if (el && cardPickerOpen) el.focus(); }}
-                        >
-                          <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
-                            F2 · Cartão — ↑↓ navegar · Enter selecionar · Esc fechar
-                          </div>
-                          {['CRÉDITO', 'DÉBITO'].map((label, idx) => (
-                            <button
-                              key={label}
-                              type="button"
-                              onMouseEnter={() => setCardPickerIdx(idx)}
-                              onClick={() => {
-                                setCardPickerOpen(false);
-                                if (idx === 0) handleCreditClick();
-                                else addPayment('debito');
-                                setCardPickerIdx(0);
-                              }}
-                              className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === cardPickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
-                            >
-                              {idx === 0 ? <CreditCard size={18} /> : <Banknote size={18} />}
-                              <span className="font-bold text-gray-900">{label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                            }}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === cardPickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                          >
+                            {idx === 0 ? <CreditCard size={18} /> : <Banknote size={18} />}
+                            <span className="font-bold text-gray-900">{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
-                      {/* Picker flutuante F3 — PIX / Vale-Alimentação / Fiado */}
-                      {valePickerOpen && (
-                        <div
-                          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
-                          style={{ borderColor: NAVY_DARK }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValePickerOpen(false); }
-                            else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 3); }
-                            else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 3) % 3); }
-                            else if (e.key === 'Enter') {
-                              e.preventDefault(); e.stopPropagation();
-                              const idx = valePickerIdx;
+                    {/* Picker flutuante F3 — PIX / Vale-Alimentação / Fiado */}
+                    {valePickerOpen && (
+                      <div
+                        className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
+                        style={{ borderColor: NAVY_DARK }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValePickerOpen(false); }
+                          else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 3); }
+                          else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 3) % 3); }
+                          else if (e.key === 'Enter') {
+                            e.preventDefault(); e.stopPropagation();
+                            const idx = valePickerIdx;
+                            setValePickerOpen(false);
+                            setValePickerIdx(0);
+                            setTimeout(() => {
+                              if (idx === 0) handlePixClick();
+                              else if (idx === 1) handleValeClick();
+                              else handleFiadoClick();
+                            }, 0);
+                          }
+                        }}
+                        tabIndex={-1}
+                        ref={(el) => { if (el && valePickerOpen) el.focus(); }}
+                      >
+                        <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
+                          F3 · PIX/Vale/Fiado — ↑↓ navegar · Enter selecionar · Esc fechar
+                        </div>
+                        {[
+                          { label: 'PIX', Icon: Wallet },
+                          { label: 'VALE-ALIMENTAÇÃO', Icon: Wallet },
+                          { label: 'FIADO', Icon: Users },
+                        ].map(({ label, Icon }, idx) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onMouseEnter={() => setValePickerIdx(idx)}
+                            onClick={() => {
                               setValePickerOpen(false);
+                              if (idx === 0) handlePixClick();
+                              else if (idx === 1) handleValeClick();
+                              else handleFiadoClick();
                               setValePickerIdx(0);
-                              setTimeout(() => {
-                                if (idx === 0) handlePixClick();
-                                else if (idx === 1) handleValeClick();
-                                else handleFiadoClick();
-                              }, 0);
-                            }
-                          }}
-                          tabIndex={-1}
-                          ref={(el) => { if (el && valePickerOpen) el.focus(); }}
-                        >
-                          <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white" style={{ background: NAVY_DARK }}>
-                            F3 · PIX/Vale/Fiado — ↑↓ navegar · Enter selecionar · Esc fechar
-                          </div>
-                          {[
-                            { label: 'PIX', Icon: Wallet },
-                            { label: 'VALE-ALIMENTAÇÃO', Icon: Wallet },
-                            { label: 'FIADO', Icon: Users },
-                          ].map(({ label, Icon }, idx) => (
-                            <button
-                              key={label}
-                              type="button"
-                              onMouseEnter={() => setValePickerIdx(idx)}
-                              onClick={() => {
-                                setValePickerOpen(false);
-                                if (idx === 0) handlePixClick();
-                                else if (idx === 1) handleValeClick();
-                                else handleFiadoClick();
-                                setValePickerIdx(0);
-                              }}
-                              className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
-                            >
-                              <Icon size={18} />
-                              <span className="font-bold text-gray-900">{label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                            }}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                          >
+                            <Icon size={18} />
+                            <span className="font-bold text-gray-900">{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Right sidebar: totais (preços e qtd) */}
-                <div className="w-[400px] shrink-0 flex flex-col bg-gray-50">
-                  {(subtotal - total) > 0.001 && (
-                    <div className="px-5 py-3 border-b border-gray-300 bg-yellow-50">
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-gray-600">SUBTOTAL</span>
-                        <span className="tabular-nums font-bold text-gray-900">R$ {fmt(subtotal)}</span>
-                      </div>
-                      <div className="flex justify-between items-baseline text-sm">
-                        <span className="text-gray-600">DESCONTO</span>
-                        <span className="tabular-nums font-bold flex items-center gap-2" style={{ color: RED }}>
-                          − R$ {fmt(subtotal - total)}
-                          {saleDiscount > 0 && (
-                            <button
-                              onClick={clearTotalDiscount}
-                              tabIndex={-1}
-                              title="Remover desconto do total"
-                              className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-red-100"
-                              style={{ borderColor: RED }}
-                            >
-                              ×
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="px-5 py-4 border-b border-gray-300">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">TOTAL DA VENDA</div>
-                    <div className="text-5xl font-bold tabular-nums text-gray-900">R$ {fmt(total)}</div>
-                  </div>
-                  <div className="px-5 py-4 border-b border-gray-300">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">RECEBIDO</div>
-                    <div className="text-4xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(paid)}</div>
-                  </div>
-                  <div className="px-5 py-4 flex-1">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">RESTANTE</div>
-                    <div className="text-4xl font-bold tabular-nums" style={{ color: remaining > 0.001 ? RED : MONEY }}>
-                      R$ {fmt(Math.max(remaining, 0))}
-                    </div>
-                    {cashChange > 0.001 && (
-                      <div className="mt-4 p-3 border-2 rounded" style={{ background: '#dcfce7', borderColor: MONEY }}>
-                        <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700 mb-1">TROCO A DEVOLVER</div>
-                        <div className="text-3xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(cashChange)}</div>
-                      </div>
+                {/* Desconto no total / CPF na nota / vincular cliente — extras,
+                    não competem mais com as formas de pagamento pelo topo da tela. */}
+                <div className="px-6 pt-4 grid grid-cols-2 gap-2">
+                  <button
+                    data-extra-action="desconto"
+                    onClick={openTotalDiscountModal}
+                    disabled={subtotal <= 0}
+                    className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
+                    style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
+                    title="Desconto no total (F6 abre direto · F5 foca aqui)"
+                  >
+                    {saleDiscount > 0 ? `− R$ ${fmt(subtotal - total)} · F6 DESCONTO` : 'F6 DESCONTO'}
+                  </button>
+                  <button
+                    data-extra-action="cpf"
+                    onClick={openCpfModal}
+                    className="py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
+                    style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                    title="CPF / CNPJ na nota"
+                  >
+                    {cpfNota ? 'CPF: ' + maskCpfCnpj(cpfNota) : '+ CPF NA NOTA'}
+                  </button>
+                  <button
+                    data-extra-action="cliente"
+                    onClick={openLinkClientPicker}
+                    className="col-span-2 py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
+                    style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                    title="Vincular cliente a venda"
+                  >
+                    <Users size={12} />
+                    {linkedClient ? `CLIENTE: ${linkedClient.name.toUpperCase()}` : '+ VINCULAR CLIENTE'}
+                    {linkedClient && (
+                      <span
+                        tabIndex={-1}
+                        onClick={(e) => { e.stopPropagation(); setLinkedClient(null); }}
+                        className="ml-1 text-xs px-1 border rounded hover:bg-red-100"
+                        style={{ borderColor: RED, color: RED }}
+                      >×</span>
                     )}
-                    {/* MaxLook: vendedor associado à venda (comissão de moda) */}
-                    {pdvMode === 'maxlook' && (
-                      <div className="mt-4 p-3 border-2 rounded space-y-1" style={{ borderColor: modeMeta.accentDark, background: `${modeMeta.accent}18` }}>
-                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block">👗 Vendedor(a)</label>
-                        <input
-                          value={saleVendedor}
-                          onChange={(e) => setSaleVendedor(e.target.value)}
-                          placeholder="Nome do(a) vendedor(a) — comissão"
-                          className="w-full bg-white border outline-none px-2 py-1.5 text-sm focus:border-blue-700"
-                          style={{ borderColor: modeMeta.accentDark }}
-                        />
-                      </div>
-                    )}
-                    {/* TechMax: toggle Venda/OS + IMEI/Serial + defeito relatado (quando OS) */}
-                    {pdvMode === 'techmax' && (
-                      <div className="mt-4 p-3 border-2 rounded space-y-2" style={{ borderColor: modeMeta.accentDark, background: `${modeMeta.accent}18` }}>
-                        <div className="flex items-center gap-1">
-                          {(['Venda', 'OS'] as const).map(t => (
-                            <button
-                              key={t}
-                              onClick={() => setSaleTipoAtendimento(t)}
-                              className="flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider transition-all"
-                              style={saleTipoAtendimento === t
-                                ? { background: modeMeta.accent, color: modeMeta.accentText, border: `1px solid ${modeMeta.accentDark}` }
-                                : { background: 'white', color: '#6b7280', border: '1px solid #e5e7eb' }}
-                            >
-                              {t === 'Venda' ? '💰 Venda' : '🔧 Ordem de Serviço'}
-                            </button>
-                          ))}
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block mb-1">📱 IMEI/Serial (garantia)</label>
-                          <input
-                            value={saleImeiSerial}
-                            onChange={(e) => setSaleImeiSerial(e.target.value)}
-                            placeholder="Opcional — 15 dígitos ou serial"
-                            maxLength={40}
-                            className="w-full bg-white border outline-none px-2 py-1.5 text-sm tabular-nums focus:border-blue-700"
-                            style={{ borderColor: modeMeta.accentDark, fontFamily: 'Consolas, "Courier New", monospace' }}
-                          />
-                        </div>
-                        {saleTipoAtendimento === 'OS' && (
-                          <div>
-                            <label className="text-[10px] font-black uppercase tracking-widest text-gray-600 block mb-1">🔧 Defeito relatado</label>
-                            <textarea
-                              value={saleDefeitoRelatado}
-                              onChange={(e) => setSaleDefeitoRelatado(e.target.value)}
-                              placeholder="Ex.: tela trincada, não liga, bateria viciada..."
-                              rows={2}
-                              maxLength={200}
-                              className="w-full bg-white border outline-none px-2 py-1.5 text-sm resize-none focus:border-blue-700"
-                              style={{ borderColor: modeMeta.accentDark }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      <button
-                        data-extra-action="desconto"
-                        onClick={openTotalDiscountModal}
-                        disabled={subtotal <= 0}
-                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
-                        style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
-                        title="Desconto no total (F6 abre direto · F5 foca aqui)"
-                      >
-                        F6 DESCONTO
-                      </button>
-                      <button
-                        data-extra-action="cpf"
-                        onClick={openCpfModal}
-                        className="py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
-                        style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
-                        title="CPF / CNPJ na nota"
-                      >
-                        {cpfNota ? 'CPF: ' + maskCpfCnpj(cpfNota) : '+ CPF NA NOTA'}
-                      </button>
-                      <button
-                        data-extra-action="cliente"
-                        onClick={openLinkClientPicker}
-                        className="col-span-2 py-2 text-[11px] font-black uppercase tracking-wider border-2 hover:bg-yellow-50 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
-                        style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
-                        title="Vincular cliente a venda"
-                      >
-                        <Users size={12} />
-                        {linkedClient ? `CLIENTE: ${linkedClient.name.toUpperCase()}` : '+ VINCULAR CLIENTE'}
-                        {linkedClient && (
-                          <span
-                            tabIndex={-1}
-                            onClick={(e) => { e.stopPropagation(); setLinkedClient(null); }}
-                            className="ml-1 text-xs px-1 border rounded hover:bg-red-100"
-                            style={{ borderColor: RED, color: RED }}
-                          >×</span>
-                        )}
-                      </button>
-                    </div>
-                  </div>
+                  </button>
                 </div>
-              </div>
 
-              {/* TOTAL bar — grande, como na tela de leitura */}
-              <div className="px-6 py-3 flex items-center justify-between border-t-2 shrink-0 bg-gray-100" style={{ borderColor: YELLOW_DARK }}>
-                <span className="text-2xl font-bold tracking-wide text-gray-700">TOTAL A PAGAR</span>
-                <span className="text-6xl font-bold tabular-nums leading-none" style={{ color: NAVY_DARK }}>
-                  R$ {fmt(total)}
-                </span>
-              </div>
-
-              {/* Linha de codigo + acoes (VOLTAR / CANCELAR / CONFIRMAR a direita, menores) */}
-              <div className="px-6 py-2 shrink-0 border-t border-gray-300 bg-white">
-                {classicMsg && classicMsg.type === 'err' && (
-                  <div className="mb-1.5 px-3 py-1 text-sm font-bold inline-block border" style={{ background: '#fee2e2', color: RED, borderColor: '#fca5a5' }}>
-                    {classicMsg.text}
+                {cashChange > 0.001 && (
+                  <div className="mx-6 mt-4 p-3 border-2 rounded" style={{ background: '#dcfce7', borderColor: MONEY }}>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700 mb-1">TROCO A DEVOLVER</div>
+                    <div className="text-3xl font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(cashChange)}</div>
                   </div>
                 )}
-                <div className="flex items-center gap-3">
-                  <span className="text-xl font-bold text-gray-700 shrink-0">CÓDIGO:</span>
-                  <input
-                    ref={codeInputRef}
-                    value={classicCode}
-                    onChange={(e) => setClassicCode(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter') return;
-                      e.preventDefault();
-                      // Código vazio + venda totalmente paga → confirma venda
-                      if (classicCode.trim() === '' && paid >= total - 0.001 && total > 0 && !saving) {
-                        requestFinalizeSale();
-                      } else {
-                        handleClassicSubmit();
-                      }
-                    }}
-                    placeholder="EAN-13 ou ID do produto"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-64 bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700"
-                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
-                  />
-                  <div className="flex-1" />
+
+                {/* Voltar / Cancelar / Confirmar — Confirmar finaliza sozinha
+                    assim que o total é atingido; o botão só formaliza. */}
+                <div className="px-6 pt-4 pb-2 flex gap-2">
                   <button
                     onClick={tryReturnToLeitura}
-                    className="px-4 py-2 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
+                    className="px-4 py-3 border-2 text-gray-700 text-sm font-bold hover:bg-gray-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                     style={{ borderColor: '#9ca3af' }}
-                    title="Voltar para a leitura"
+                    title="Voltar para a leitura (Esc)"
                   >
                     VOLTAR
                   </button>
                   <button
                     onClick={cancelSale}
-                    className="px-4 py-2 text-white text-sm font-bold hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-red-400"
+                    className="px-4 py-3 text-white text-sm font-bold hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-red-400"
                     style={{ background: RED }}
                     title="Cancelar venda (F9)"
                   >
@@ -4455,7 +4707,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     data-action="confirm-sale"
                     onClick={requestFinalizeSale}
                     disabled={paid < total - 0.001 || saving}
-                    className="px-5 py-2 text-white text-sm font-bold disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-400"
+                    className="flex-1 px-5 py-3 text-white font-black uppercase tracking-wide text-base disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-700"
                     style={{ background: MONEY }}
                     title="Confirmar venda manualmente (finaliza automaticamente ao pagar o total)"
                   >
@@ -4464,41 +4716,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         SALVANDO...
                       </>
-                    ) : (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' ? 'ABRIR OS' : 'CONFIRMAR VENDA')}
+                    ) : paid < total - 0.001 ? (
+                      `FALTAM R$ ${fmt(Math.max(remaining, 0))}`
+                    ) : (
+                      'FECHAR VENDA (Enter)'
+                    )}
                   </button>
                 </div>
-              </div>
 
-              {/* F-keys rodape amarelo */}
-              <div
-                className="px-6 py-2 shrink-0 border-t-2"
-                style={{ background: YELLOW, borderColor: YELLOW_DARK }}
-              >
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-black tracking-wide">
-                  <span
-                    className="px-2 py-0.5 rounded text-white font-bold"
-                    style={{ background: MONEY }}
-                    title="Padrão supermercado: escolha sempre a forma de pagamento explicitamente"
-                  >
-                    Escolha a forma: F1/F2/F3
-                  </span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F1</b> Dinheiro</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F2</b> Cartão</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F3</b> PIX / Vale</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F5</b> Desconto/CPF/Cliente</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F6</b> Desconto direto</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>Esc</b> Voltar</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F9</b> Cancelar venda</span>
+                <div className="px-6 pb-4 text-xs text-gray-500 font-bold uppercase tracking-wider text-center">
+                  ↑↓←→ navegar · Enter confirmar · Esc voltar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado · F5 Desconto/CPF/Cliente · F6 Desconto · F9 Cancelar
                 </div>
               </div>
-            </>
+            </div>
           )}
         </div>
 
@@ -5114,8 +5344,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
-                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>N*EAN</kbd>
-                      <span className="text-gray-800">Quantidade — ex: <b>3*789...</b> ou <b>3x789...</b></span>
+                      <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>2*</kbd>
+                      <span className="text-gray-800">Quantidade — <b>2*</b> sozinho arma pro próximo item, ou <b>2*789...</b> / <b>2*nome</b></span>
                     </div>
                     <div className="flex items-center gap-3 p-2 border border-gray-300 rounded">
                       <kbd className="px-2 py-0.5 font-black text-xs rounded border" style={{ background: '#f3f4f6', borderColor: '#9ca3af', fontFamily: 'Consolas, monospace' }}>F4</kbd>
@@ -5247,7 +5477,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 const picked = filteredClassic[classicSearchIdx];
                 if (picked) {
                   e.preventDefault(); e.stopPropagation();
-                  addToCart(picked);
+                  addToCart(picked, qtdDoF8);
                   setClassicSearchOpen(false);
                   setClassicMsg(null);
                 }
@@ -5269,14 +5499,25 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 </button>
               </div>
               <div className="p-4">
-                <input
-                  autoFocus
-                  value={classicSearchTerm}
-                  onChange={(e) => setClassicSearchTerm(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Escape') setClassicSearchOpen(false); }}
-                  className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
-                  style={{ borderColor: '#9ca3af' }}
-                />
+                <div className="relative">
+                  <input
+                    autoFocus
+                    value={classicSearchTerm}
+                    onChange={(e) => setClassicSearchTerm(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setClassicSearchOpen(false); }}
+                    placeholder="Nome, código ou EAN — 2*termo pra já sair com qtd 2"
+                    className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-2 focus:border-blue-700"
+                    style={{ borderColor: '#9ca3af' }}
+                  />
+                  {(qtdDoF8 ?? qtdArmada ?? 1) !== 1 && (
+                    <span
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 px-2 py-0.5 text-xs font-black tabular-nums border-2"
+                      style={{ background: YELLOW, color: NAVY_DARK, borderColor: YELLOW_DARK }}
+                    >
+                      QTD {fmtQty(qtdDoF8 ?? qtdArmada ?? 1)} ×
+                    </span>
+                  )}
+                </div>
                 <div className="mt-4 max-h-[55vh] overflow-y-auto custom-scrollbar border border-gray-300">
                   {filteredClassic.length === 0 ? (
                     <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto.</div>
@@ -5286,7 +5527,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                         key={p.id}
                         tabIndex={-1}
                         onMouseEnter={() => setClassicSearchIdx(idx)}
-                        onClick={() => { addToCart(p); setClassicSearchOpen(false); setClassicMsg(null); }}
+                        onClick={() => { addToCart(p, qtdDoF8); setClassicSearchOpen(false); setClassicMsg(null); }}
                         className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${idx === classicSearchIdx ? 'bg-yellow-100' : 'hover:bg-yellow-50'}`}
                       >
                         <span className="tabular-nums text-gray-500">{p.ref || '—'}</span>
@@ -5297,7 +5538,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   )}
                 </div>
                 <div className="text-[10px] text-gray-500 text-center pt-2 leading-relaxed">
-                  <b>↑↓</b> navegar · <b>Enter</b> selecionar · <b>Esc</b> fechar
+                  <b>↑↓</b> navegar · <b>Enter</b> adicionar{(qtdDoF8 ?? qtdArmada ?? 1) !== 1 && <> (<b>{fmtQty(qtdDoF8 ?? qtdArmada ?? 1)}</b> un)</>} · <b>Esc</b> fechar
                 </div>
               </div>
             </div>

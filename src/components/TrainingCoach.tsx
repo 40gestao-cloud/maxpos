@@ -314,7 +314,7 @@ const TRACK_PARTIAL: Track = {
       target: '[data-pay-method="dinheiro"]',
       title: 'VALOR PARCIAL 5,00 → F1',
       body:
-        'No checkout, à esquerda dos botões de pagamento, tem o campo VALOR PARCIAL. Digite 5,00 nele. Depois F1 — o modal de dinheiro abre já com 5,00. Enter confirma. Sobra R$ 10 no TOTAL A PAGAR.',
+        'No fechamento, logo acima dos botões de pagamento, tem o campo VALOR DESTA FORMA. Digite 5,00 nele. Depois F1 — o modal de dinheiro abre já com 5,00. Enter confirma. Sobra R$ 10 no TOTAL A PAGAR.',
       hint:
         'Sem valor parcial preenchido, a forma leva o RESTANTE inteiro. Com valor parcial, ela leva só o que você digitou.',
       done: (s) => s.partialPaymentsCount > 0,
@@ -325,7 +325,7 @@ const TRACK_PARTIAL: Track = {
       title: 'F2 → CRÉDITO para o restante',
       body:
         'Agora o campo parcial ficou vazio de novo — a próxima forma leva o RESTANTE (R$ 10). Aperte F2, escolha CRÉDITO com Enter, e escolha 1x (ou o número que preferir).',
-      hint: 'Podia ser F1 (mais dinheiro), F2 débito, F3 PIX/Vale, F3 fiado — qualquer forma serve pra fechar. Aqui usamos crédito só pra praticar o F2.',
+      hint: 'Podia ser F1 (mais dinheiro) ou F2 débito. PIX, Vale e Fiado (F3) ficam bloqueados aqui: dependem de confirmação externa pelo valor cheio, então só valem como forma única. Aqui usamos crédito pra praticar o F2.',
       done: (s) => s.paymentsCount >= 2,
     },
     reviewSaleStep,
@@ -907,7 +907,7 @@ const TRACK_FIX_PAYMENT: Track = {
       target: '[data-training-target="payments-list"]',
       title: 'Corrige com o LÁPIS',
       body:
-        'No card do pagamento em Dinheiro (à esquerda), clique no ícone LÁPIS (azul). O valor vira editável. Digite 3,00 e Enter — o pagamento cai para R$ 3. Repare que o TOTAL A PAGAR sobe de novo (falta R$ 12).',
+        'Na lista PAGAMENTOS LANÇADOS, no card do pagamento em Dinheiro, clique no ícone LÁPIS (azul). O valor vira editável. Digite 3,00 e Enter — o pagamento cai para R$ 3. Repare que o RESTANTE sobe de novo (falta R$ 12).',
       hint:
         'Também dá pra usar só teclado: Tab até focar o lápis, Enter abre a edição, digita o valor, Enter confirma. Edição só faz sentido em valores digitados por você (dinheiro, PIX, vale). Cartão parcelado é melhor remover e refazer, senão o número de parcelas fica errado.',
       done: (s, prev) => prev !== null && s.paymentEditsCount > prev.paymentEditsCount,
@@ -1047,7 +1047,7 @@ const TRACK_EXTRAS: Track = {
       target: '[data-extra-action="desconto"]',
       title: 'CPF na nota (F5 → Tab → Enter)',
       body:
-        'Cliente pediu CPF na nota para participar de sorteios/programas fiscais? No fechamento, os botões extras ficam à direita.\n\n1. Aperte F5 — o foco cai no primeiro botão, DESCONTO (é aqui que o spotlight está agora).\n2. Aperte Tab uma vez — passa para CPF NA NOTA.\n3. Aperte Enter — abre o modal.\n\nFaça a sequência agora.',
+        'Cliente pediu CPF na nota para participar de sorteios/programas fiscais? No fechamento, os botões extras ficam logo abaixo das formas de pagamento.\n\n1. Aperte F5 — o foco cai no primeiro botão, DESCONTO (é aqui que o spotlight está agora).\n2. Aperte Tab uma vez — passa para CPF NA NOTA.\n3. Aperte Enter — abre o modal.\n\nFaça a sequência agora.',
       done: (s) => s.cpfModalOpen,
     },
     {

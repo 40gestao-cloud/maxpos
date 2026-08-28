@@ -51,8 +51,21 @@ export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
   // pdv_mode (SQL snake_case) <-> pdvMode (JS camelCase) mapeado nas
   // leituras/escritas. Legado sem coluna cai em 'supermax' (default).
-  getProducts: async (): Promise<Product[]> => {
-    const { data, error } = await supabase.from('products').select('*').order('name');
+  // `pdvMode` filtra NO SERVIDOR. Sem ele, abrir o PDV SuperMax baixava os
+  // 105 produtos das três lojas — inclusive ~1,5 MB de `image` em base64 que
+  // pertencem a MaxLook/TechMax e que o SuperMax nem renderiza (a tela dele é
+  // uma tabela de texto). O filtro por pdv_mode era feito depois, no cliente,
+  // então o tráfego acontecia inteiro antes de ser descartado.
+  // Sem argumento, continua trazendo tudo — é o que Cadastros e Estoque querem.
+  getProducts: async (pdvMode?: Product['pdvMode']): Promise<Product[]> => {
+    let q = supabase.from('products').select('*');
+    if (pdvMode) {
+      // Linha legada sem pdv_mode conta como supermax (mesma régua do map abaixo).
+      q = pdvMode === 'supermax'
+        ? q.or('pdv_mode.eq.supermax,pdv_mode.is.null')
+        : q.eq('pdv_mode', pdvMode);
+    }
+    const { data, error } = await q.order('name');
     if (error) throw error;
     return (data ?? []).map((r: any) => ({
       ...r,
@@ -275,17 +288,36 @@ export const Storage = {
   },
 
   // ─── Usuários / Autenticação ──────────────────────────────
+  // SEM `avatar` de propósito: a coluna guarda a foto em base64 e a tabela
+  // inteira pesa ~5 MB por causa dela. Nenhuma tela que lista usuários
+  // (Cadastros, Configurações, Folha, troca de operador no PDV) exibe a foto
+  // dos outros — só o nome. Trazer `select('*')` fazia o picker de troca de
+  // operador baixar 5 MB antes de abrir. Quem precisa da foto de UM usuário
+  // usa getUserAvatar.
   getUsers: async (): Promise<User[]> => {
-    const { data, error } = await supabase.from('user_profiles').select('*').order('name');
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, email, name, role, parentId')
+      .order('name');
     if (error) throw error;
     return (data ?? []).map((p: any) => ({
       id: p.id,
       email: p.email,
       name: p.name,
       role: p.role,
-      avatar: p.avatar,
       parentId: p.parentId,
     })) as User[];
+  },
+
+  /** Foto de um único usuário. Existe para getUsers poder ser leve. */
+  getUserAvatar: async (userId: string): Promise<string | undefined> => {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('avatar')
+      .eq('id', userId)
+      .single();
+    if (error) return undefined;
+    return (data as any)?.avatar ?? undefined;
   },
 
   createUser: async (

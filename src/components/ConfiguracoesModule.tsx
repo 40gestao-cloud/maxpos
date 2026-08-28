@@ -7,6 +7,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { User, AuditLogEntry } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
+import { resizeImageToDataUrl } from '../lib/imageResize';
 
 const DATA_CACHE_KEYS = [
   'fiscal_emitted_nfce',
@@ -139,12 +140,27 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   }, [auditUsers, auditEntries]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // A foto é REDUZIDA antes de virar base64. Gravar o arquivo cru fazia uma
+  // foto de celular virar ~5 MB na coluna `user_profiles.avatar`, que o
+  // getSession() lê a cada login e a cada refresh de token — o operador ficava
+  // esperando esse download antes de a tela abrir. 256 px cobre os 44x44 do
+  // header com folga de retina.
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setAvatarPreview(reader.result as string);
-      reader.readAsDataURL(file);
+    if (!file) return;
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      showAlert('Formato não suportado. Use JPG, PNG ou WEBP.');
+      e.target.value = '';
+      return;
+    }
+    try {
+      setAvatarPreview(await resizeImageToDataUrl(file, { maxLado: 256 }));
+    } catch (err: any) {
+      showAlert('Erro ao ler a imagem: ' + (err?.message ?? err));
+    } finally {
+      // Sem isto, escolher o MESMO arquivo de novo não dispara o change.
+      e.target.value = '';
     }
   };
 

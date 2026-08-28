@@ -51,17 +51,61 @@ export default function App() {
   useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
 
   useEffect(() => {
-    // Fallback: se a sessão demorar mais de 8s, libera o loading e mostra login
-    const loadingTimeout = setTimeout(() => setIsLoading(false), 8000);
+    let alive = true;
+    // Escape hatch: só dispara quando NÃO conseguimos nem ler o token nem o
+    // perfil. Antes ele era o caminho comum — o boot inteiro dependia da
+    // query de `user_profiles`, e essa query trafega o avatar em base64. Com
+    // uma foto grande ela passava dos 8s, o timeout derrubava o spinner com
+    // `user` ainda null, e o operador caía no Login COM SESSÃO VÁLIDA. Era o
+    // que fazia todo Ctrl+Shift+R voltar pra tela de login.
+    const loadingTimeout = setTimeout(() => { if (alive) setIsLoading(false); }, 8000);
 
-    Storage.getSession().then(u => {
-      setUser(u);
-    }).catch(() => {
-      setUser(null);
-    }).finally(() => {
+    const boot = async () => {
+      // Passo 1 — existe sessão? Leitura do token no localStorage; só toca a
+      // rede se ele estiver expirado (aí o refresh é o que decide mesmo).
+      let session = null;
+      try {
+        ({ data: { session } } = await supabase.auth.getSession());
+      } catch { /* sem token utilizável: cai no Login, que é o certo */ }
+      if (!alive) return;
+
+      if (!session) {
+        clearTimeout(loadingTimeout);
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
+      // Passo 2 — há sessão: o operador está autenticado, então a tela do
+      // sistema já pode aparecer. name/role viajam no próprio token, o que
+      // deixa o reload instantâneo e independe do banco responder.
+      const meta = (session.user.user_metadata ?? {}) as Record<string, any>;
+      if (meta.name && meta.role) {
+        clearTimeout(loadingTimeout);
+        setUser({
+          id: session.user.id,
+          email: session.user.email ?? '',
+          name: meta.name,
+          role: meta.role,
+          avatar: meta.avatar,
+          parentId: meta.parentId ?? undefined,
+        } as User);
+        setIsLoading(false);
+      }
+
+      // Passo 3 — refina com `user_profiles`, que é a fonte da verdade (nome
+      // e cargo mudam ali, não no token). Falhar aqui não derruba ninguém:
+      // quem entrou pelo passo 2 continua dentro.
+      try {
+        const full = await Storage.getSession();
+        if (alive && full) setUser(full);
+      } catch { /* mantém o que veio do token */ }
+      if (!alive) return;
       clearTimeout(loadingTimeout);
       setIsLoading(false);
-    });
+    };
+
+    boot();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') {
@@ -73,12 +117,20 @@ export default function App() {
         // libera signInWithPassword a resolver — sem isso o spinner
         // do botão ENTRAR fica infinito após credencial correta.
         setTimeout(() => {
-          Storage.getSession().then(u => setUser(u)).catch(() => setUser(null));
+          // Só promove em caso de sucesso. Zerar o user aqui era um segundo
+          // caminho pro Login indevido: o TOKEN_REFRESHED acontece sozinho de
+          // hora em hora, e uma falha passageira nessa query (rede, RLS
+          // transitória) expulsava o operador no meio do expediente. Quem
+          // decide que a sessão acabou é o evento SIGNED_OUT, acima.
+          Storage.getSession()
+            .then(u => { if (u) setUser(u); })
+            .catch(() => { /* mantém a sessão em memória */ });
         }, 0);
       }
     });
 
     return () => {
+      alive = false;
       clearTimeout(loadingTimeout);
       subscription.unsubscribe();
     };
