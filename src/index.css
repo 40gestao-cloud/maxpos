@@ -123,6 +123,21 @@ select:-webkit-autofill {
   --accent-fg:   #ffffff;      /* branco sobre o laranja */
 }
 
+/* Os DERIVADOS de --brand-rgb precisam ser redeclarados aqui, e nao basta
+   defini-los no :root.
+   var() e substituido no elemento ONDE A PROPRIEDADE E DECLARADA, nao onde e
+   usada: `:root { --navy: rgb(var(--brand-rgb)) }` resolve para o navy ali
+   mesmo, e os descendentes herdam esse valor JA COMPUTADO. Trocar
+   --brand-rgb no elemento com data-filial nao recalculava --navy, e por isso
+   o header continuava azul em MaxLook e TechMax.
+   Declarando no mesmo elemento que muda --brand-rgb, a conta e refeita ali. */
+[data-filial] {
+  --navy:          rgb(var(--brand-rgb));
+  --border:        rgb(var(--brand-rgb) / 0.28);
+  --border-strong: rgb(var(--brand-rgb) / 0.55);
+  --border-hover:  rgb(var(--brand-rgb) / 0.55);
+}
+
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -223,27 +238,39 @@ body {
    ============================================================ */
 @layer components {
   /* Botão "vidro" amarelo — quase sólido, com sutil gradient pra dar profundidade */
+  /* Botão de acento — segue a empresa. O gradiente era amarelo cravado, então
+     "Sair do Sistema" continuava amarelo dentro da MaxLook e da TechMax, que
+     não têm amarelo na paleta. O realce claro sai de color-mix sobre o próprio
+     accent, e o hover usa brightness pra não duplicar o gradiente. */
   .glass-yellow {
-    background: linear-gradient(135deg, #FFD24A 0%, #FFC107 55%, #E0A800 100%);
-    border: 1px solid #B8860B;
-    color: #000;
-    transition: all 150ms;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 82%, #ffffff) 0%,
+      var(--accent) 55%,
+      var(--accent-dark) 100%
+    );
+    border: 1px solid var(--accent-dark);
+    color: var(--accent-fg);
+    transition: filter 150ms, border-color 150ms;
   }
   .glass-yellow:hover {
-    background: linear-gradient(135deg, #FFE07A 0%, #FFC925 55%, #C99403 100%);
-    border-color: #7a5808;
+    filter: brightness(1.07);
   }
 
-  /* Botão "vidro" navy — quase sólido */
+  /* Botão "vidro" na cor ESCURA da marca (navy no SuperMax, preto nas outras). */
   .glass-blue {
-    background: linear-gradient(135deg, #2a3f8c 0%, #172554 55%, #0b1238 100%);
-    border: 1px solid #0b1238;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, rgb(var(--brand-rgb)) 82%, #ffffff) 0%,
+      rgb(var(--brand-rgb)) 55%,
+      color-mix(in srgb, rgb(var(--brand-rgb)) 70%, #000000) 100%
+    );
+    border: 1px solid color-mix(in srgb, rgb(var(--brand-rgb)) 60%, #000000);
     color: #fff;
-    transition: all 150ms;
+    transition: filter 150ms, border-color 150ms;
   }
   .glass-blue:hover {
-    background: linear-gradient(135deg, #3a4fa0 0%, #1f3270 55%, #0b1238 100%);
-    border-color: #000;
+    filter: brightness(1.18);
   }
 
   /* Botão "vidro" vermelho (lixeira) — quase sólido */

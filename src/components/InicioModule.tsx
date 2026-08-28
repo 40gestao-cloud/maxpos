@@ -5,6 +5,7 @@
 
 import { User } from '../types';
 import { getCompleted, ALL_SCENARIOS } from '../lib/trainingProgress';
+import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 
 interface InicioModuleProps {
   currentUser: User;
@@ -16,6 +17,8 @@ const YELLOW_DARK = 'var(--accent-dark)';
 const NAVY_DARK = 'var(--navy)';
 
 export default function InicioModule({ currentUser, onStartTraining }: InicioModuleProps) {
+  const { filialAtiva } = useFilial();
+  const empresa = FILIAL_META[filialAtiva ?? 'supermax'];
   const now = new Date();
   const hora = now.getHours();
   const saudacao =
@@ -42,9 +45,11 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
           </h1>
         </div>
 
-        {/* Cards das duas marcas */}
+        {/* Um card do MaxPOS (o sistema) e um da EMPRESA ATIVA. O segundo
+            era o SuperMax fixo, entao MaxLook e TechMax viam a marca de outra
+            loja na propria tela de entrada. */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* MaxPOS */}
+          {/* MaxPOS — o sistema */}
           <div
             className="bg-white border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm"
             style={{ borderColor: NAVY_DARK }}
@@ -65,34 +70,40 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
               ERP · PDV · GESTÃO
             </p>
             <p className="mt-4 text-sm text-gray-600 leading-relaxed">
-              Sistema de gestão integrado com PDV padrão supermercado, controle de estoque,
-              financeiro, fiscal e catálogo online.
+              Sistema de gestão integrado com PDV, controle de estoque,
+              financeiro e relatórios.
             </p>
           </div>
 
-          {/* SuperMax */}
+          {/* Empresa ativa */}
           <div
-            className="border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm"
-            style={{ background: '#fef9e7', borderColor: YELLOW_DARK }}
+            className="border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm bg-white"
+            style={{ borderColor: empresa.dark }}
           >
+            {/* A placa acompanha o fundo embutido no PNG de cada logo. */}
             <div
-              className="w-32 h-32 bg-white rounded-xl p-3 border-2 flex items-center justify-center mb-4"
-              style={{ borderColor: NAVY_DARK }}
+              className="w-32 h-32 rounded-xl p-3 border-2 flex items-center justify-center mb-4 overflow-hidden"
+              style={{ background: empresa.plate, borderColor: empresa.color }}
             >
-              <img src="/icon-supermax.png" alt="SuperMax" className="max-w-full max-h-full object-contain" draggable={false} />
+              <img src={empresa.logo} alt={empresa.label} className="max-w-full max-h-full object-contain" draggable={false} />
             </div>
+            {/* NAVY_DARK e a cor escura da MARCA (var(--navy)), que o tema
+                troca por empresa: azul no SuperMax, preto no MaxLook e no
+                TechMax. Antes usava `empresa.dark`, que e o acento escuro —
+                laranja queimado no TechMax, marrom no MaxLook — e o nome da
+                loja saía colorido em vez de preto. */}
             <h2
               className="text-3xl font-black tracking-tight"
               style={{ color: NAVY_DARK, letterSpacing: '-0.02em' }}
             >
-              Super<span style={{ color: YELLOW_DARK }}>Max</span>
+              {empresa.label}
             </h2>
-            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.6 }}>
-              SUPERMERCADO · CLIENTE
+            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.65 }}>
+              {empresa.descricao}
             </p>
             <p className="mt-4 text-sm text-gray-600 leading-relaxed">
-              Loja física utilizando o MaxPOS no caixa, com PDV, fiado por cliente
-              e integração de pagamentos via MaxBank.
+              Você está operando nesta empresa. Produtos, caixa, estoque e
+              resultado são próprios dela — troque pelo botão no topo.
             </p>
           </div>
         </div>
