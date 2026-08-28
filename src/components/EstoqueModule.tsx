@@ -49,7 +49,10 @@ export default function EstoqueModule() {
   useEffect(() => {
     let active = true;
     const load = () =>
-      Promise.all([Storage.getProducts(), Storage.getSales()])
+      // Lite: esta tela não mostra foto de produto, e o `image` em base64
+      // respondia por ~1,5 MB do payload — era o que deixava os alertas de
+      // reposição e a movimentação recente demorando pra aparecer.
+      Promise.all([Storage.getProductsLite(), Storage.getSales()])
         .then(([p, s]) => { if (active) { setProducts(p); setSales(s); } })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });

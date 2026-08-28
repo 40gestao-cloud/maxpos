@@ -178,7 +178,7 @@ export default function FolhaPagamentoModule() {
       {/* Action */}
       <button
         onClick={() => setShowAddModal(true)}
-        className="neumorphic p-6 flex items-center justify-between group hover:border-[#FFC107]/30 transition-all border border-transparent active:scale-95 w-full"
+        className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95 w-full"
       >
         <div className="flex items-center gap-4">
           <div className="p-4 rounded-2xl bg-[#FFC107]/10 text-[#FFC107]"><Plus size={24} /></div>

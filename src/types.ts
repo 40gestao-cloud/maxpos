@@ -51,6 +51,18 @@ export interface Product {
   pdvMode?: PdvMode;
 }
 
+// Categoria de produto/serviço como cadastro. Antes era texto livre digitado
+// em cada produto, o que deixava "Bebidas" e "bebidas" virarem duas gavetas.
+export interface Category {
+  id: string;
+  name: string;
+  /** Hex da cor usada no badge. */
+  color?: string;
+  /** Nicho dono da categoria. Ausente = vale para todos os PDVs. */
+  pdvMode?: PdvMode;
+  active: boolean;
+}
+
 export interface Service {
   id: string;
   name: string;

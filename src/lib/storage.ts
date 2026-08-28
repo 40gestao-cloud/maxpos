@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
+import { Product, Client, Service, Category, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
 
 // Uma linha de `sales` (com sale_items/sale_payments embutidos) virando Sale.
 // Três leituras diferentes montavam este objeto na mão e já divergiam entre si
@@ -71,6 +71,78 @@ export const Storage = {
       ...r,
       pdvMode: r.pdv_mode ?? 'supermax',
     })) as Product[];
+  },
+
+  // Mesma lista, SEM a coluna `image`. Existe para as telas que só precisam de
+  // número — Estoque (alertas de reposição, movimentação, valor parado) não
+  // desenha foto nenhuma, mas o `select('*')` fazia ela esperar ~1,5 MB de
+  // base64 antes de mostrar o primeiro card.
+  getProductsLite: async (): Promise<Product[]> => {
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode')
+      .order('name');
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      ...r,
+      pdvMode: r.pdv_mode ?? 'supermax',
+    })) as Product[];
+  },
+
+  // ─── Categorias ──────────────────────────────────────────
+  getCategories: async (): Promise<Category[]> => {
+    const { data, error } = await supabase
+      .from('categories')
+      .select('id, name, color, pdv_mode, active')
+      .order('name');
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      color: r.color ?? undefined,
+      pdvMode: r.pdv_mode ?? undefined,
+      active: r.active !== false,
+    })) as Category[];
+  },
+
+  upsertCategory: async (c: Category): Promise<void> => {
+    const { error } = await supabase.from('categories').upsert({
+      id: c.id,
+      name: c.name.trim(),
+      color: c.color ?? null,
+      pdv_mode: c.pdvMode ?? null,
+      active: c.active,
+    });
+    if (error) throw error;
+  },
+
+  deleteCategory: async (id: string): Promise<void> => {
+    const { error } = await supabase.from('categories').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  /**
+   * Renomeia a categoria E arrasta os produtos/serviços que apontavam pro
+   * nome antigo. Sem isso o cadastro passaria a dizer "Mercearia" enquanto
+   * os produtos continuariam com "Comidas" — a tela e o dado divergindo.
+   */
+  renameCategory: async (id: string, nomeAntigo: string, nomeNovo: string): Promise<void> => {
+    const novo = nomeNovo.trim();
+    const { error } = await supabase.from('categories').update({ name: novo }).eq('id', id);
+    if (error) throw error;
+    if (nomeAntigo && nomeAntigo !== novo) {
+      await supabase.from('products').update({ category: novo }).eq('category', nomeAntigo);
+      await supabase.from('services').update({ category: novo }).eq('category', nomeAntigo);
+    }
+  },
+
+  /** Quantos produtos/serviços usam este nome de categoria. */
+  countCategoryUsage: async (nome: string): Promise<number> => {
+    const [p, s] = await Promise.all([
+      supabase.from('products').select('id', { count: 'exact', head: true }).eq('category', nome),
+      supabase.from('services').select('id', { count: 'exact', head: true }).eq('category', nome),
+    ]);
+    return (p.count ?? 0) + (s.count ?? 0);
   },
 
   upsertProduct: async (product: Product): Promise<void> => {

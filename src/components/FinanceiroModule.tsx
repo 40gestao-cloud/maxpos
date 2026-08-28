@@ -332,7 +332,7 @@ export default function FinanceiroModule() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <button
           onClick={() => openAddModal('payable')}
-          className="neumorphic p-6 flex items-center justify-between group hover:border-red-500/30 transition-all border border-transparent active:scale-95"
+          className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95"
         >
           <div className="flex items-center gap-4">
             <div className="p-4 rounded-2xl bg-red-500/10 text-red-500"><ArrowDownCircle size={24} /></div>
@@ -346,7 +346,7 @@ export default function FinanceiroModule() {
 
         <button
           onClick={() => openAddModal('receivable')}
-          className="neumorphic p-6 flex items-center justify-between group hover:border-blue-500/30 transition-all border border-transparent active:scale-95"
+          className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95"
         >
           <div className="flex items-center gap-4">
             <div className="p-4 rounded-2xl bg-blue-500/10 text-blue-500"><ArrowUpCircle size={24} /></div>

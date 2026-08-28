@@ -14,8 +14,13 @@ body {
   --bg-main:        #f3f4f6;   /* cinza muito claro (fundo principal)   */
   --bg-card:        #ffffff;   /* cards/superfícies                      */
   --bg-soft:        #f9fafb;   /* inputs e áreas internas                */
-  --border:         #d1d5db;   /* borda padrão                           */
-  --border-strong:  #9ca3af;   /* borda para inputs/botões interativos   */
+  /* Bordas TINGIDAS DE AZUL-MARINHO, não cinza neutro. O cinza #d1d5db
+     sumia sobre o branco do card: a superfície ficava sem limite visível e
+     vários cards só ganhavam contorno no hover. Tingir com a cor da marca
+     dá o limite e mantém o card dentro do trio branco/azul/amarelo.        */
+  --border:         rgba(23, 37, 84, 0.28);  /* borda padrão de card       */
+  --border-strong:  rgba(23, 37, 84, 0.55);  /* inputs/botões interativos  */
+  --border-hover:   rgba(23, 37, 84, 0.55);  /* realce de card clicável    */
   --text-main:      #111827;   /* texto principal                        */
   --text-muted:     #6b7280;   /* texto secundário                       */
   --accent:         #FFC107;   /* amarelo MaxPOS (header, destaques)     */
@@ -48,6 +53,24 @@ body {
     border: 1px solid var(--border);
     border-radius: 0.75rem;
     color: var(--text-main);
+  }
+
+  /* Card clicável: a borda EXISTE em repouso e apenas escurece no hover.
+     Antes cada tela resolvia isso do seu jeito — havia card com
+     `border-transparent` que só ganhava contorno com o mouse em cima, o que
+     esconde do operador que aquilo é clicável (e some no touch, onde não
+     existe hover). Use junto de .neumorphic. */
+  .neumorphic-clickable {
+    transition: border-color 120ms ease, background-color 120ms ease;
+  }
+  .neumorphic-clickable:hover {
+    border-color: var(--border-hover);
+    background: var(--bg-soft);
+  }
+  /* Faixa amarela à esquerda para o card em destaque, dentro do mesmo trio
+     branco/azul/amarelo — realce sem inventar cor nova. */
+  .neumorphic-accent {
+    border-left: 4px solid var(--accent);
   }
 
   .neumorphic-inset {

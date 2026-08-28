@@ -40,9 +40,6 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
           >
             {saudacao}, {currentUser.name.split(' ')[0]}!
           </h1>
-          <p className="mt-2 text-base text-gray-600 font-medium">
-            Bem-vindo ao painel administrativo
-          </p>
         </div>
 
         {/* Cards das duas marcas */}

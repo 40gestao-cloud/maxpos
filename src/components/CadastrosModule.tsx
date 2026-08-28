@@ -4,11 +4,11 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Client, User, UserRole } from '../types';
+import { Client, User, UserRole, Category } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
@@ -24,19 +24,43 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   const [products, setProducts] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [subTab, setSubTab] = useState<'clientes' | 'produtos' | 'servicos' | 'fornecedores' | 'equipe'>('clientes');
+  const [subTab, setSubTab] = useState<'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe'>('produtos');
+  // Formulário de categoria (inline na própria lista — é cadastro de 3 campos,
+  // modal seria peso demais pra isso).
+  const [catForm, setCatForm] = useState<Category | null>(null);
+  const [catSaving, setCatSaving] = useState(false);
   const [search, setSearch] = useState('');
   // Filtro de nicho (só relevante em produtos/serviços). 'todos' mostra tudo,
   // ou filtra por PDV: SuperMax (supermercado), MaxLook (boutique), TechMax
   // (eletrônicos/assistência). Coluna pdv_mode adicionada em 2026-07-20.
   const [nichoFilter, setNichoFilter] = useState<'todos' | 'supermax' | 'maxlook' | 'techmax'>('todos');
+  // Paleta das filiais igual à do LogMax (.filial-badge--* no index.css dele):
+  // SuperMax azul, MaxLook nude/bege, TechMax laranja. Antes SuperMax era
+  // amarelo e MaxLook dourado — as duas brigavam entre si e nenhuma batia com
+  // o outro sistema, onde o operador aprende a associar cor a filial.
   const NICHO_META = {
-    supermax: { label: 'SuperMax', color: '#FFC107', dark: '#B8860B' },
-    maxlook:  { label: 'MaxLook',  color: '#D4AF37', dark: '#8B6914' },
-    techmax:  { label: 'TechMax',  color: '#F97316', dark: '#9A3412' },
+    supermax: { label: 'SuperMax', color: '#3b82f6', dark: '#1d4ed8', fg: '#ffffff' },
+    maxlook:  { label: 'MaxLook',  color: '#c9a882', dark: '#8a5a3b', fg: '#3b1f0a' },
+    techmax:  { label: 'TechMax',  color: '#f97316', dark: '#c2410c', fg: '#ffffff' },
   } as const;
+
+  // Badge sólido — o mesmo desenho nos dois lugares que mostram filial
+  // (produtos e serviços). Antes era `color + '30'` de fundo com texto escuro,
+  // que lavava a cor e deixava as três quase iguais em telas fracas.
+  const FilialBadge = ({ modo }: { modo?: string | null }) => {
+    const m = NICHO_META[(modo ?? 'supermax') as keyof typeof NICHO_META] ?? NICHO_META.supermax;
+    return (
+      <span
+        className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.15em] shrink-0 border"
+        style={{ background: m.color, color: m.fg, borderColor: m.dark }}
+      >
+        {m.label}
+      </span>
+    );
+  };
   const [, _setSessionUser] = useState<User | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddClient, setShowAddClient] = useState(false);
@@ -262,14 +286,16 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
         Storage.getSuppliers(),
         Storage.getServices(),
         Storage.getUsers(),
+        Storage.getCategories(),
       ])
-        .then(([c, p, s, sv, u]) => {
+        .then(([c, p, s, sv, u, cat]) => {
           if (!active) return;
           setClients(c);
           setProducts(p);
           setSuppliers(s);
           setServices(sv);
           setUsers(u);
+          setCategories(cat);
         })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -721,8 +747,123 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     u.email.toLowerCase().includes(search.toLowerCase())
   );
 
+  // ─── Categorias ──────────────────────────────────────────
+  const salvarCategoria = async () => {
+    if (!catForm) return;
+    const nome = catForm.name.trim();
+    if (nome.length < 2) { showAlert('Informe o nome da categoria.'); return; }
+    // A trava real é o índice único no banco (nome+pdv_mode, sem caixa). Aqui
+    // só antecipamos a mensagem pra não fazer o operador esperar o erro 23505.
+    const duplicada = categories.some(c =>
+      c.id !== catForm.id &&
+      c.name.trim().toLowerCase() === nome.toLowerCase() &&
+      (c.pdvMode ?? '') === (catForm.pdvMode ?? ''));
+    if (duplicada) { showAlert(`Já existe a categoria "${nome}" neste PDV.`); return; }
+    setCatSaving(true);
+    try {
+      const original = categories.find(c => c.id === catForm.id);
+      if (original && original.name !== nome) {
+        // Renomear arrasta os produtos junto — ver Storage.renameCategory.
+        await Storage.renameCategory(catForm.id, original.name, nome);
+        await Storage.upsertCategory({ ...catForm, name: nome });
+      } else {
+        await Storage.upsertCategory({ ...catForm, name: nome });
+      }
+      setCategories(await Storage.getCategories());
+      setProducts(await Storage.getProducts());
+      setCatForm(null);
+    } catch (err: any) {
+      showAlert('Erro ao salvar categoria: ' + (err?.message ?? err));
+    } finally {
+      setCatSaving(false);
+    }
+  };
+
+  const excluirCategoria = async (c: Category) => {
+    // Categoria em uso não some sem aviso: apagar deixaria os produtos
+    // apontando pra um nome que não existe mais no cadastro.
+    const emUso = await Storage.countCategoryUsage(c.name);
+    if (emUso > 0) {
+      showAlert(`"${c.name}" está em uso por ${emUso} item(ns). Renomeie ou troque a categoria desses itens antes de excluir.`);
+      return;
+    }
+    try {
+      await Storage.deleteCategory(c.id);
+      setCategories(await Storage.getCategories());
+    } catch (err: any) {
+      showAlert('Erro ao excluir: ' + (err?.message ?? err));
+    }
+  };
+
+  // Opções de categoria vindas do CADASTRO, escopadas pelo PDV do item. Antes
+  // as duas telas tinham uma lista fixa no código (Bebidas/Comidas/... e
+  // Manutenção/Consultoria/...) que não conversava com o que os produtos
+  // realmente usavam nem com o que o PDV agrupa em chips.
+  const opcoesCategoria = (modo?: string) => {
+    const alvo = modo ?? 'supermax';
+    const doModo = categories.filter(c => c.active && (c.pdvMode ?? 'supermax') === alvo);
+    return doModo.length > 0 ? doModo : categories.filter(c => c.active);
+  };
+
   const renderTable = () => {
     switch (subTab) {
+      case 'categorias': {
+        const usos = (nome: string) =>
+          products.filter((p: any) => (p.category ?? '') === nome).length +
+          services.filter((s: any) => (s.category ?? '') === nome).length;
+        const lista = categories.filter(c =>
+          (nichoFilter === 'todos' || (c.pdvMode ?? 'supermax') === nichoFilter) &&
+          c.name.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <table className="w-full text-left min-w-[720px]">
+            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: '#FFC107', borderBottom: '2px solid #B8860B' }}>
+              <tr>
+                <th className="px-5 py-4">Categoria</th>
+                <th className="px-5 py-4">PDV</th>
+                <th className="px-5 py-4 text-right">Itens</th>
+                <th className="px-5 py-4 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {lista.map(c => (
+                <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-4 h-4 rounded-full border shrink-0"
+                        style={{ background: c.color ?? '#9ca3af', borderColor: 'rgba(0,0,0,0.2)' }} />
+                      <span className="font-bold text-gray-900">{c.name}</span>
+                      {!c.active && (
+                        <span className="text-[10px] font-black uppercase tracking-wider text-gray-500 border rounded px-1.5 py-0.5">inativa</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-4"><FilialBadge modo={c.pdvMode} /></td>
+                  <td className="px-5 py-4 text-right tabular-nums font-bold" style={{ color: '#172554' }}>{usos(c.name)}</td>
+                  <td className="px-5 py-4">
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => setCatForm(c)} title="Editar"
+                        className="p-2 rounded-lg border-2 hover:bg-yellow-50"
+                        style={{ borderColor: '#172554', color: '#172554' }}>
+                        <Edit2 size={16} />
+                      </button>
+                      <button onClick={() => excluirCategoria(c)} title="Excluir"
+                        className="p-2 rounded-lg border-2 hover:bg-red-50"
+                        style={{ borderColor: '#b91c1c', color: '#b91c1c' }}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {lista.length === 0 && (
+                <tr><td colSpan={4} className="px-5 py-12 text-center text-gray-500">
+                  Nenhuma categoria cadastrada{nichoFilter !== 'todos' ? ' para este PDV' : ''}.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        );
+      }
       case 'equipe':
         return (
           <table className="w-full text-left min-w-[800px]">
@@ -813,17 +954,18 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
-                          {(() => {
-                            const m = NICHO_META[(p.pdvMode ?? 'supermax') as keyof typeof NICHO_META];
-                            return (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0"
-                                style={{ background: m.color + '30', color: m.dark, border: `1px solid ${m.color}` }}>
-                                {m.label}
-                              </span>
-                            );
-                          })()}
+                          <FilialBadge modo={p.pdvMode} />
                         </div>
-                        <div className="text-xs text-gray-500 font-mono mt-0.5">ID: {p.id}</div>
+                        {/* Identificação útil pra quem opera: REF e código de
+                            barras. O UUID interno não é digitável, não é
+                            conferível na etiqueta e só roubava a linha. */}
+                        {(p.ref || p.ean13) && (
+                          <div className="text-xs text-gray-500 font-mono mt-0.5 truncate">
+                            {p.ref && <span>REF {p.ref}</span>}
+                            {p.ref && p.ean13 && <span className="mx-1.5 opacity-40">·</span>}
+                            {p.ean13 && <span>EAN {p.ean13}</span>}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -908,17 +1050,8 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   <td className="p-6">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <div className="font-bold text-gray-900">{s.name}</div>
-                      {(() => {
-                        const m = NICHO_META[(s.pdvMode ?? 'supermax') as keyof typeof NICHO_META];
-                        return (
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0"
-                            style={{ background: m.color + '30', color: m.dark, border: `1px solid ${m.color}` }}>
-                            {m.label}
-                          </span>
-                        );
-                      })()}
+                      <FilialBadge modo={s.pdvMode} />
                     </div>
-                    <div className="text-sm text-gray-600 uppercase font-black tracking-tighter opacity-60">ID: {s.id}</div>
                   </td>
                   <td className="p-6 text-sm text-gray-600">
                     <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{s.category}</span>
@@ -1087,13 +1220,19 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
     }
   };
 
-  const currentListLength = subTab === 'clientes' ? filteredClients.length : 
+  const filteredCategories = categories.filter(c =>
+    (nichoFilter === 'todos' || (c.pdvMode ?? 'supermax') === nichoFilter) &&
+    c.name.toLowerCase().includes(search.toLowerCase()));
+
+  const currentListLength = subTab === 'categorias' ? filteredCategories.length :
+                           subTab === 'clientes' ? filteredClients.length : 
                            subTab === 'produtos' ? filteredProducts.length :
                            subTab === 'servicos' ? filteredServices.length :
                            subTab === 'fornecedores' ? filteredSuppliers.length : 
                            filteredUsers.length;
 
-  const totalLength = subTab === 'clientes' ? clients.length : 
+  const totalLength = subTab === 'categorias' ? categories.length :
+                      subTab === 'clientes' ? clients.length : 
                       subTab === 'produtos' ? products.length :
                       subTab === 'servicos' ? services.length :
                       subTab === 'fornecedores' ? suppliers.length : 
@@ -1102,10 +1241,18 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
   return (
     <div className="space-y-8 flex flex-col max-w-full">
       {alertHost}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 overflow-x-auto pb-2 custom-scrollbar">
-        <div className="flex gap-2 shrink-0 flex-wrap">
-          {(['clientes', 'produtos', 'servicos', 'fornecedores', 'equipe'] as const).map((t) => {
+      {/* Navegação entre submódulos — abas de verdade (sublinhado no ativo).
+          Antes eram 5 botões azuis com borda amarela e anel, do mesmo peso
+          visual do botão "Novo": pareciam cinco ações concorrentes em vez de
+          onde-eu-estou. Aba não é botão de comando. */}
+      <div className="border-b-2" style={{ borderColor: 'rgba(23,37,84,0.15)' }}>
+        <div className="flex gap-1 overflow-x-auto custom-scrollbar-h">
+          {(['categorias', 'produtos', 'servicos', 'clientes', 'fornecedores', 'equipe'] as const).map((t) => {
             const isActive = subTab === t;
+            const rotulo = ({
+              categorias: 'Categorias', produtos: 'Produtos', servicos: 'Serviços',
+              clientes: 'Clientes', fornecedores: 'Fornecedores', equipe: 'Equipe',
+            } as const)[t];
             return (
               <button
                 key={t}
@@ -1118,23 +1265,30 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                   setShowAddSupplier(false);
                   setEditingItem(null);
                   setFormData({});
+                  setCatForm(null);
+                  setSearch('');
                 }}
-                className={`relative overflow-hidden isolate glass-blue shimmer px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide transition-all text-white border-2 ${
-                  isActive ? 'ring-2 ring-offset-2 ring-[#FFC107]' : 'opacity-80 hover:opacity-100'
-                }`}
-                style={{ borderColor: '#FFC107' }}
+                className="relative px-4 py-3 text-sm font-black uppercase tracking-wide whitespace-nowrap transition-colors"
+                style={isActive
+                  ? { color: '#172554' }
+                  : { color: '#6b7280' }}
               >
-                <span className="relative z-[2]">
-                  {({ clientes: 'Clientes', produtos: 'Produtos', servicos: 'Serviços', fornecedores: 'Fornecedores', equipe: 'Equipe' } as const)[t]}
-                </span>
+                {rotulo}
+                {/* Indicador amarelo sobre a linha azul da barra */}
+                <span
+                  className="absolute left-2 right-2 -bottom-[2px] h-[3px] rounded-t"
+                  style={{ background: isActive ? '#FFC107' : 'transparent' }}
+                />
               </button>
             );
           })}
         </div>
-        
-        <div className="flex gap-3 w-full xl:w-auto flex-wrap">
-          {/* Filtro por nicho — só aparece em produtos/serviços */}
-          {(subTab === 'produtos' || subTab === 'servicos') && (
+      </div>
+
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        <div className="flex gap-3 w-full xl:w-auto flex-wrap items-center">
+          {/* Filtro por nicho — produtos, serviços e categorias */}
+          {(subTab === 'produtos' || subTab === 'servicos' || subTab === 'categorias') && (
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setNichoFilter('todos')}
@@ -1152,8 +1306,8 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
                     onClick={() => setNichoFilter(n)}
                     className="px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider border-2 transition-all"
                     style={active
-                      ? { background: meta.color, color: '#0A0A0A', borderColor: meta.dark, boxShadow: `0 2px 8px ${meta.color}59` }
-                      : { background: 'white', color: meta.dark, borderColor: meta.color + '40' }}
+                      ? { background: meta.color, color: meta.fg, borderColor: meta.dark, boxShadow: `0 2px 8px ${meta.color}59` }
+                      : { background: 'white', color: meta.dark, borderColor: meta.color + '60' }}
                   >{meta.label}</button>
                 );
               })}
@@ -1196,6 +1350,15 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
               onClick={() => {
                 setEditingItem(null);
                 setFormData({});
+                if (subTab === 'categorias') {
+                  setCatForm({
+                    id: 'C-' + crypto.randomUUID(),
+                    name: '',
+                    color: '#3b82f6',
+                    pdvMode: nichoFilter === 'todos' ? 'supermax' : nichoFilter,
+                    active: true,
+                  });
+                }
                 if (subTab === 'equipe') setShowAddUser(true);
                 if (subTab === 'clientes') {
                   setFormData({ type: 'PF' });
@@ -1608,15 +1771,25 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
               <select
-                value={formData.category || 'Outros'}
+                value={formData.category || ''}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
-                <option value="Bebidas" className="bg-card">BEBIDAS</option>
-                <option value="Comidas" className="bg-card">COMIDAS</option>
-                <option value="Serviços" className="bg-card">SERVIÇOS</option>
-                <option value="Outros" className="bg-card">OUTROS</option>
+                <option value="">— sem categoria —</option>
+                {opcoesCategoria(formData.pdvMode).map(c => (
+                  <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
+                ))}
+                {/* Valor antigo que não existe mais no cadastro continua
+                    selecionável, senão editar o produto o apagaria em silêncio. */}
+                {formData.category && !opcoesCategoria(formData.pdvMode).some(c => c.name === formData.category) && (
+                  <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
+                )}
               </select>
+              {opcoesCategoria(formData.pdvMode).length === 0 && (
+                <p className="text-xs text-gray-500 ml-1">
+                  Nenhuma categoria cadastrada — crie em <b>Cadastros → Categorias</b>.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -1811,14 +1984,17 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
               <select
-                value={formData.category || 'Geral'}
+                value={formData.category || ''}
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
-                <option value="Manutenção" className="bg-card">MANUTENÇÃO</option>
-                <option value="Consultoria" className="bg-card">CONSULTORIA</option>
-                <option value="Geral" className="bg-card">GERAL</option>
-                <option value="Outros" className="bg-card">OUTROS</option>
+                <option value="">— sem categoria —</option>
+                {opcoesCategoria(formData.pdvMode).map(c => (
+                  <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
+                ))}
+                {formData.category && !opcoesCategoria(formData.pdvMode).some(c => c.name === formData.category) && (
+                  <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
+                )}
               </select>
             </div>
 
@@ -2074,6 +2250,93 @@ export default function CadastrosModule({ currentUser }: CadastrosModuleProps) {
             </div>
           </div>
           </div>
+        </div>
+      )}
+
+      {/* Formulário de categoria — inline, acima da lista. Cadastro de três
+          campos não justifica um modal por cima da tela. */}
+      {catForm && subTab === 'categorias' && (
+        <div className="neumorphic neumorphic-accent p-5 flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <FolderTree size={18} style={{ color: '#172554' }} />
+            <h3 className="text-base font-black uppercase tracking-wide" style={{ color: '#172554' }}>
+              {categories.some(c => c.id === catForm.id) ? 'Editar categoria' : 'Nova categoria'}
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">Nome</label>
+              <input
+                autoFocus
+                value={catForm.name}
+                onChange={e => setCatForm({ ...catForm, name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') salvarCategoria(); if (e.key === 'Escape') setCatForm(null); }}
+                placeholder="Ex.: Mercearia, Hortifruti, Limpeza"
+                className="px-3 py-2 rounded-lg border-2 outline-none focus:border-blue-700 bg-white text-sm font-bold"
+                style={{ borderColor: 'var(--border-strong)' }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">PDV</label>
+              <select
+                value={catForm.pdvMode ?? 'supermax'}
+                onChange={e => setCatForm({ ...catForm, pdvMode: e.target.value as any })}
+                className="px-3 py-2 rounded-lg border-2 outline-none bg-white text-sm font-bold cursor-pointer"
+                style={{ borderColor: 'var(--border-strong)' }}
+              >
+                <option value="supermax">SuperMax</option>
+                <option value="maxlook">MaxLook</option>
+                <option value="techmax">TechMax</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">Cor</label>
+              <div className="flex gap-1.5">
+                {['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'].map(hex => (
+                  <button
+                    key={hex}
+                    type="button"
+                    onClick={() => setCatForm({ ...catForm, color: hex })}
+                    title={hex}
+                    className="w-8 h-8 rounded-full border-2 transition-transform hover:scale-110"
+                    style={{
+                      background: hex,
+                      borderColor: catForm.color === hex ? '#172554' : 'rgba(0,0,0,0.15)',
+                      boxShadow: catForm.color === hex ? '0 0 0 2px #FFC107' : undefined,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm font-bold text-gray-700 pb-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={catForm.active}
+                onChange={e => setCatForm({ ...catForm, active: e.target.checked })}
+                className="w-4 h-4 cursor-pointer"
+              />
+              Ativa
+            </label>
+            <div className="flex gap-2 pb-0.5 ml-auto">
+              <button
+                onClick={() => setCatForm(null)}
+                className="px-4 py-2 rounded-lg border-2 text-sm font-black uppercase tracking-wider hover:bg-gray-50"
+                style={{ borderColor: 'var(--border-strong)', color: '#374151' }}
+              >Cancelar</button>
+              <button
+                onClick={salvarCategoria}
+                disabled={catSaving}
+                className="px-5 py-2 rounded-lg border-2 text-sm font-black uppercase tracking-wider text-white disabled:opacity-40"
+                style={{ background: '#172554', borderColor: '#FFC107' }}
+              >{catSaving ? 'Salvando...' : 'Salvar'}</button>
+            </div>
+          </div>
+          {/* Renomear mexe nos produtos: o operador precisa saber antes. */}
+          {categories.some(c => c.id === catForm.id && c.name !== catForm.name.trim()) && (
+            <p className="text-xs font-bold" style={{ color: '#B8860B' }}>
+              Renomear atualiza também os produtos e serviços que usam esta categoria.
+            </p>
+          )}
         </div>
       )}
 
