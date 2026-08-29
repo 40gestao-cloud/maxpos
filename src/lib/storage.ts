@@ -67,9 +67,13 @@ export const Storage = {
     }
     const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []).map((r: any) => ({
+    // `pdv_mode` sai da linha crua: quem edita um produto joga essa linha
+    // direto no formData, e upsertProduct manda de volta pro banco. Deixar as
+    // duas chaves (pdv_mode E pdvMode) na mesma linha é só uma coluna a mais
+    // que um dia vaza pro upsert e quebra com "column does not exist".
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
-      pdvMode: r.pdv_mode ?? 'supermax',
+      pdvMode: pdv_mode ?? 'supermax',
     })) as Product[];
   },
 
@@ -83,9 +87,9 @@ export const Storage = {
       .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine')
       .order('name');
     if (error) throw error;
-    return (data ?? []).map((r: any) => ({
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
-      pdvMode: r.pdv_mode ?? 'supermax',
+      pdvMode: pdv_mode ?? 'supermax',
     })) as Product[];
   },
 

@@ -51,6 +51,12 @@ export interface Product {
   pdvMode?: PdvMode;
   /** Marcado para aparecer no carrossel da tela de login. */
   vitrine?: boolean;
+  /**
+   * Ficha do nicho (JSONB) — campos que só existem em MaxLook (tamanho, cor,
+   * gênero...) ou TechMax (modelo, garantia...). Vazio em SuperMax.
+   * Ver lib/atributosProduto.ts.
+   */
+  atributos?: Record<string, string>;
 }
 
 // Categoria de produto/serviço como cadastro. Antes era texto livre digitado

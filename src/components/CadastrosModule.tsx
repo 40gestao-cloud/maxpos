@@ -12,8 +12,10 @@ import { Client, User, UserRole, Category } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
-import { useAlertDialog } from './ConfirmDialog';
+import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
+import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
+import { LIMITE_VITRINE } from './VitrineModule';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
@@ -27,6 +29,7 @@ interface CadastrosModuleProps {
 
 export default function CadastrosModule({ currentUser, subTab }: CadastrosModuleProps) {
   const { showAlert, host: alertHost } = useAlertDialog();
+  const { askConfirm, host: confirmHost } = useConfirmDialog();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -70,6 +73,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [viewingDetails, setViewingDetails] = useState<any | null>(null);
   const [formData, setFormData] = useState<any>({});
+  // Campos da ficha por nicho em modo "Outro…" (livre: true em
+  // atributosProduto.ts) — precisa viver fora do valor do campo. Se o modo
+  // dependesse só do valor estar vazio, escolher "Outro" e ainda não ter
+  // digitado nada faria o select voltar pra "— Selecione —" sozinho.
+  const [fichaOutro, setFichaOutro] = useState<Set<string>>(new Set());
+  // Rascunho da Margem de Lucro enquanto o campo está focado — null quando
+  // não está sendo editada (mostra o valor calculado de price/costPrice).
+  // Precisa de buffer próprio: se o valor exibido viesse direto do cálculo,
+  // cada tecla recalcularia o preço e o cursor pularia no meio da digitação.
+  const [marginDraft, setMarginDraft] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string, type: string, name: string } | null>(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: '' as UserRole });
   const [barcodeModal, setBarcodeModal] = useState<{ isOpen: boolean, product: any | null }>({ isOpen: false, product: null });
@@ -664,7 +677,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setEditingItem(item);
     setFormData({ ...item });
     if (type === 'cliente') setShowAddClient(true);
-    if (type === 'produto') setShowAddProduct(true);
+    if (type === 'produto') { setFichaOutro(new Set()); setMarginDraft(null); setShowAddProduct(true); }
     if (type === 'servico') setShowAddService(true);
     if (type === 'fornecedor') setShowAddSupplier(true);
     if (type === 'equipe') {
@@ -772,39 +785,110 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           showAlert('EAN-13 inválido. São 13 dígitos com dígito verificador — use o botão Gerar se não tiver o código do fabricante.');
           return;
         }
+        const ref = String(formData.ref ?? '').trim();
+        const pdvAlvo = editingItem?.pdvMode ?? nichoFilter;
+        // Duplicidade dentro da MESMA empresa: REF e EAN são o que o PDV usa
+        // pra achar o produto (produtoBusca casa por prefixo de ref/EAN), e
+        // dois produtos com a mesma REF na mesma loja fazem o caixa vender
+        // sempre o primeiro da lista, em silêncio.
+        if (ref) {
+          const refDuplicada = products.some(p =>
+            p.id !== editingItem?.id &&
+            (p.pdvMode ?? 'supermax') === pdvAlvo &&
+            String(p.ref ?? '').trim().toLowerCase() === ref.toLowerCase());
+          if (refDuplicada) {
+            showAlert(`Já existe um produto com a REF "${ref}" nesta empresa. Use outro código.`);
+            return;
+          }
+        }
+        if (ean) {
+          const eanDuplicado = products.some(p =>
+            p.id !== editingItem?.id &&
+            (p.pdvMode ?? 'supermax') === pdvAlvo &&
+            String(p.ean13 ?? '').trim() === ean);
+          if (eanDuplicado) {
+            showAlert(`Já existe um produto com este código de barras nesta empresa.`);
+            return;
+          }
+        }
+        // Ficha do nicho (MaxLook/TechMax) — os campos marcados `req` em
+        // ATRIBUTOS_PRODUTO. SuperMax não tem lista, então o loop não roda.
+        //
+        // Só trava em CADASTRO NOVO. Editando um produto que já existia antes
+        // da ficha (catálogo real de MaxLook/TechMax nasceu sem ela), travar
+        // aqui faria uma alteração de preço de rotina exigir Modelo/Estado/
+        // Garantia que ninguém preencheu — o operador não tem como corrigir
+        // 100+ produtos de uma vez só pra mudar um valor. Fica opcional na
+        // edição; quem quiser completar a ficha, completa quando puder.
+        if (!editingItem) {
+          const atrDefs = ATRIBUTOS_PRODUTO[pdvAlvo] ?? [];
+          for (const d of atrDefs) {
+            if (!d.req) continue;
+            const v = (formData.atributos as any)?.[d.key];
+            if (v === undefined || v === null || String(v).trim() === '') {
+              showAlert(`Preencha "${d.label}" — é obrigatório em ${FILIAL_META[pdvAlvo as keyof typeof FILIAL_META]?.label ?? pdvAlvo}.`);
+              return;
+            }
+          }
+        }
         const custo = Number(formData.costPrice ?? 0);
+
+        const gravarProduto = async () => {
+          const productFields = { ...formData } as any;
+          const finalStock = formData.stock || 0;
+          // A empresa NAO vem do formulario: e a da sessao. Deixar escolher
+          // permitia cadastrar produto na MaxLook estando dentro da TechMax.
+          productFields.pdvMode = pdvAlvo;
+          productFields.name = nome;
+          productFields.ean13 = ean;
+          // SuperMax não tem ficha — zera em vez de arrastar resíduo de uma
+          // troca de nicho que nunca deveria ter acontecido no formulário.
+          productFields.atributos = pdvAlvo === 'supermax' ? {} : (formData.atributos ?? {});
+          // Unidade sempre UN fora de SuperMax — boutique e loja de eletrônico
+          // não vendem a granel, e o select de KG/LT/M² só confundia lá.
+          if (pdvAlvo !== 'supermax') productFields.unit = 'UN';
+          // `ref` e o codigo curto que o operador digita no PDV ("agua", "pao").
+          // Nao existia campo no formulario, entao todo produto novo nascia sem
+          // ele e nao dava pra chamar pelo codigo no caixa.
+          productFields.ref = ref;
+          try {
+            if (editingItem) {
+              const updated = { ...editingItem, ...productFields, stock: finalStock };
+              await Storage.upsertProduct(updated);
+              setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
+              showAlert('Produto atualizado com sucesso!');
+            } else {
+              const newProduct = {
+                unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,
+                ...productFields,
+                id: 'P-' + crypto.randomUUID(),
+              };
+              await Storage.upsertProduct(newProduct);
+              setProducts(prev => [...prev, newProduct]);
+              showAlert('Produto cadastrado com sucesso!');
+            }
+            setShowAddProduct(false);
+            setEditingItem(null);
+            setFormData({});
+          } catch (err: any) {
+            showAlert('Erro ao salvar: ' + err.message);
+          }
+        };
+
+        // Custo maior que o preço de venda é legítimo (queima de estoque,
+        // liquidação) — vira confirmação, não trava mais o cadastro.
         if (custo > preco) {
-          showAlert(`Atenção: o custo (${formatBRL(custo)}) é maior que o preço de venda (${formatBRL(preco)}). A margem fica negativa. Ajuste antes de salvar.`);
+          askConfirm({
+            title: 'Margem negativa',
+            message: `O custo (${formatBRL(custo)}) é maior que o preço de venda (${formatBRL(preco)}). A margem fica negativa. Salvar mesmo assim?`,
+            confirmLabel: 'Salvar assim mesmo',
+            variant: 'primary',
+            onConfirm: gravarProduto,
+          });
           return;
         }
-
-        const { purchasedQuantity: _pq, ...productFields } = formData as any;
-        const finalStock = (formData.stock || 0) + (formData.purchasedQuantity || 0);
-        // A empresa NAO vem do formulario: e a da sessao. Deixar escolher
-        // permitia cadastrar produto na MaxLook estando dentro da TechMax.
-        productFields.pdvMode = editingItem?.pdvMode ?? nichoFilter;
-        productFields.name = nome;
-        productFields.ean13 = ean;
-        // `ref` e o codigo curto que o operador digita no PDV ("agua", "pao").
-        // Nao existia campo no formulario, entao todo produto novo nascia sem
-        // ele e nao dava pra chamar pelo codigo no caixa.
-        productFields.ref = String(formData.ref ?? '').trim();
-        if (editingItem) {
-          const updated = { ...editingItem, ...productFields, stock: finalStock };
-          await Storage.upsertProduct(updated);
-          setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
-          showAlert('Produto atualizado com sucesso!');
-        } else {
-          const newProduct = {
-            unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,
-            ...productFields,
-            id: 'P-' + crypto.randomUUID(),
-          };
-          await Storage.upsertProduct(newProduct);
-          setProducts(prev => [...prev, newProduct]);
-          showAlert('Produto cadastrado com sucesso!');
-        }
-        setShowAddProduct(false);
+        await gravarProduto();
+        return;
       } else if (type === 'servico') {
         const nomeSrv = String(formData.name ?? '').trim();
         if (nomeSrv.length < 2) { showAlert('Informe o nome do serviço.'); return; }
@@ -920,10 +1004,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // as duas telas tinham uma lista fixa no código (Bebidas/Comidas/... e
   // Manutenção/Consultoria/...) que não conversava com o que os produtos
   // realmente usavam nem com o que o PDV agrupa em chips.
+  // Escopo estrito: sem categoria cadastrada NESTA empresa, a lista vem
+  // vazia — nunca cai para as categorias de outra loja. O fallback antigo
+  // ("se não tem nenhuma, mostra todas") vazava Roupas/Calçados da MaxLook
+  // pro formulário da TechMax sempre que a empresa ainda não tinha
+  // categoria própria cadastrada.
   const opcoesCategoria = (modo?: string) => {
     const alvo = modo ?? 'supermax';
-    const doModo = categories.filter(c => c.active && (c.pdvMode ?? 'supermax') === alvo);
-    return doModo.length > 0 ? doModo : categories.filter(c => c.active);
+    return categories.filter(c => c.active && (c.pdvMode ?? 'supermax') === alvo);
   };
 
   const renderTable = () => {
@@ -1362,6 +1450,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   return (
     <div className="space-y-8 flex flex-col max-w-full">
       {alertHost}
+      {confirmHost}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex gap-3 w-full xl:w-auto flex-wrap items-center">
           <div className="flex-1 md:w-64 neumorphic-inset flex items-center px-4 py-2 gap-3">
@@ -1418,7 +1507,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 if (subTab === 'produtos') {
                   // Pré-preenche o nicho com o filtro atual (fica coerente com
                   // o que o operador está vendo). 'todos' cai em supermax.
-                  setFormData({ pdvMode: nichoFilter });
+                  // atributosPadrao entra com o que já tem resposta óbvia
+                  // (garantia mínima do CDC em TechMax) — continua editável.
+                  setFormData({ pdvMode: nichoFilter, atributos: atributosPadrao(nichoFilter) });
+                  setFichaOutro(new Set());
+                  setMarginDraft(null);
                   setShowAddProduct(true);
                 }
                 if (subTab === 'servicos') {
@@ -1446,7 +1539,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2">
               <UserPlus /> {editingItem ? 'EDITAR MEMBRO' : 'CADASTRAR NOVO MEMBRO'}
             </h3>
-            <button onClick={() => { setShowAddUser(false); setEditingItem(null); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddUser(false); setEditingItem(null); setFormData({}); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           
           <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1518,7 +1611,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
             </h3>
-            <button onClick={() => { setShowAddClient(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddClient(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
@@ -1752,83 +1845,37 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         </div>
       )}
 
-      {showAddProduct && subTab === 'produtos' && (
+      {showAddProduct && subTab === 'produtos' && (() => {
+        // Empresa e a da SESSAO, nao uma escolha do formulario: escolher aqui
+        // permitia cadastrar produto na MaxLook estando dentro da TechMax.
+        // Por isso agora e so um chip ao lado do titulo, nao mais um campo.
+        const pdvAlvo = (editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META;
+        const meta = FILIAL_META[pdvAlvo];
+        const temMarca = pdvAlvo !== 'supermax';
+        const unidadeLivre = pdvAlvo === 'supermax';
+        const fichaDefs = ATRIBUTOS_PRODUTO[pdvAlvo] ?? [];
+        const setAtributo = (key: string, valor: string) =>
+          setFormData({ ...formData, atributos: { ...(formData.atributos ?? {}), [key]: valor } });
+        return (
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
-              <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
-            </h3>
-            <button onClick={() => { setShowAddProduct(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+          <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
+                <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
+              </h3>
+              <span
+                className="px-3 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
+                style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+                title={editingItem ? 'O produto pertence a esta empresa.' : 'Cadastrado na empresa em que você está operando.'}
+              >
+                {meta.label}
+              </span>
+            </div>
+            <button onClick={() => { setShowAddProduct(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Image picker */}
-            <div className="lg:col-span-3 space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Imagem do Produto</label>
-              <div className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
-                <div className="w-24 h-24 border-2 border-gray-300 rounded bg-white flex items-center justify-center overflow-hidden shrink-0">
-                  {formData.image ? (
-                    <img src={formData.image} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <Package size={40} className="text-gray-400" />
-                  )}
-                </div>
-                <div className="flex-1 space-y-2 min-w-0">
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleProductImage}
-                    className="hidden"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => imageInputRef.current?.click()}
-                      className="smart-btn-secondary"
-                    >
-                      <Upload size={16} /> {formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
-                    </button>
-                    {formData.image && (
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, image: undefined })}
-                        className="smart-btn-danger"
-                      >
-                        <CloseIcon size={16} /> REMOVER
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-600">JPG, PNG ou WEBP — máximo <b>120 KB</b>. Sem imagem, o produto exibe um ícone padrão.</p>
-                </div>
-              </div>
-            </div>
-
-            {/* A empresa e a da SESSAO, nao uma escolha do formulario: escolher
-                aqui permitia cadastrar produto na MaxLook estando dentro da
-                TechMax. Fica como informacao pra nao virar surpresa. */}
             <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Empresa</label>
-              <div className="flex items-center gap-3 flex-wrap">
-                {(() => {
-                  const meta = FILIAL_META[(editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META];
-                  return (
-                    <span
-                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
-                      style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
-                    >
-                      {meta.label}
-                    </span>
-                  );
-                })()}
-                <span className="text-xs text-gray-500">
-                  {editingItem
-                    ? 'O produto pertence a esta empresa.'
-                    : 'O produto será cadastrado na empresa em que você está operando.'}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-2 lg:col-span-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
                 Nome do Produto <span className="text-red-600">*</span>
               </label>
@@ -1837,6 +1884,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder="Ex.: Arroz Branco Camil 5kg"
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                autoFocus
               />
             </div>
 
@@ -1864,102 +1912,235 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
               >
                 <option value="">— sem categoria —</option>
-                {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).map(c => (
+                {opcoesCategoria(pdvAlvo).map(c => (
                   <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
                 ))}
                 {/* Valor antigo que não existe mais no cadastro continua
                     selecionável, senão editar o produto o apagaria em silêncio. */}
-                {formData.category && !opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).some(c => c.name === formData.category) && (
+                {formData.category && !opcoesCategoria(pdvAlvo).some(c => c.name === formData.category) && (
                   <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
                 )}
               </select>
-              {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).length === 0 && (
+              {opcoesCategoria(pdvAlvo).length === 0 && (
                 <p className="text-xs text-gray-500 ml-1">
                   Nenhuma categoria cadastrada — crie em <b>Cadastros → Categorias</b>.
                 </p>
               )}
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Marca <span className="text-gray-400 normal-case font-medium">(opcional — MaxLook / TechMax)</span></label>
-              <input
-                value={formData.marca || ''}
-                onChange={e => setFormData({ ...formData, marca: e.target.value })}
-                placeholder="Ex.: Samsung, Hering, JBL, Nike..."
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-              />
-              <p className="text-[11px] text-gray-500 leading-relaxed">Aparece como badge de destaque nos cards de MaxLook (grife) e TechMax (fabricante). Não interfere no SuperMax.</p>
-            </div>
+            {/* Marca so faz sentido em quem revende grife/fabricante — no
+                SuperMax o card do PDV nem desenha esse badge. */}
+            {temMarca && (
+              <div className="space-y-2">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                  Marca <span className="text-gray-400 normal-case font-medium">(opcional)</span>
+                </label>
+                <input
+                  value={formData.marca || ''}
+                  onChange={e => setFormData({ ...formData, marca: e.target.value })}
+                  placeholder={pdvAlvo === 'maxlook' ? 'Ex.: Hering, Colcci, Vans...' : 'Ex.: Samsung, Lenovo, JBL...'}
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                />
+                <p className="text-[11px] text-gray-500 leading-relaxed">Aparece como badge de destaque no card do produto no PDV.</p>
+              </div>
+            )}
 
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
-              <input 
-                type="text"
-                value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
-                onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80" 
-              />
-            </div>
+            {/* Ficha do nicho (JSONB em products.atributos) — só MaxLook e
+                TechMax têm. SuperMax não desenha nada aqui. */}
+            {fichaDefs.length > 0 && (
+              <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <ChevronRight size={18} className="text-[var(--accent)] rotate-90" />
+                  <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">
+                    Ficha {meta.label}
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {fichaDefs.map(d => {
+                    const valor = String((formData.atributos as any)?.[d.key] ?? '');
+                    const wideCls = d.wide ? 'lg:col-span-3' : '';
+                    if (d.type === 'select' && d.options) {
+                      const naLista = (d.options as readonly string[]).includes(valor);
+                      const OUTRO = '__outro__';
+                      // O modo "Outro" mora no Set `fichaOutro`, não no valor
+                      // do campo: se dependesse só de "valor não vazio e fora
+                      // da lista", escolher Outro e ainda não ter digitado
+                      // nada devolvia o select pra "— Selecione —" sozinho.
+                      const emOutro = !!d.livre && (fichaOutro.has(d.key) || (valor !== '' && !naLista));
+                      return (
+                        <div key={d.key} className={`space-y-2 ${wideCls}`}>
+                          <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                            {d.label} {d.req && <span className="text-red-600">*</span>}
+                          </label>
+                          <select
+                            value={emOutro ? OUTRO : valor}
+                            onChange={e => {
+                              if (e.target.value === OUTRO) {
+                                setFichaOutro(prev => new Set(prev).add(d.key));
+                                setAtributo(d.key, '');
+                                return;
+                              }
+                              setFichaOutro(prev => {
+                                if (!prev.has(d.key)) return prev;
+                                const n = new Set(prev); n.delete(d.key); return n;
+                              });
+                              setAtributo(d.key, e.target.value);
+                            }}
+                            className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
+                          >
+                            <option value="">— Selecione —</option>
+                            {d.options.map(o => <option key={o} value={o} className="bg-card">{o}</option>)}
+                            {d.livre && <option value={OUTRO} className="bg-card">Outro…</option>}
+                          </select>
+                          {emOutro && (
+                            <input
+                              autoFocus
+                              value={valor}
+                              onChange={e => setAtributo(d.key, e.target.value)}
+                              placeholder="Digite o valor"
+                              className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                            />
+                          )}
+                          {d.dica && <p className="text-[11px] text-gray-500 leading-relaxed">{d.dica}</p>}
+                        </div>
+                      );
+                    }
+                    if (d.type === 'textarea') {
+                      return (
+                        <div key={d.key} className={`space-y-2 ${wideCls}`}>
+                          <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">{d.label}</label>
+                          <textarea
+                            rows={3}
+                            value={valor}
+                            onChange={e => setAtributo(d.key, e.target.value)}
+                            placeholder={d.placeholder}
+                            className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm resize-none"
+                          />
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={d.key} className={`space-y-2 ${wideCls}`}>
+                        <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                          {d.label} {d.req && <span className="text-red-600">*</span>}
+                        </label>
+                        <input
+                          value={valor}
+                          inputMode={d.soDigitos ? 'numeric' : undefined}
+                          onChange={e => setAtributo(d.key, d.soDigitos ? e.target.value.replace(/\D/g, '') : e.target.value)}
+                          placeholder={d.placeholder}
+                          className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                        />
+                        {d.dica && <p className="text-[11px] text-gray-500 leading-relaxed">{d.dica}</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
-              <input 
-                type="text"
-                value={maskCurrency(Math.round((formData.price || 0) * 100))}
-                onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-emerald-500 text-sm font-black" 
-              />
-            </div>
+            <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-gray-200 mt-2">
+              <div className="space-y-2">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
+                <input
+                  type="text"
+                  value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
+                  onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80"
+                />
+              </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
-              <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-900 text-sm font-black flex items-center justify-between">
-                <span>
-                  {formData.price && formData.costPrice 
-                    ? (((formData.price - formData.costPrice) / formData.price) * 100).toFixed(2)
-                    : '0.00'}
-                </span>
-                <span className="text-sm text-gray-600">AUTO</span>
+              <div className="space-y-2">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                  Preço de Venda (R$) <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={maskCurrency(Math.round((formData.price || 0) * 100))}
+                  onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
+                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-emerald-500 text-sm font-black"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
+                {(() => {
+                  const custo = Number(formData.costPrice || 0);
+                  const preco = Number(formData.price || 0);
+                  const calculada = preco && custo ? (((preco - custo) / preco) * 100).toFixed(2) : '';
+                  return (
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      disabled={!custo}
+                      value={marginDraft ?? calculada}
+                      onFocus={() => setMarginDraft(calculada)}
+                      onChange={e => setMarginDraft(e.target.value)}
+                      onBlur={() => {
+                        const margem = parseFloat((marginDraft ?? '').replace(',', '.'));
+                        // Margem >= 100 pediria preço infinito ou negativo —
+                        // ignora e volta pro valor calculado a partir do preço.
+                        if (Number.isFinite(margem) && custo > 0 && margem < 100) {
+                          const novoPreco = Math.round((custo / (1 - margem / 100)) * 100) / 100;
+                          setFormData({ ...formData, price: novoPreco });
+                        }
+                        setMarginDraft(null);
+                      }}
+                      placeholder={custo ? '0.00' : 'Informe o custo'}
+                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  );
+                })()}
+                <p className="text-[11px] text-gray-500 leading-relaxed">Editável — digitar a margem recalcula o Preço de Venda a partir do custo.</p>
               </div>
             </div>
 
-            <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-4">
+            <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
               <div className="flex items-center gap-2 mb-2">
                 <ChevronRight size={18} className="text-[var(--accent)] rotate-90" />
                 <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
               </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
-                <div className="space-y-2">
-                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque atual</label>
-                  <input 
-                    type="number"
-                    disabled
-                    value={(formData.stock || 0) + (formData.purchasedQuantity || 0)}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold opacity-50 cursor-not-allowed" 
-                  />
-                </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-black text-[var(--navy)] uppercase tracking-widest ml-1">Quantidade Comprada</label>
-                  <input 
-                    type="number"
-                    value={formData.purchasedQuantity || ''}
-                    onChange={e => setFormData({ ...formData, purchasedQuantity: parseInt(e.target.value) || 0 })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold border border-[var(--accent)]/30 focus:border-[var(--accent)]" 
-                    placeholder="0"
-                  />
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
+                {/* Uma entrada só pra estoque: cadastro novo digita o saldo
+                    inicial; produto existente mostra o saldo (só leitura) e
+                    qualquer ajuste passa por "Editar estoque", que já registra
+                    a operação (soma/subtrai/corrige) em vez de escrever em
+                    cima do número. Antes eram DOIS campos que somavam entre
+                    si ("Estoque atual" + "Quantidade Comprada") sem nenhuma
+                    das duas telas dizer qual das duas o operador devia usar. */}
+                {editingItem ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque atual</label>
+                    <input
+                      type="number"
+                      disabled
+                      value={formData.stock || 0}
+                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold opacity-50 cursor-not-allowed"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque inicial</label>
+                    <input
+                      type="number"
+                      value={formData.stock || ''}
+                      onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
+                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                      placeholder="0"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 gap-4 items-end">
                     <div className="space-y-2">
                       <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque mínimo</label>
-                      <input 
+                      <input
                         type="number"
                         value={formData.minStock || ''}
                         onChange={e => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
-                        className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
+                        className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
                       />
                     </div>
                   </div>
@@ -1967,8 +2148,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
                 <div className="pb-3 flex justify-between items-center">
                   {editingItem && (
-                    <button 
-                      type="button" 
+                    <button
+                      type="button"
                       onClick={() => setStockModal({ isOpen: true, product: formData, action: 'sum', amount: 0 })}
                       className="text-[var(--navy)] font-black uppercase text-sm hover:underline tracking-widest"
                     >
@@ -1978,26 +2159,39 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <div className="lg:hidden"></div>
                 </div>
 
-                <div className="space-y-2 lg:col-span-2">
-                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida (cm, kg, m², etc)</label>
-                  <select 
-                    value={formData.unit || 'UN'}
-                    onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
-                  >
-                    <option value="UN" className="bg-card">UNIDADE (UN)</option>
-                    <option value="KG" className="bg-card">QUILOGRAMA (KG)</option>
-                    <option value="LT" className="bg-card">LITRO (LT)</option>
-                    <option value="MT" className="bg-card">METRO (MT)</option>
-                    <option value="M2" className="bg-card">METRO QUADRADO (M²)</option>
-                    <option value="CM" className="bg-card">CENTÍMETRO (CM)</option>
-                    <option value="CX" className="bg-card">CAIXA (CX)</option>
-                    <option value="PCT" className="bg-card">PACOTE (PCT)</option>
-                  </select>
-                </div>
+                {/* Unidade so e uma escolha real no SuperMax — hortifruti pesa,
+                    bebida mede em litro. MaxLook e TechMax vendem sempre por
+                    unidade, e o select de KG/M²/CX so confundia quem cadastra
+                    tênis ou celular. */}
+                {unidadeLivre ? (
+                  <div className="space-y-2 lg:col-span-2">
+                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida (cm, kg, m², etc)</label>
+                    <select
+                      value={formData.unit || 'UN'}
+                      onChange={e => setFormData({ ...formData, unit: e.target.value })}
+                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
+                    >
+                      <option value="UN" className="bg-card">UNIDADE (UN)</option>
+                      <option value="KG" className="bg-card">QUILOGRAMA (KG)</option>
+                      <option value="LT" className="bg-card">LITRO (LT)</option>
+                      <option value="MT" className="bg-card">METRO (MT)</option>
+                      <option value="M2" className="bg-card">METRO QUADRADO (M²)</option>
+                      <option value="CM" className="bg-card">CENTÍMETRO (CM)</option>
+                      <option value="CX" className="bg-card">CAIXA (CX)</option>
+                      <option value="PCT" className="bg-card">PACOTE (PCT)</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-2 lg:col-span-2">
+                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida</label>
+                    <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-500 text-sm font-bold opacity-70">
+                      UNIDADE (UN)
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-3 pb-3">
-                  <input 
+                  <input
                     type="checkbox"
                     id="controlStock"
                     checked={formData.controlStock === false}
@@ -2039,6 +2233,81 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               )}
             </div>
 
+            {/* Imagem por último: é o campo mais raro de mudar depois de
+                cadastrado, e não precisa ser a primeira decisão do formulário. */}
+            <div className="lg:col-span-3 space-y-2">
+              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Imagem do Produto</label>
+              <div className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <div className="w-24 h-24 border-2 border-gray-300 rounded bg-white flex items-center justify-center overflow-hidden shrink-0">
+                  {formData.image ? (
+                    <img src={formData.image} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Package size={40} className="text-gray-400" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-2 min-w-0">
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleProductImage}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      className="smart-btn-secondary"
+                    >
+                      <Upload size={16} /> {formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
+                    </button>
+                    {formData.image && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, image: undefined, vitrine: false })}
+                        className="smart-btn-danger"
+                      >
+                        <CloseIcon size={16} /> REMOVER
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600">JPG, PNG ou WEBP — máximo <b>120 KB</b>. Sem imagem, o produto exibe um ícone padrão.</p>
+                </div>
+              </div>
+              {(() => {
+                // Mesma régua da tela Vitrine: só produto COM FOTO entra (o
+                // carrossel não tem o que desenhar sem imagem), e o teto de
+                // 12 por empresa é o que a RPC pública aceita.
+                const naVitrineCount = products.filter(p =>
+                  (p.pdvMode ?? 'supermax') === pdvAlvo && p.vitrine && p.id !== editingItem?.id).length;
+                const semFoto = !formData.image;
+                const vitrineCheia = !formData.vitrine && naVitrineCount >= LIMITE_VITRINE;
+                const bloqueado = semFoto || vitrineCheia;
+                return (
+                  <>
+                    <label className={`mt-3 flex items-center gap-3 ${bloqueado ? 'opacity-50' : 'cursor-pointer'}`}>
+                      <input
+                        type="checkbox"
+                        checked={!!formData.vitrine}
+                        disabled={bloqueado}
+                        onChange={e => setFormData({ ...formData, vitrine: e.target.checked })}
+                        className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[var(--accent)] transition-all"
+                      />
+                      <span className="text-xs font-black text-gray-600 uppercase tracking-widest select-none">
+                        Exibir na vitrine (carrossel da tela de login)
+                      </span>
+                    </label>
+                    {semFoto && (
+                      <p className="text-[11px] text-gray-500 ml-1 mt-1">Precisa de imagem para entrar na vitrine.</p>
+                    )}
+                    {vitrineCheia && (
+                      <p className="text-[11px] text-amber-600 ml-1 mt-1">Vitrine cheia ({LIMITE_VITRINE}) nesta empresa — tire um produto em Vitrine antes de adicionar outro.</p>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+
             <div className="lg:col-span-3 flex justify-end">
               <button onClick={() => handleSave('produto')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR PRODUTO'}
@@ -2047,7 +2316,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {showAddService && subTab === 'servicos' && (
         <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
@@ -2056,7 +2326,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR SERVIÇO' : 'CADASTRAR NOVO SERVIÇO'}
             </h3>
-            <button onClick={() => { setShowAddService(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddService(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Empresa da sessao — ver a mesma nota no formulario de produto. */}
@@ -2166,7 +2436,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
             </h3>
-            <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">

@@ -20,7 +20,7 @@ import { buscarProdutos } from '../lib/produtoBusca';
 //
 // O teto de 12 vem da RPC, e não é enfeite: `image` é base64 de até 120 KB e
 // isso trafega ANTES do login. A tela avisa quando o limite é atingido.
-const LIMITE_VITRINE = 12;
+export const LIMITE_VITRINE = 12;
 
 export default function VitrineModule() {
   const { showAlert, host: alertHost } = useAlertDialog();
