@@ -9,6 +9,10 @@
 -- historico do repo e para recriar o banco do zero:
 --   Partes 1 e 2 — migration `seguranca_fecha_anon_credit_installments_e_rpcs`
 --   Parte 3      — migration `seguranca_delete_por_cargo_restrictive`
+--
+-- A Parte 4 (cargo so pela cupula + gate do Modo Visitante) esta em
+-- `2026-08-30d_seguranca_parte4_cargo_e_visitante.sql` — arquivo
+-- proprio porque este aqui ja rodou e nao e reexecutavel inteiro.
 -- ============================================================
 
 BEGIN;
