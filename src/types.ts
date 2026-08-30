@@ -166,6 +166,8 @@ export interface Account {
   dueDate: string;
   type: 'payable' | 'receivable';
   status: 'pending' | 'paid' | 'overdue';
+  /** Empresa dona da conta. Ausente = 'supermax' (linha legada). */
+  pdvMode?: PdvMode;
 }
 
 export interface Supplier {

@@ -104,7 +104,10 @@ export default function FinanceiroModule() {
   useEffect(() => {
     let active = true;
     const load = () =>
-      Promise.all([Storage.getSales(), Storage.getAccounts()])
+      Promise.all([
+        Storage.getSales(filialAtiva ?? 'supermax'),
+        Storage.getAccounts(filialAtiva ?? 'supermax'),
+      ])
         .then(([s, a]) => { if (active) { setSales(s); setAccounts(a); } })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -129,7 +132,7 @@ export default function FinanceiroModule() {
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [filialAtiva]);
 
   // ─── accordion handlers ────────────────────────────────────
 
@@ -180,12 +183,12 @@ export default function FinanceiroModule() {
   // Apagar um registro do "Fluxo de Caixa Recente" reduz os
   // totalizadores correspondentemente. "Mostrar todas" restaura.
 
-  // A VENDA tem loja de origem (pdv_mode) e por isso filtra. As CONTAS de
-  // accounts nao: sao lancamentos manuais (aluguel, fornecedor, etc.) sem
-  // vinculo com PDV nenhum. Filtrar as duas juntas faria a tela afirmar
-  // "a MaxLook nao tem contas a pagar", o que e diferente de "as contas nao
-  // sao atribuidas a uma loja". Por isso `accounts` fica fora do filtro e a
-  // tela diz isso em voz alta.
+  // Venda e conta agora sao as duas da empresa da sessao. `accounts` ganhou
+  // pdv_mode: aluguel, fornecedor e afins sao despesa DE UMA loja, e mistura-
+  // las fazia o resultado de cada empresa sair errado. A tabela estava vazia
+  // quando a coluna entrou, entao nenhuma conta foi reatribuida.
+  // A filtragem de `sales` aqui e redundante (getSales ja filtra no servidor)
+  // e fica como rede de seguranca barata.
   const vendas = sales.filter(s => ((s as any).pdvMode ?? 'supermax') === filialAtiva);
 
   const visibleSalesForStats = vendas.filter(s => !dismissedFlow.has(`sale-${s.id}`));
@@ -239,6 +242,8 @@ export default function FinanceiroModule() {
       dueDate: formData.dueDate,
       type: accountType,
       status: formData.status,
+      // A conta nasce na empresa da sessão, como produto e serviço.
+      pdvMode: (filialAtiva ?? 'supermax') as Account['pdvMode'],
     };
     try {
       await Storage.upsertAccount(newAccount);
@@ -320,14 +325,12 @@ export default function FinanceiroModule() {
     <div className="space-y-8 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
-      {/* Contas a pagar/receber sao lancamentos manuais, sem empresa de
-          origem: seguem visiveis em qualquer empresa. Dizer isso e melhor que
-          escondê-las e fazer a tela afirmar que a loja nao tem contas. */}
+      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. */}
       <div className="neumorphic neumorphic-accent p-4">
         <p className="text-[11px] font-bold text-gray-600">
-          As <b>vendas</b> abaixo são de <b>{FILIAL_META[filialAtiva ?? 'supermax'].label}</b>.
-          Contas a pagar e a receber são lançamentos manuais, sem empresa de origem,
-          e aparecem integralmente.
+          Vendas e contas abaixo são de <b>{FILIAL_META[filialAtiva ?? 'supermax'].label}</b>.
+          Cada empresa tem o próprio contas a pagar e a receber — troque de empresa
+          no topo para ver as das outras.
         </p>
       </div>
 

@@ -280,14 +280,21 @@ export const Storage = {
   },
 
   // ─── Contas ──────────────────────────────────────────────
-  getAccounts: async (): Promise<Account[]> => {
-    const { data, error } = await supabase.from('accounts').select('*').order('dueDate', { ascending: true });
+  // Mesmo escopo por empresa de products/services/sales: a conta de aluguel
+  // da MaxLook não é a do SuperMax.
+  getAccounts: async (pdvMode?: Account['pdvMode']): Promise<Account[]> => {
+    const q = escopoFilial(supabase.from('accounts').select('*'), pdvMode);
+    const { data, error } = await q.order('dueDate', { ascending: true });
     if (error) throw error;
-    return (data ?? []) as Account[];
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+      ...r,
+      pdvMode: pdv_mode ?? 'supermax',
+    })) as Account[];
   },
 
   upsertAccount: async (account: Account): Promise<void> => {
-    const { created_at, ...row } = account as any;
+    const { created_at, pdvMode, ...row } = account as any;
+    (row as any).pdv_mode = pdvMode ?? 'supermax';
     const { error } = await supabase.from('accounts').upsert(row);
     if (error) throw error;
   },
