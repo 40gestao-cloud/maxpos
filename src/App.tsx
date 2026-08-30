@@ -66,6 +66,14 @@ function AppInterno() {
   const [cadastrosAberto, setCadastrosAberto] = useState(false);
   const { filialAtiva, escolheu, setFilialAtiva, clearFilial } = useFilial();
   const isPdvTab = activeTab === 'pdv';
+  // Abre o submenu sozinho ao entrar numa rota de cadastro (por link direto,
+  // ou trocando de submenu). Sem isto o botão "Cadastros" ficava incapaz de
+  // recolher: como `aberto` também considerava "activeTab começa com
+  // cadastros-", clicar pra fechar nunca fechava enquanto o operador
+  // continuasse dentro de um cadastro — só saindo dele.
+  useEffect(() => {
+    if (activeTab.startsWith('cadastros-')) setCadastrosAberto(true);
+  }, [activeTab]);
   // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
   useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
 
@@ -269,11 +277,12 @@ function AppInterno() {
             const iconSrc = (item as any).iconSrc as string | undefined;
 
             // Cadastros é um GRUPO: abre a lista de submenus em vez de navegar.
-            // Fica expandido enquanto o operador está em qualquer cadastro, pra
-            // ele ver onde está sem precisar reabrir.
+            // Abre sozinho ao entrar num cadastro (useEffect acima), mas quem
+            // manda a partir daí é o clique — senão nunca dava pra recolher
+            // sem sair do cadastro primeiro.
             if ((item as any).grupo) {
               const dentro = activeTab.startsWith('cadastros-');
-              const aberto = cadastrosAberto || dentro;
+              const aberto = cadastrosAberto;
               return (
                 <div key={item.id}>
                   <div

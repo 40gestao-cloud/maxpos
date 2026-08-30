@@ -307,10 +307,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   useEffect(() => {
     _setSessionUser(currentUser);
     let active = true;
+    // Produto carrega só da empresa ativa: `getProducts()` sem argumento
+    // trazia o catálogo das TRÊS lojas inteiro — nome, preço E a imagem em
+    // base64 (até 120 KB cada) — toda vez que o operador entrava em
+    // Cadastros, mesmo estando em uma tela que só usa uma delas. Com ~100+
+    // produtos na TechMax isso é vários MB trafegados e parseados à toa a
+    // cada visita, e é o que fazia o módulo abrir com lentidão perceptível.
     const load = () =>
       Promise.all([
         Storage.getClients(),
-        Storage.getProducts(),
+        Storage.getProducts(nichoFilter),
         Storage.getSuppliers(),
         Storage.getServices(),
         Storage.getUsers(),
