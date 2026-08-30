@@ -337,11 +337,15 @@ export const Storage = {
   },
 
   // ─── Vendas ──────────────────────────────────────────────
-  getSales: async (): Promise<Sale[]> => {
-    const { data, error } = await supabase
-      .from('sales')
-      .select('*, sale_items(*), sale_payments(*)')
-      .order('date', { ascending: false });
+  // `pdvMode` filtra NO SERVIDOR. Cada venda arrasta sale_items e
+  // sale_payments junto, então trazer as três empresas para exibir uma só é
+  // caro — e, no Fiscal, era também errado: a lista de NFC-e mostrava cupom
+  // das outras lojas. Sem argumento continua trazendo tudo, que é o que as
+  // telas com filtro no cliente ainda esperam.
+  getSales: async (pdvMode?: Sale['pdvMode']): Promise<Sale[]> => {
+    const q = escopoFilial(
+      supabase.from('sales').select('*, sale_items(*), sale_payments(*)'), pdvMode);
+    const { data, error } = await q.order('date', { ascending: false });
     if (error) throw error;
 
     return (data ?? []).map(mapSaleRow);

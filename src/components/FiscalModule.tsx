@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import { formatBRL } from '../lib/masks';
 import { Sale } from '../types';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
+import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 
 const EMITTED_KEY = 'fiscal_emitted_nfce';
 
@@ -95,6 +96,7 @@ function xmlSimulado(sale: Sale, chave: string): string {
 export default function FiscalModule() {
   const { askConfirm, host: confirmHost } = useConfirmDialog();
   const { showAlert, host: alertHost } = useAlertDialog();
+  const { filialAtiva } = useFilial();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [emitted, setEmitted] = useState<Set<string>>(() => {
@@ -105,10 +107,14 @@ export default function FiscalModule() {
     } catch { return new Set<string>(); }
   });
 
+  // A nota é da EMPRESA em que o operador está. Sem o filtro, a lista de
+  // NFC-e pendentes do SuperMax trazia cupom da MaxLook e da TechMax junto —
+  // e o Fiscal era o único módulo que não conhecia o conceito de filial.
   useEffect(() => {
     let active = true;
+    setLoading(true);
     const load = () =>
-      Storage.getSales()
+      Storage.getSales(filialAtiva ?? 'supermax')
         .then(s => { if (active) setSales(s.filter(x => x.status === 'completed')); })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -117,7 +123,7 @@ export default function FiscalModule() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, load)
       .subscribe();
     return () => { active = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [filialAtiva]);
 
   const persistEmitted = (set: Set<string>) => {
     localStorage.setItem(EMITTED_KEY, JSON.stringify([...set]));
@@ -279,8 +285,23 @@ export default function FiscalModule() {
         </div>
 
         <div className="neumorphic p-8 flex flex-col">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-gray-900">Documentos Fiscais</h3>
+          <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h3 className="text-lg font-bold text-gray-900">Documentos Fiscais</h3>
+              {/* De qual empresa são estas notas. Sem isto a lista não dizia a
+                  qual loja pertencia — e antes ela nem era filtrada. */}
+              {(() => {
+                const meta = FILIAL_META[filialAtiva ?? 'supermax'];
+                return (
+                  <span
+                    className="px-3 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider border-2"
+                    style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+                  >
+                    {meta.label}
+                  </span>
+                );
+              })()}
+            </div>
             <button
               onClick={emitirTodas}
               disabled={pendentesCount === 0}
