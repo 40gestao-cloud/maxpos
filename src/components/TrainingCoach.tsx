@@ -205,6 +205,19 @@ const PAGAMENTO_ERRADO: Record<string, { target: string; nome: string }> = {
   pix: { target: '[data-training-target="pix-modal"]', nome: 'PIX' },
 };
 
+// O aluno escolheu um caminho que LANCOU o pagamento e, com isso, queimou a
+// situacao que o passo queria ensinar (debito nao abre parcelas, cliente com
+// limite folgado nao gera recusa, pagar o total inteiro nao gera parcial).
+// Nao da pra esperar o estado certo: ele nao vem mais. O caminho de volta e a
+// lixeira da lista PAGAMENTOS LANCADOS, que desfaz o pagamento sem cancelar a
+// venda — a mesma acao ensinada no cenario "Corrigir pagamento errado".
+function desfazerPagamentoLancado(oQueAconteceu: string, comoRefazer: string) {
+  return {
+    target: '[data-training-target="payments-list"]',
+    message: `${oQueAconteceu}\n\nPara refazer: na lista PAGAMENTOS LANÇADOS, clique na LIXEIRA (vermelha) do pagamento. Ele sai e o TOTAL A PAGAR volta.\n\n${comoRefazer}`,
+  };
+}
+
 // Monta o `blocked` de um passo de escolha de forma de pagamento: se qualquer
 // tela de pagamento diferente da esperada estiver aberta, manda fechar.
 function telaDePagamentoErrada(esperada: 'cash' | 'card' | 'pix', comoChegar: string) {
@@ -312,6 +325,13 @@ const TRACK_CARD: Track = {
       body:
         'Use as setas ↑↓ para percorrer as opções (CRÉDITO / DÉBITO) e aperte ENTER em CRÉDITO. O crédito abre a escolha de parcela.',
       hint: 'Débito não parcela — cai direto na revisão. Vamos praticar débito na 2ª venda logo em seguida.',
+      blocked: (s) =>
+        s.paymentsCount > 0 && !s.showInstallments
+          ? desfazerPagamentoLancado(
+              'Você escolheu DÉBITO — e ele não parcela, então o pagamento entrou direto e a tela de parcelas não vai aparecer.',
+              'Depois aperte F2 de novo e escolha CRÉDITO. (O débito você pratica na 2ª venda, logo adiante.)',
+            )
+          : null,
       done: (s) => s.showInstallments,
     },
     {
@@ -382,6 +402,13 @@ const TRACK_PARTIAL: Track = {
         'No fechamento, logo acima dos botões de pagamento, tem o campo VALOR DESTA FORMA. Digite 5,00 nele. Depois F1 — o modal de dinheiro abre já com 5,00. Enter confirma. Sobra R$ 10 no TOTAL A PAGAR.',
       hint:
         'Sem valor parcial preenchido, a forma leva o RESTANTE inteiro. Com valor parcial, ela leva só o que você digitou.',
+      blocked: (s) =>
+        s.paymentsCount > 0 && s.partialPaymentsCount === 0
+          ? desfazerPagamentoLancado(
+              'O campo VALOR DESTA FORMA ficou vazio, então o dinheiro levou o TOTAL inteiro — não sobrou resto para dividir com o cartão.',
+              'Depois digite 5,00 em VALOR DESTA FORMA ANTES de apertar F1.',
+            )
+          : null,
       done: (s) => s.partialPaymentsCount > 0,
     },
     {
@@ -484,6 +511,13 @@ const TRACK_FIADO: Track = {
       body:
         'Use ↑↓ pra achar "José Fagundes" e Enter. O limite dele é R$ 5, mas a venda é R$ 20 — o sistema VAI BLOQUEAR com um alerta amarelo.',
       hint: 'Você pode filtrar digitando "josé" no campo de busca.',
+      blocked: (s) =>
+        s.paymentsCount > 0 && s.fiadoRejectionCount === 0
+          ? desfazerPagamentoLancado(
+              'Você escolheu um cliente com limite folgado — o fiado foi ACEITO. A recusa que este passo quer te mostrar não acontece mais nesta venda.',
+              'Depois volte no FIADO e escolha "José Fagundes" (limite R$ 5) para ver o sistema barrar.',
+            )
+          : null,
       done: (s) => s.fiadoRejectionCount > 0,
     },
     {
@@ -814,6 +848,17 @@ const TRACK_SECURITY: Track = {
         'Cliente pediu 30% de desconto no café. Aperte F6 (item), tecla % pra mudar pra percentual, digite 30 e Enter. Como 30% > 20% (teto do operador), o SISTEMA vai pedir PIN de supervisor.',
       hint:
         'O teto de 20% é padrão comum de supermercado — evita "quebra do troco" virando desconto agressivo sem controle. Descontos abaixo do teto passam direto, sem PIN.',
+      // Desconto abaixo do teto entra sem PIN e o passo esperaria pra sempre.
+      // Aqui não precisa desfazer nada: aplicar de novo no mesmo item SUBSTITUI
+      // o desconto anterior (applyDiscountValidated grava `discount: desc`).
+      blocked: (s) =>
+        s.itemDiscountCount > 0 && !s.supervisorAuthOpen
+          ? {
+              target: '[data-training-target="code-input"]',
+              message:
+                'O desconto entrou direto, sem pedir PIN — sinal de que ficou ABAIXO do teto de 20%. Foi isso que aconteceu.\n\nAperte F6 de novo no mesmo item, tecla % e digite 30. Passar do teto é o que faz o sistema chamar o supervisor.',
+            }
+          : null,
       done: (s) => s.supervisorAuthOpen,
     },
     {
@@ -990,6 +1035,13 @@ const TRACK_FIX_PAYMENT: Track = {
       title: 'Digite VALOR PARCIAL 5,00 e F1',
       body:
         'Cliente falou R$ 3 em dinheiro, mas você digitou 5,00 no campo VALOR PARCIAL por engano. Faça isso agora: 5,00 no parcial, F1 Enter no modal de dinheiro. Pagamento lançado errado.',
+      blocked: (s) =>
+        s.paymentsCount > 0 && s.partialPaymentsCount === 0
+          ? desfazerPagamentoLancado(
+              'O campo VALOR DESTA FORMA ficou vazio, então o dinheiro levou o TOTAL inteiro — e este cenário precisa de um pagamento PARCIAL para você depois corrigir.',
+              'Depois digite 5,00 em VALOR DESTA FORMA ANTES de apertar F1.',
+            )
+          : null,
       done: (s) => s.partialPaymentsCount > 0,
     },
     {
