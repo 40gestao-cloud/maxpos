@@ -86,10 +86,12 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
             // que identifica o sistema.
             style={{ borderColor: YELLOW }}
           >
-            {/* A placa acompanha o fundo embutido no PNG de cada logo. */}
+            {/* A placa acompanha o fundo embutido no PNG de cada logo. A moldura
+                segue o acento do tema, igual à borda do card: com `empresa.color`
+                ela saía azul no SuperMax e brigava com o amarelo em volta. */}
             <div
               className="w-32 h-32 rounded-xl p-3 border-2 flex items-center justify-center mb-4 overflow-hidden"
-              style={{ background: empresa.plate, borderColor: empresa.color }}
+              style={{ background: empresa.plate, borderColor: YELLOW }}
             >
               <img src={empresa.logo} alt={empresa.label} className="max-w-full max-h-full object-contain" draggable={false} />
             </div>
