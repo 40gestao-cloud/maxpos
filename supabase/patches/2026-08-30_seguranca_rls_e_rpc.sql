@@ -58,32 +58,65 @@ REVOKE EXECUTE ON FUNCTION public.debit_client_balance(text, numeric) FROM PUBLI
 GRANT  EXECUTE ON FUNCTION public.decrement_stock(text, integer)      TO authenticated;
 GRANT  EXECUTE ON FUNCTION public.debit_client_balance(text, numeric) TO authenticated;
 
--- ─── PARTE 3 — DELETE no historico de vendas [PENDENTE] ───
--- `sales`, `sale_items` e `sale_payments` usavam `auth_all` FOR ALL
--- (USING true), entao QUALQUER usuario logado — inclusive um
--- colaborador que no menu so enxerga o PDV — podia apagar o
--- faturamento inteiro das tres empresas pelo console do F12.
+-- ─── PARTE 3 — DELETE por cargo [PENDENTE DE APLICACAO] ───
+-- Hoje quase toda tabela de negocio usa `auth_all` (USING true), entao
+-- QUALQUER usuario logado pode apagar tudo pelo console do F12 — os
+-- cargos so existem no React (a lista `roles` do menu em App.tsx), que
+-- e enfeite: esconde o botao, mas nao impede a chamada.
 --
--- O app NUNCA deleta destas tabelas (conferido em lib/storage.ts): o
--- estorno e `reverse_sale_atomic`, que marca status='reversed'. E
--- funcoes SECURITY DEFINER nao passam por RLS. Logo, remover o DELETE
--- nao afeta nenhum fluxo existente.
---
--- Ler / inserir / atualizar seguem liberados; DELETE fica sem policy,
--- e sem policy o comando e negado.
-DROP POLICY IF EXISTS auth_all ON public.sales;
-CREATE POLICY sales_select ON public.sales FOR SELECT TO authenticated USING (true);
-CREATE POLICY sales_insert ON public.sales FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY sales_update ON public.sales FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+-- Usa policies RESTRICTIVE: elas combinam com as permissivas ja
+-- existentes por AND, entao SOMAM a regra sem remover nada. Nao mexem
+-- no `auth_all`, e reverter e so dar DROP nesta policy.
 
-DROP POLICY IF EXISTS auth_all ON public.sale_items;
-CREATE POLICY sale_items_select ON public.sale_items FOR SELECT TO authenticated USING (true);
-CREATE POLICY sale_items_insert ON public.sale_items FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY sale_items_update ON public.sale_items FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+-- Helper: o cargo de quem chama esta na lista?
+-- STABLE para avaliar uma vez por comando, nao por linha.
+-- SECURITY DEFINER para nao depender da policy de leitura de user_profiles.
+CREATE OR REPLACE FUNCTION public.tem_cargo(p_cargos text[])
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 FROM user_profiles
+     WHERE id = auth.uid() AND role = ANY(p_cargos)
+  );
+$function$;
 
-DROP POLICY IF EXISTS auth_all ON public.sale_payments;
-CREATE POLICY sale_payments_select ON public.sale_payments FOR SELECT TO authenticated USING (true);
-CREATE POLICY sale_payments_insert ON public.sale_payments FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY sale_payments_update ON public.sale_payments FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+REVOKE EXECUTE ON FUNCTION public.tem_cargo(text[]) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.tem_cargo(text[]) TO authenticated;
+
+-- 1) Historico de vendas nao se apaga pelo cliente. O app NUNCA deleta
+-- destas tabelas (conferido em lib/storage.ts): o estorno e
+-- reverse_sale_atomic, SECURITY DEFINER, que nao passa por RLS. Logo
+-- isto nao afeta nenhum fluxo existente.
+CREATE POLICY sales_sem_delete ON public.sales
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+CREATE POLICY sale_items_sem_delete ON public.sale_items
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+CREATE POLICY sale_payments_sem_delete ON public.sale_payments
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (false);
+
+-- 2) Cadastros: apagar so quem o menu ja deixa entrar em Cadastros.
+-- Mesma lista de `roles` do item 'cadastros' em App.tsx, entao nenhuma
+-- tela perde funcao — o servidor passa a cobrar o que o React ja fazia.
+CREATE POLICY products_delete_cadastro ON public.products
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_logistica','gerente_vendas','operador_geral']));
+CREATE POLICY services_delete_cadastro ON public.services
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_logistica','gerente_vendas','operador_geral']));
+CREATE POLICY categories_delete_cadastro ON public.categories
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_logistica','gerente_vendas','operador_geral']));
+CREATE POLICY suppliers_delete_cadastro ON public.suppliers
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_logistica','gerente_vendas','operador_geral']));
+CREATE POLICY clients_delete_cadastro ON public.clients
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_logistica','gerente_vendas','operador_geral']));
+
+-- 3) Contas: apagar so quem entra no Financeiro (roles do item
+-- 'financeiro' em App.tsx).
+CREATE POLICY accounts_delete_financeiro ON public.accounts
+  AS RESTRICTIVE FOR DELETE TO authenticated
+  USING (tem_cargo(ARRAY['admin','chairman','ceo','gerente_financas','colaborador_financas','operador_geral']));
 
 COMMIT;
