@@ -218,14 +218,19 @@ export const Storage = {
   },
 
   // ─── Clientes ────────────────────────────────────────────
-  getClients: async (): Promise<Client[]> => {
-    const { data, error } = await supabase.from('clients').select('*').order('name');
+  getClients: async (pdvMode?: Client['pdvMode']): Promise<Client[]> => {
+    const q = escopoFilial(supabase.from('clients').select('*'), pdvMode);
+    const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []) as Client[];
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+      ...r,
+      pdvMode: pdv_mode ?? 'supermax',
+    })) as Client[];
   },
 
   upsertClient: async (client: Client): Promise<void> => {
-    const { created_at, ...row } = client as any;
+    const { created_at, pdvMode, ...row } = client as any;
+    (row as any).pdv_mode = pdvMode ?? 'supermax';
     const { error } = await supabase.from('clients').upsert(row);
     if (error) throw error;
   },
@@ -236,14 +241,19 @@ export const Storage = {
   },
 
   // ─── Fornecedores ────────────────────────────────────────
-  getSuppliers: async (): Promise<any[]> => {
-    const { data, error } = await supabase.from('suppliers').select('*').order('name');
+  getSuppliers: async (pdvMode?: string): Promise<any[]> => {
+    const q = escopoFilial(supabase.from('suppliers').select('*'), pdvMode);
+    const { data, error } = await q.order('name');
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+      ...r,
+      pdvMode: pdv_mode ?? 'supermax',
+    }));
   },
 
   upsertSupplier: async (supplier: any): Promise<void> => {
-    const { created_at, ...row } = supplier;
+    const { created_at, pdvMode, ...row } = supplier;
+    (row as any).pdv_mode = pdvMode ?? 'supermax';
     const { error } = await supabase.from('suppliers').upsert(row);
     if (error) throw error;
   },

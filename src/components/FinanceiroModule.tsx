@@ -316,8 +316,9 @@ export default function FinanceiroModule() {
 
   const [fiadoClients, setFiadoClients] = useState<any[]>([]);
   useEffect(() => {
-    Storage.getClients().then(c => setFiadoClients(c.filter(cl => cl.balance < 0)));
-  }, []);
+    Storage.getClients(filialAtiva ?? 'supermax')
+      .then(c => setFiadoClients(c.filter(cl => cl.balance < 0)));
+  }, [filialAtiva]);
 
   // ─── render ────────────────────────────────────────────────
 

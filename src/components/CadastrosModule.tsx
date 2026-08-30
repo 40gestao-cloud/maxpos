@@ -315,9 +315,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     // cada visita, e é o que fazia o módulo abrir com lentidão perceptível.
     const load = () =>
       Promise.all([
-        Storage.getClients(),
+        Storage.getClients(nichoFilter),
         Storage.getProducts(nichoFilter),
-        Storage.getSuppliers(),
+        Storage.getSuppliers(nichoFilter),
         Storage.getServices(nichoFilter),
         Storage.getUsers(),
         Storage.getCategories(),
@@ -767,6 +767,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             type: 'PF', status: 'active', creditLimit: 0, balance: 0,
             ...formData,
             id: crypto.randomUUID(),
+            // Nasce na empresa da sessao, como produto, servico e conta.
+            pdvMode: nichoFilter,
           } as Client;
           await Storage.upsertClient(newClient);
           setClients(prev => [...prev, newClient]);
@@ -935,6 +937,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             type: 'PF',
             ...formData,
             id: 'F-' + crypto.randomUUID(),
+            pdvMode: nichoFilter,
           };
           await Storage.upsertSupplier(newSupplier);
           setSuppliers(prev => [...prev, newSupplier]);

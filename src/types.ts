@@ -118,6 +118,8 @@ export interface Client {
   complement?: string;
   state?: string;
   city?: string;
+  /** Empresa dona do cliente. Ausente = 'supermax' (linha legada). */
+  pdvMode?: PdvMode;
 }
 
 export interface Sale {
@@ -190,6 +192,8 @@ export interface Supplier {
   complement?: string;
   state?: string;
   city?: string;
+  /** Empresa dona do fornecedor. Ausente = 'supermax' (linha legada). */
+  pdvMode?: PdvMode;
 }
 
 export interface Appointment {

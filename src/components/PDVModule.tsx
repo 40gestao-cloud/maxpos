@@ -1484,6 +1484,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           status: 'active',
           creditLimit: limit,
           balance: 0,
+          // O cliente criado no caixa e da loja onde a venda esta acontecendo.
+          pdvMode,
         };
         try {
           if (!runsLocalOnly) await Storage.upsertClient(novo);
@@ -1722,12 +1724,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // TRAINING_CLIENTS, e com a venda passando a gravar isso lançaria fiado
     // no id de um cliente que não existe em `clients` — o débito de saldo
     // viraria no-op silencioso.
-    Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {});
+    Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
 
     const ch = supabase.channel(`pdv-products-${pdvMode}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' },
-        () => { Storage.getClients().then(c => { if (active) setClients(c); }).catch(() => {}); })
+        () => { Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {}); })
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
