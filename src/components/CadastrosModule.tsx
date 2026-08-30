@@ -318,7 +318,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         Storage.getClients(),
         Storage.getProducts(nichoFilter),
         Storage.getSuppliers(),
-        Storage.getServices(),
+        Storage.getServices(nichoFilter),
         Storage.getUsers(),
         Storage.getCategories(),
       ])
@@ -975,13 +975,19 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       const original = categories.find(c => c.id === catForm.id);
       if (original && original.name !== nome) {
         // Renomear arrasta os produtos junto — ver Storage.renameCategory.
-        await Storage.renameCategory(catForm.id, original.name, nome);
+        // O pdvMode é obrigatório aqui: sem ele o rename atravessava as
+        // empresas, porque o mesmo nome de categoria existe nas três.
+        await Storage.renameCategory(
+          catForm.id, original.name, nome, (catForm.pdvMode ?? nichoFilter) as any);
         await Storage.upsertCategory({ ...catForm, name: nome });
       } else {
         await Storage.upsertCategory({ ...catForm, name: nome });
       }
       setCategories(await Storage.getCategories());
-      setProducts(await Storage.getProducts());
+      // Escopado como a carga inicial: sem o nicho, renomear uma categoria
+      // repovoava o estado com o catálogo das três empresas (e as imagens).
+      setProducts(await Storage.getProducts(nichoFilter));
+      setServices(await Storage.getServices(nichoFilter));
       setCatForm(null);
     } catch (err: any) {
       showAlert('Erro ao salvar categoria: ' + (err?.message ?? err));
@@ -993,7 +999,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const excluirCategoria = async (c: Category) => {
     // Categoria em uso não some sem aviso: apagar deixaria os produtos
     // apontando pra um nome que não existe mais no cadastro.
-    const emUso = await Storage.countCategoryUsage(c.name);
+    const emUso = await Storage.countCategoryUsage(
+      c.name, (c.pdvMode ?? nichoFilter) as any);
     if (emUso > 0) {
       showAlert(`"${c.name}" está em uso por ${emUso} item(ns). Renomeie ou troque a categoria desses itens antes de excluir.`);
       return;
@@ -1539,7 +1546,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       </div>
 
       {showAddUser && subTab === 'equipe' && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2">
@@ -1611,7 +1618,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       )}
 
       {showAddClient && subTab === 'clientes' && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
@@ -1863,7 +1870,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         const setAtributo = (key: string, valor: string) =>
           setFormData({ ...formData, atributos: { ...(formData.atributos ?? {}), [key]: valor } });
         return (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
             <div className="flex items-center gap-3 flex-wrap">
@@ -2326,7 +2333,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       })()}
 
       {showAddService && subTab === 'servicos' && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
@@ -2436,7 +2443,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       )}
 
       {showAddSupplier && subTab === 'fornecedores' && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
@@ -2761,7 +2768,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         
         {/* Barcode Modal */}
         {barcodeModal.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:p-0">
+          <div className="fixed inset-0 min-h-screen z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:p-0">
             <div className="bg-white max-w-md w-full border-2 border-gray-300 shadow-2xl relative print:shadow-none print:border-0 print:m-0">
               {/* Header navy */}
               <div className="px-5 py-3 flex items-center justify-between text-white print:hidden" style={{ background: 'var(--navy)' }}>
@@ -2861,7 +2868,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
         {/* Stock Adjustment Modal */}
         {stockModal.isOpen && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="fixed inset-0 min-h-screen z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="neumorphic w-full max-w-lg bg-card overflow-hidden animate-in zoom-in duration-300 rounded-xl">
               <div className="bg-[#124163] p-4 text-center">
                  <h3 className="text-white font-black uppercase tracking-widest text-xl">EDITAR ESTOQUE</h3>
@@ -2918,7 +2925,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
         {/* Delete Confirmation Modal */}
         {deleteConfirm && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
             <div className="neumorphic p-10 max-w-sm w-full space-y-8 text-center animate-in zoom-in duration-300">
               <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]">
                 <Trash2 size={40} />
@@ -2953,7 +2960,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
         {/* View Details Modal */}
         {viewingDetails && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
             <div className="neumorphic p-8 max-w-2xl w-full space-y-8 relative animate-in zoom-in duration-300 bg-card">
               <button 
                 onClick={() => setViewingDetails(null)}

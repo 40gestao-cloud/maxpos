@@ -1,6 +1,23 @@
 import { supabase } from './supabase';
 import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
 
+/**
+ * Restringe uma query à empresa informada. Sem `pdvMode` a query passa
+ * intacta (leituras que realmente valem para as três, como a lista de
+ * categorias, que o cliente filtra depois).
+ *
+ * A régua do 'supermax' inclui `pdv_mode IS NULL`: linha legada, gravada
+ * antes da coluna existir, pertence ao supermercado — é a mesma conta que
+ * `getProducts` faz, e as duas precisam concordar, senão um produto antigo
+ * aparece numa tela e some na outra.
+ */
+const escopoFilial = <T>(q: T, pdvMode?: string | null): T => {
+  if (!pdvMode) return q;
+  return (pdvMode === 'supermax'
+    ? (q as any).or('pdv_mode.eq.supermax,pdv_mode.is.null')
+    : (q as any).eq('pdv_mode', pdvMode)) as T;
+};
+
 // Uma linha de `sales` (com sale_items/sale_payments embutidos) virando Sale.
 // Três leituras diferentes montavam este objeto na mão e já divergiam entre si
 // — a de reimpressão trazia discount/cpfCnpjNota, getSales não. Com os campos
@@ -58,13 +75,7 @@ export const Storage = {
   // então o tráfego acontecia inteiro antes de ser descartado.
   // Sem argumento, continua trazendo tudo — é o que Cadastros e Estoque querem.
   getProducts: async (pdvMode?: Product['pdvMode']): Promise<Product[]> => {
-    let q = supabase.from('products').select('*');
-    if (pdvMode) {
-      // Linha legada sem pdv_mode conta como supermax (mesma régua do map abaixo).
-      q = pdvMode === 'supermax'
-        ? q.or('pdv_mode.eq.supermax,pdv_mode.is.null')
-        : q.eq('pdv_mode', pdvMode);
-    }
+    const q = escopoFilial(supabase.from('products').select('*'), pdvMode);
     const { data, error } = await q.order('name');
     if (error) throw error;
     // `pdv_mode` sai da linha crua: quem edita um produto joga essa linha
@@ -155,22 +166,41 @@ export const Storage = {
    * Renomeia a categoria E arrasta os produtos/serviços que apontavam pro
    * nome antigo. Sem isso o cadastro passaria a dizer "Mercearia" enquanto
    * os produtos continuariam com "Comidas" — a tela e o dado divergindo.
+   *
+   * `pdvMode` NÃO é opcional na prática: o índice `categories_nome_modo_uniq`
+   * é sobre (nome, pdv_mode), então "Bebidas" existe simultaneamente nas três
+   * empresas. Sem o escopo, renomear "Bebidas" no SuperMax reescrevia a
+   * categoria de todo produto e serviço chamado "Bebidas" na MaxLook e na
+   * TechMax — corrupção silenciosa do dado de outra empresa.
    */
-  renameCategory: async (id: string, nomeAntigo: string, nomeNovo: string): Promise<void> => {
+  renameCategory: async (
+    id: string,
+    nomeAntigo: string,
+    nomeNovo: string,
+    pdvMode?: Product['pdvMode'],
+  ): Promise<void> => {
     const novo = nomeNovo.trim();
     const { error } = await supabase.from('categories').update({ name: novo }).eq('id', id);
     if (error) throw error;
     if (nomeAntigo && nomeAntigo !== novo) {
-      await supabase.from('products').update({ category: novo }).eq('category', nomeAntigo);
-      await supabase.from('services').update({ category: novo }).eq('category', nomeAntigo);
+      await escopoFilial(
+        supabase.from('products').update({ category: novo }).eq('category', nomeAntigo), pdvMode);
+      await escopoFilial(
+        supabase.from('services').update({ category: novo }).eq('category', nomeAntigo), pdvMode);
     }
   },
 
-  /** Quantos produtos/serviços usam este nome de categoria. */
-  countCategoryUsage: async (nome: string): Promise<number> => {
+  /**
+   * Quantos produtos/serviços usam este nome de categoria NESTA empresa.
+   * Sem o escopo, excluir "Bebidas" na TechMax era barrado porque o SuperMax
+   * tinha uma categoria de mesmo nome em uso.
+   */
+  countCategoryUsage: async (nome: string, pdvMode?: Product['pdvMode']): Promise<number> => {
     const [p, s] = await Promise.all([
-      supabase.from('products').select('id', { count: 'exact', head: true }).eq('category', nome),
-      supabase.from('services').select('id', { count: 'exact', head: true }).eq('category', nome),
+      escopoFilial(
+        supabase.from('products').select('id', { count: 'exact', head: true }).eq('category', nome), pdvMode),
+      escopoFilial(
+        supabase.from('services').select('id', { count: 'exact', head: true }).eq('category', nome), pdvMode),
     ]);
     return (p.count ?? 0) + (s.count ?? 0);
   },
@@ -225,12 +255,15 @@ export const Storage = {
 
   // ─── Serviços ────────────────────────────────────────────
   // Mesmo mapeamento pdv_mode <-> pdvMode que products.
-  getServices: async (): Promise<Service[]> => {
-    const { data, error } = await supabase.from('services').select('*').order('name');
+  // Mesmo escopo por empresa de getProducts. Sem ele, o contador de uso das
+  // categorias somava os serviços das três lojas.
+  getServices: async (pdvMode?: Service['pdvMode']): Promise<Service[]> => {
+    const q = escopoFilial(supabase.from('services').select('*'), pdvMode);
+    const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []).map((r: any) => ({
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
-      pdvMode: r.pdv_mode ?? 'supermax',
+      pdvMode: pdv_mode ?? 'supermax',
     })) as Service[];
   },
 
