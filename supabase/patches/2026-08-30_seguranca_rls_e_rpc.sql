@@ -5,11 +5,10 @@
 -- Auditoria de seguranca do frontend (o que da pra fazer pelo F12
 -- com a chave publicavel, que esta no bundle JS e e visivel).
 --
--- As PARTES 1 e 2 JA FORAM APLICADAS em producao (migrations
--- `seguranca_fecha_anon_credit_installments_e_rpcs`). Ficam aqui
--- para o historico do repo e para recriar o banco do zero.
---
--- A PARTE 3 esta PENDENTE de aplicacao.
+-- AS TRES PARTES JA FORAM APLICADAS em producao. Ficam aqui para o
+-- historico do repo e para recriar o banco do zero:
+--   Partes 1 e 2 — migration `seguranca_fecha_anon_credit_installments_e_rpcs`
+--   Parte 3      — migration `seguranca_delete_por_cargo_restrictive`
 -- ============================================================
 
 BEGIN;
@@ -58,7 +57,12 @@ REVOKE EXECUTE ON FUNCTION public.debit_client_balance(text, numeric) FROM PUBLI
 GRANT  EXECUTE ON FUNCTION public.decrement_stock(text, integer)      TO authenticated;
 GRANT  EXECUTE ON FUNCTION public.debit_client_balance(text, numeric) TO authenticated;
 
--- ─── PARTE 3 — DELETE por cargo [PENDENTE DE APLICACAO] ───
+-- ─── PARTE 3 — DELETE por cargo [APLICADO] ───
+-- Aplicado em 2026-08-30 (migration
+-- `seguranca_delete_por_cargo_restrictive`). Verificado simulando a
+-- sessao de um usuario ADMIN — o cargo mais alto — via
+-- `set role authenticated` + claims: o DELETE em `sales` devolveu 0
+-- linhas e o UPDATE para status='reversed' seguiu funcionando.
 -- Hoje quase toda tabela de negocio usa `auth_all` (USING true), entao
 -- QUALQUER usuario logado pode apagar tudo pelo console do F12 — os
 -- cargos so existem no React (a lista `roles` do menu em App.tsx), que
