@@ -76,6 +76,14 @@ function AppInterno() {
   }, [activeTab]);
   // Se o operador navegar para fora do PDV com o treinamento ativo, desliga.
   useEffect(() => { if (!isPdvTab && pdvTraining) setPdvTraining(false); }, [isPdvTab, pdvTraining]);
+  // Treinamento e SO do SuperMax: os 16 cenarios sao escritos em cima do
+  // layout de supermercado (F1/F2/F3, tela separada de fechamento). MaxLook e
+  // TechMax usam o layout de nicho, onde esses passos nao existem — o coach
+  // mandaria apertar teclas que nao levam a lugar nenhum. Trocar de empresa
+  // no meio do treino tambem desliga.
+  useEffect(() => {
+    if (pdvTraining && filialAtiva !== 'supermax') setPdvTraining(false);
+  }, [filialAtiva, pdvTraining]);
 
   useEffect(() => {
     let alive = true;
@@ -427,7 +435,13 @@ function AppInterno() {
               {activeTab === 'inicio' && (
                 <InicioModule
                   currentUser={user}
-                  onStartTraining={() => { setPdvTraining(true); setActiveTab('pdv'); setIsSidebarOpen(false); }}
+                  // Sem a prop, o InicioModule nao desenha o botao — e assim
+                  // MaxLook e TechMax nao tem nenhuma porta de entrada.
+                  onStartTraining={
+                    filialAtiva === 'supermax'
+                      ? () => { setPdvTraining(true); setActiveTab('pdv'); setIsSidebarOpen(false); }
+                      : undefined
+                  }
                 />
               )}
               {/* key pela EMPRESA: trocar de empresa tem de zerar carrinho e
@@ -445,7 +459,7 @@ function AppInterno() {
                     setActiveTab('inicio');
                     setIsSidebarOpen(false);
                   }}
-                  isTraining={pdvTraining}
+                  isTraining={pdvTraining && filialAtiva === 'supermax'}
                   onExitTraining={() => {
                     setPdvTraining(false);
                     setActiveTab('inicio');
