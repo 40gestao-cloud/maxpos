@@ -64,7 +64,10 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
               className="text-3xl font-black tracking-tight"
               style={{ color: NAVY_DARK, letterSpacing: '-0.02em' }}
             >
-              Max<span style={{ color: YELLOW_DARK }}>POS</span>
+              {/* O POS sai no amarelo da logo (var(--accent) = #FFC107 no
+                  SuperMax). O dourado escuro que estava aqui e a cor de
+                  BORDA do tema, nao a da marca. */}
+              Max<span style={{ color: YELLOW }}>POS</span>
             </h2>
             <p className="mt-1 text-[11px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.6 }}>
               ERP · PDV · GESTÃO
@@ -78,7 +81,10 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
           {/* Empresa ativa */}
           <div
             className="border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm bg-white"
-            style={{ borderColor: empresa.dark }}
+            // Borda no acento do tema, nao em `empresa.dark`: no SuperMax o
+            // dark e o azul da logo e o card saia azul, destoando do amarelo
+            // que identifica o sistema.
+            style={{ borderColor: YELLOW }}
           >
             {/* A placa acompanha o fundo embutido no PNG de cada logo. */}
             <div

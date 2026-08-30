@@ -1707,8 +1707,14 @@ function ScenarioMenu({
   // A lista rola dentro do card (o card não cresce além da tela). Sem isto o
   // item focado pelas setas podia ficar fora da área visível.
   const listaRef = useRef<HTMLDivElement | null>(null);
+  // ...mas SÓ quando o foco veio do teclado. Cada card tem onMouseEnter que
+  // muda o foco, então rolar em toda mudança fazia a lista andar sozinha sob o
+  // cursor — o mouse parado sobre um card ja bastava pra puxar a rolagem.
+  const focoPorTecladoRef = useRef(false);
 
   useEffect(() => {
+    if (!focoPorTecladoRef.current) return;
+    focoPorTecladoRef.current = false;
     const alvo = listaRef.current?.children[focusedIdx] as HTMLElement | undefined;
     alvo?.scrollIntoView({ block: 'nearest' });
   }, [focusedIdx]);
@@ -1717,9 +1723,11 @@ function ScenarioMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault(); e.stopPropagation();
+        focoPorTecladoRef.current = true;
         setFocusedIdx(i => (i + 1) % ALL_SCENARIOS.length);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault(); e.stopPropagation();
+        focoPorTecladoRef.current = true;
         setFocusedIdx(i => (i - 1 + ALL_SCENARIOS.length) % ALL_SCENARIOS.length);
       } else if (e.key === 'Enter') {
         e.preventDefault(); e.stopPropagation();
