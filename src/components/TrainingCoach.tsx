@@ -102,6 +102,12 @@ type Step = {
   // Usado quando um passo depende de estado transitório (ex.: confirmDialog
   // aberto) e o operador pode fechar por engano — sem isso o passo fica travado.
   rewind?: (s: CoachPDVState, prev: CoachPDVState | null) => boolean;
+  // O aluno abriu a tela ERRADA e o passo não tem como avançar até ele voltar.
+  // Devolve o alvo do holofote (a tela que ele abriu sem querer) e o texto que
+  // explica como sair. Sem isto o coach seguia repetindo a instrução original
+  // enquanto o modal errado cobria a tela — e o holofote, apontado para um
+  // botão agora escondido, virava um retângulo solto no meio da tela.
+  blocked?: (s: CoachPDVState) => { target: string; message: string } | null;
 };
 
 type Track = {
@@ -130,6 +136,18 @@ const reviewSaleStep: Step = {
     'Uma janela verde apareceu pedindo REVISÃO da venda: mostra o total e o valor recebido. É a última chance de perceber um erro.\n\nO botão CONFIRMAR VENDA já vem destacado (o sistema entende que você quer fechar). Aperte ENTER para confirmar.',
   hint:
     'Se algo estiver errado: Tab (ou seta ←) foca em VOLTAR, Enter volta. Nunca aperte Enter no "reflexo" sem olhar — é assim que se fecha venda torta.',
+  // A propria dica acima ensina a apertar VOLTAR — e ao voltar o dialogo some
+  // e este passo ficava esperando um recibo que nao vinha mais. Rewind nao
+  // resolve (o pagamento ja esta lancado, o passo anterior nao se repete):
+  // o caminho e reabrir a confirmacao pelo botao de fechar a venda.
+  blocked: (s) =>
+    s.checkoutMode && s.paymentsCount > 0 && s.confirmDialog === null && s.postSaleReceipt === null
+      ? {
+          target: '[data-action="confirm-sale"]',
+          message:
+            'Você voltou da confirmação — tudo bem, nada se perdeu: os pagamentos continuam lançados.\n\nQuando quiser fechar, aperte Enter (ou clique em FECHAR VENDA) para a janela de revisão aparecer de novo.',
+        }
+      : null,
   done: (s) => s.postSaleReceipt !== null,
 };
 
@@ -141,6 +159,17 @@ const receiptStep: Step = {
   body:
     'Toda venda gera um comprovante — o cupom. Ele lista os itens, formas de pagamento e valores. Você tem 2 opções agora:\n\n• Aperte P para baixar o cupom em PDF (backup em disco).\n• Aperte Enter para continuar sem baixar.\n\nNo balcão real, a impressora térmica imprime sozinha em paralelo.',
   hint: 'Uma cópia física do cupom evita discussões — quando o cliente pergunta o preço de um item horas depois, você tem a resposta.',
+  // Quando sobrou troco, a tela grande de troco vem ANTES do cupom. Sem isto o
+  // balão já falava do cupom ("aperte P") enquanto o aluno ainda olhava o
+  // troco — e o holofote, sem cupom na tela pra iluminar, apagava a tela toda.
+  blocked: (s) =>
+    s.changeModal !== null
+      ? {
+          target: '[data-training-target="change-modal"]',
+          message:
+            'Antes do cupom: esta venda deixou TROCO. Conte o dinheiro, devolva ao cliente e aperte Enter.\n\nO cupom aparece logo em seguida.',
+        }
+      : null,
   done: (s) => s.thankYouOpen,
 };
 
@@ -165,6 +194,36 @@ const goCheckout: Step = {
     'Curiosidade: F5 também vai pro checkout, mas já solta o foco no botão DESCONTO — atalho pra "cliente pediu quebra, vou pra checkout já mirando o desconto".',
   done: (s) => s.checkoutMode,
 };
+
+// Telas que o aluno abre por engano quando erra a tecla de forma de pagamento.
+// F1/F2/F3 sao vizinhas: trocar a tecla e o erro comum, nao a excecao. Sem isto
+// o passo ficava esperando um modal que nao vinha, com o holofote apontado pra
+// um botao ja coberto pelo modal errado.
+const PAGAMENTO_ERRADO: Record<string, { target: string; nome: string }> = {
+  cash: { target: '[data-training-target="cash-modal"]', nome: 'DINHEIRO' },
+  card: { target: '[data-training-target="installments-modal"]', nome: 'CARTÃO' },
+  pix: { target: '[data-training-target="pix-modal"]', nome: 'PIX' },
+};
+
+// Monta o `blocked` de um passo de escolha de forma de pagamento: se qualquer
+// tela de pagamento diferente da esperada estiver aberta, manda fechar.
+function telaDePagamentoErrada(esperada: 'cash' | 'card' | 'pix', comoChegar: string) {
+  return (s: CoachPDVState) => {
+    const abertas: Array<'cash' | 'card' | 'pix'> = [];
+    if (s.cashModalOpen) abertas.push('cash');
+    if (s.cardPickerOpen || s.showInstallments) abertas.push('card');
+    if (s.pixModalOpen) abertas.push('pix');
+    const errada = abertas.find(a => a !== esperada);
+    if (!errada) return null;
+    const info = PAGAMENTO_ERRADO[errada];
+    return {
+      target: info.target,
+      message: `Esta é a tela do ${info.nome} — não era essa. Aperte Esc para fechar.
+
+${comoChegar}`,
+    };
+  };
+}
 
 const TRACK_CASH_BASIC: Track = {
   id: 'cash-basic',
@@ -201,6 +260,7 @@ const TRACK_CASH_BASIC: Track = {
       title: 'Aperte F1 — Dinheiro',
       body:
         'No fechamento você escolhe COMO o cliente vai pagar. As teclas F1/F2/F3 são atalhos:\n\n• F1 = Dinheiro (abre um cálculo de troco)\n• F2 = Cartão (crédito ou débito)\n• F3 = PIX ou Vale-Alimentação\n\nAperte F1 agora.',
+      blocked: telaDePagamentoErrada('cash', 'Depois aperte F1 para abrir o DINHEIRO.'),
       done: (s) => s.cashModalOpen,
     },
     {
@@ -210,6 +270,8 @@ const TRACK_CASH_BASIC: Track = {
       body:
         'Digite QUANTO o cliente entregou (ex.: se o total é R$ 4 e ele deu uma nota de R$ 20, digite "20"). O sistema calcula o TROCO automaticamente. Aperte ENTER para confirmar.',
       hint: 'Se o cliente der o valor EXATO, o sistema já traz esse valor preenchido — só apertar Enter.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.cashModalOpen && !s.cashModalOpen && s.paymentsCount === prev.paymentsCount,
       done: (s) => s.paymentsCount > 0,
     },
     reviewSaleStep,
@@ -240,6 +302,7 @@ const TRACK_CARD: Track = {
       title: 'Aperte F2 — Cartão',
       body:
         'F2 é o atalho para PAGAMENTO EM CARTÃO. Aperte F2 agora — um pequeno menu vai aparecer perguntando se é CRÉDITO ou DÉBITO.',
+      blocked: telaDePagamentoErrada('card', 'Depois aperte F2 para abrir o menu CRÉDITO / DÉBITO.'),
       done: (s) => s.cardPickerOpen,
     },
     {
@@ -258,6 +321,8 @@ const TRACK_CARD: Track = {
       body:
         'Cliente pediu para parcelar em 3x? Você tem 3 formas de escolher:\n\n• Digite o número (ex.: "3" — atalho de 1 tecla)\n• Use ↑↓ ← → e ENTER\n• Clique com o mouse\n\nEscolha o parcelamento agora.',
       hint: 'Cada opção mostra o valor de CADA parcela ao lado (ex.: 3x R$ 4,00).',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.showInstallments && !s.showInstallments && s.paymentsCount === prev.paymentsCount,
       done: (s) => s.paymentsCount > 0,
     },
     reviewSaleStep,
@@ -349,6 +414,7 @@ const TRACK_PIX: Track = {
       title: 'Aperte F3 — PIX/Vale',
       body:
         'F3 é o atalho para PAGAMENTOS DIGITAIS: PIX ou Vale-Alimentação. Aperte F3 agora — vai aparecer um menu com as duas opções.',
+      blocked: telaDePagamentoErrada('pix', 'Depois aperte F3 para abrir o menu PIX / VALE.'),
       done: (s) => s.valePickerOpen,
     },
     {
@@ -357,6 +423,7 @@ const TRACK_PIX: Track = {
       title: 'Escolha PIX',
       body:
         'Use ↑↓ e ENTER em PIX. Um QR Code enorme aparece na tela. O cliente aponta a câmera do celular (app do banco) para o QR e confirma o pagamento no celular.',
+      blocked: telaDePagamentoErrada('pix', 'Depois aperte F3 e escolha PIX com as setas e Enter.'),
       done: (s) => s.pixModalOpen,
     },
     {
@@ -365,6 +432,8 @@ const TRACK_PIX: Track = {
       title: 'Aguardar confirmação',
       body:
         'No supermercado real: assim que o cliente paga no celular, o MaxBank avisa o PDV e a venda finaliza sozinha.\n\nAqui no treinamento: aperte ENTER (ou clique PAGAMENTO RECEBIDO) para simular a confirmação do MaxBank.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.pixModalOpen && !s.pixModalOpen && s.paymentsCount === prev.paymentsCount,
       done: (s) => s.paymentsCount > 0,
     },
     reviewSaleStep,
@@ -396,6 +465,17 @@ const TRACK_FIADO: Track = {
       body:
         'Duas formas de chegar no fiado — escolha a mais rápida:\n\n• Rápido (recomendado): F3 abre o picker PIX/VALE/FIADO, ↓↓ desce até FIADO, Enter.\n• Manual: Tab (ou setas ← →) até o botão FIADO ficar destacado, Enter.\n\nUma lista de clientes vai aparecer.',
       done: (s) => s.showClientPicker,
+      // Andar de Tab entre as formas de pagamento passa por DINHEIRO, CARTÃO e
+      // PIX antes do FIADO — um Enter adiantado abre a tela errada e o passo
+      // ficava esperando por uma lista de clientes que não vinha.
+      blocked: (s) =>
+        s.cashModalOpen
+          ? { target: '[data-training-target="cash-modal"]', message: 'Esta é a tela do DINHEIRO. Esc para fechar e volte até o botão FIADO — ou use F3 e desça até FIADO.' }
+          : s.cardPickerOpen || s.showInstallments
+            ? { target: '[data-training-target="installments-modal"]', message: 'Você caiu no CARTÃO. Esc para fechar e volte até o botão FIADO — ou use F3 e desça até FIADO.' }
+            : s.pixModalOpen
+              ? { target: '[data-training-target="pix-modal"]', message: 'Este é o PIX. Esc para fechar e escolha FIADO — pelo F3, é o terceiro da lista (↓↓).' }
+              : null,
     },
     {
       id: 'pick-jose-fagundes',
@@ -541,6 +621,8 @@ const TRACK_DISCOUNT: Track = {
       hint: 'Prefere valor em reais? Não troque — só digite 2,00 e Enter para tirar exatos R$ 2 (o modo padrão é R$).',
       // Só avança se o modal fechou E o desconto foi realmente aplicado
       // (Esc/CANCELAR fecha o modal mas não incrementa itemDiscountCount).
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.itemDiscountCount === prev.itemDiscountCount,
       done: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.itemDiscountCount > prev.itemDiscountCount,
     },
     {
@@ -565,6 +647,8 @@ const TRACK_DISCOUNT: Track = {
       title: 'Digite R$ 0,80 de desconto',
       body: 'Deixe em "R$ (Reais)", digite 0,80 e Enter. O total cai.',
       hint: 'O sistema não deixa você aplicar desconto MAIOR que o valor — evita venda com total negativo.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.saleDiscount === prev.saleDiscount,
       done: (s, prev) => prev !== null && prev.discountModal !== null && s.discountModal === null && s.saleDiscount > 0,
     },
     {
@@ -627,6 +711,8 @@ const TRACK_QUICK_CLIENT: Track = {
       target: '[data-training-target="supervisor-modal"]',
       title: 'PIN 1234 → Enter',
       body: 'Digite "1234" e Enter. Cliente cadastrado; volta pro picker.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.quickClientsCount === prev.quickClientsCount,
       done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.quickClientsCount > 0,
     },
     {
@@ -735,6 +821,8 @@ const TRACK_SECURITY: Track = {
       target: '[data-training-target="supervisor-modal"]',
       title: 'Autorize com o PIN 1234',
       body: 'Digite "1234" e Enter. O desconto é gravado e o modal de desconto fecha.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.itemDiscountCount === prev.itemDiscountCount,
       done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.itemDiscountCount > 0,
     },
     { ...goCheckout, id: 'go-checkout-security' },
@@ -810,6 +898,8 @@ const TRACK_REVERSAL: Track = {
       title: 'PIN 1234 → Enter',
       body:
         'Digite "1234" e Enter. A venda some do histórico do turno — se você fechar o caixa agora, o total esperado NÃO inclui esses R$ 3.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.reversalsCount === prev.reversalsCount,
       done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.reversalsCount > 0,
     },
   ],
@@ -976,6 +1066,8 @@ const TRACK_SWAP_OPERATOR: Track = {
       title: 'PIN 1234 → Enter',
       body:
         'Digite "1234" e Enter. A tela recarrega com a Júlia como operadora ativa. Se você olhar no topo do PDV, o nome ao lado de "OP:" mudou.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.operatorSwapsCount === prev.operatorSwapsCount,
       done: (s, prev) => prev !== null && prev.supervisorAuthOpen && !s.supervisorAuthOpen && s.operatorSwapsCount > 0,
     },
   ],
@@ -1049,6 +1141,20 @@ const TRACK_EXTRAS: Track = {
       body:
         'Cliente pediu CPF na nota para participar de sorteios/programas fiscais? No fechamento, os botões extras ficam logo abaixo das formas de pagamento.\n\n1. Aperte F5 — o foco cai no primeiro botão, DESCONTO (é aqui que o spotlight está agora).\n2. Aperte Tab uma vez — passa para CPF NA NOTA.\n3. Aperte Enter — abre o modal.\n\nFaça a sequência agora.',
       done: (s) => s.cpfModalOpen,
+      blocked: (s) =>
+        s.discountModal !== null
+          ? {
+              target: '[data-training-target="discount-modal"]',
+              message:
+                'Quase! Você apertou Enter ainda no DESCONTO — por isso abriu esta tela, e não a do CPF.\n\nAperte Esc para fechar. Depois refaça na ordem: F5 (foco no DESCONTO) → Tab (anda até CPF NA NOTA) → Enter.',
+            }
+          : s.showClientPicker
+            ? {
+                target: '[data-training-target="client-picker"]',
+                message:
+                  'Você passou um Tab a mais e caiu no CLIENTE. Aperte Esc para fechar e refaça: F5 → Tab UMA vez → Enter.',
+              }
+            : null,
     },
     {
       id: 'fill-cpf',
@@ -1068,6 +1174,20 @@ const TRACK_EXTRAS: Track = {
       hint:
         'Diferença crítica: FIADO vincula cliente E lança pagamento em nome dele (vira dívida). CLIENTE só marca a venda pro cadastro (fidelidade/pontos) — o pagamento é normal.',
       done: (s) => s.hasLinkedClient,
+      blocked: (s) =>
+        s.discountModal !== null
+          ? {
+              target: '[data-training-target="discount-modal"]',
+              message:
+                'Esta é a tela de DESCONTO — faltou andar com o Tab antes do Enter.\n\nEsc para fechar e refaça: F5 → Tab → Tab → Enter.',
+            }
+          : s.cpfModalOpen
+            ? {
+                target: '[data-training-target="cpf-modal"]',
+                message:
+                  'Este é o CPF NA NOTA — falta UM Tab para chegar no CLIENTE.\n\nEsc para fechar e refaça: F5 → Tab → Tab → Enter.',
+              }
+            : null,
     },
     {
       id: 'finish-cash-extras',
@@ -1100,6 +1220,8 @@ const TRACK_CASH_MGMT: Track = {
       target: '[data-training-target="suprimento-modal"]',
       title: 'Preencha e confirme',
       body: 'Digite um valor qualquer (ex.: R$ 30,00), Tab, digite um motivo curto (ex.: "reforço de troco") e aperte ENTER.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.supModal && !s.supModal && s.cashMovementsCount === prev.cashMovementsCount,
       done: (s, prev) => prev !== null && prev.supModal && !s.supModal && s.cashMovementsCount > prev.cashMovementsCount,
     },
     {
@@ -1114,6 +1236,8 @@ const TRACK_CASH_MGMT: Track = {
       target: '[data-training-target="sangria-modal"]',
       title: 'Preencha e confirme',
       body: 'Mesmo esquema: valor, Tab, motivo (ex.: "levado ao cofre"), ENTER.',
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
+      rewind: (s, prev) => prev !== null && prev.sangriaModal && !s.sangriaModal && s.cashMovementsCount === prev.cashMovementsCount,
       done: (s, prev) => prev !== null && prev.sangriaModal && !s.sangriaModal && s.cashMovementsCount > prev.cashMovementsCount,
     },
     {
@@ -1265,7 +1389,10 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
   // faz JSON.stringify do carrinho a cada teclada — desperdício. O hook já ouve
   // resize+scroll+MutationObserver-like via polling, então state em si não
   // precisa entrar.
-  const targetRect = useTargetRect(step?.target ?? null, [stepIdx, scenarioId]);
+  // Passo travado por tela errada: o holofote passa a apontar pra tela que o
+  // aluno abriu sem querer, e o balão explica como voltar.
+  const bloqueio = step?.blocked ? step.blocked(state) : null;
+  const targetRect = useTargetRect(bloqueio?.target ?? step?.target ?? null, [stepIdx, scenarioId, !!bloqueio]);
   const preludeRect = useTargetRect(
     (!track && !state.cashSession) ? '[data-training-target="open-cash-modal"]' : null,
     [!!state.cashSession]
@@ -1408,11 +1535,19 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
             </button>
           </div>
           <div className="p-4 space-y-2">
-            <p className="text-sm text-gray-800 leading-relaxed">{step.body}</p>
-            {step.hint && (
-              <p className="text-[11px] text-gray-500 italic border-l-2 pl-2" style={{ borderColor: YELLOW_DARK }}>
-                {step.hint}
+            {bloqueio ? (
+              <p className="text-sm font-bold leading-relaxed whitespace-pre-line" style={{ color: '#b45309' }}>
+                {bloqueio.message}
               </p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-800 leading-relaxed">{step.body}</p>
+                {step.hint && (
+                  <p className="text-[11px] text-gray-500 italic border-l-2 pl-2" style={{ borderColor: YELLOW_DARK }}>
+                    {step.hint}
+                  </p>
+                )}
+              </>
             )}
             <div className="pt-1 flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
@@ -1517,6 +1652,14 @@ function ScenarioMenu({
     const first = ALL_SCENARIOS.findIndex(id => !completedSet.has(id));
     return first === -1 ? 0 : first;
   });
+  // A lista rola dentro do card (o card não cresce além da tela). Sem isto o
+  // item focado pelas setas podia ficar fora da área visível.
+  const listaRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const alvo = listaRef.current?.children[focusedIdx] as HTMLElement | undefined;
+    alvo?.scrollIntoView({ block: 'nearest' });
+  }, [focusedIdx]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1540,11 +1683,18 @@ function ScenarioMenu({
 
   return (
     <div
-      className="fixed inset-0 z-[500] flex items-center justify-center p-6 overflow-y-auto"
+      className="fixed inset-0 z-[500] flex items-center justify-center p-6"
       style={{ background: 'rgba(15,23,42,0.85)', fontFamily: 'Arial, Helvetica, sans-serif' }}
     >
-      <div className="w-full max-w-3xl bg-white border-4 shadow-2xl rounded-lg overflow-hidden my-6" style={{ borderColor: YELLOW_DARK }}>
-        <div className="px-5 py-4 flex items-center gap-3" style={{ background: YELLOW }}>
+      {/* O card não passa da altura da tela: cabeçalho e rodapé ficam fixos e
+          SÓ a lista rola. Antes o card crescia com os 16 cenários e o overlay
+          é que rolava — em tela de 1080 ou menos o topo saía do campo de
+          visão e só dava pra ler tudo diminuindo o zoom do navegador. */}
+      <div
+        className="w-full max-w-3xl bg-white border-4 shadow-2xl rounded-lg overflow-hidden flex flex-col"
+        style={{ borderColor: YELLOW_DARK, maxHeight: 'calc(100vh - 3rem)' }}
+      >
+        <div className="px-5 py-4 flex items-center gap-3 shrink-0" style={{ background: YELLOW }}>
           <span className="text-3xl">🎓</span>
           <div className="flex-1">
             <div className="text-[10px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.7 }}>
@@ -1562,7 +1712,7 @@ function ScenarioMenu({
             SAIR (Esc)
           </button>
         </div>
-        <div className="p-5 space-y-3">
+        <div ref={listaRef} className="p-5 space-y-3 overflow-y-auto flex-1 min-h-0">
           {ALL_SCENARIOS.map((id, idx) => {
             const t = TRACKS[id];
             const done = completedSet.has(id);
@@ -1604,10 +1754,12 @@ function ScenarioMenu({
               </button>
             );
           })}
-          <div className="text-center text-[11px] text-gray-500 pt-2 border-t border-gray-200 leading-relaxed">
-            <b>↑↓</b> navegar · <b>Enter</b> escolher · <b>Esc</b> sair · <b>Ctrl+T</b> sair do treino a qualquer momento<br/>
-            Dentro do PDV: <b>Shift+F1</b> abre a ajuda com todos os atalhos · Nada é salvo no banco real
-          </div>
+        </div>
+        {/* Rodapé fora da área de rolagem: os atalhos são a bússola do aluno,
+            não podem sumir junto com a rolagem da lista. */}
+        <div className="text-center text-[11px] text-gray-500 px-5 py-3 border-t border-gray-200 leading-relaxed shrink-0 bg-white">
+          <b>↑↓</b> navegar · <b>Enter</b> escolher · <b>Esc</b> sair · <b>Ctrl+T</b> sair do treino a qualquer momento<br/>
+          Dentro do PDV: <b>Shift+F1</b> abre a ajuda com todos os atalhos · Nada é salvo no banco real
         </div>
       </div>
     </div>

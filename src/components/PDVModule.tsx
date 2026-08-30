@@ -3246,6 +3246,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     const fiadoPayment = payments.find(p => p.method === 'fiado');
     setSaving(true);
     try {
+      // Desconto GRAVADO = comercial (F6) + cupom do nicho. O total já
+      // descontava os dois, mas só o comercial ia pro banco: o recibo
+      // imprimia "Subtotal − Desconto venda" que não fechava com o TOTAL, e
+      // o relatório subnotificava o desconto de toda venda com cupom.
+      const descontoTotal = parseFloat((saleDiscount + cupomDesconto).toFixed(2));
       const newSale: Sale = {
         id: crypto.randomUUID(),
         date: new Date().toISOString(),
@@ -3255,7 +3260,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         clientId: fiadoPayment?.clientId ?? linkedClient?.id,
         vendedorId: currentUser.id,
         status: 'completed',
-        discount: saleDiscount,
+        discount: descontoTotal,
         cpfCnpjNota: cpfNota || undefined,
         pdvMode,
         vendedorNome: saleVendedor.trim() || undefined,
@@ -3278,7 +3283,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             vendedorId: newSale.vendedorId,
             status: newSale.status,
             sessionId: cashSession?.id ?? null,
-            discount: saleDiscount,
+            discount: descontoTotal,
             cpfCnpjNota: cpfNota || null,
             // Origem da venda + campos de nicho. Eram montados em `newSale`
             // (e apareciam no recibo) mas nunca chegavam ao banco: o
@@ -3289,7 +3294,27 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             imeiSerial: newSale.imeiSerial ?? null,
             tipoAtendimento: newSale.tipoAtendimento ?? null,
             defeitoRelatado: newSale.defeitoRelatado ?? null,
-            items: newSale.items,
+            // Só as colunas que a RPC lê. O item do carrinho é o produto
+            // inteiro espalhado (`{...product, quantity}`), e isso arrastava
+            // `image` em base64 pro payload — na TechMax são até 145 KB por
+            // produto, descartados do outro lado porque `sale_items` não tem
+            // essa coluna. Cinco itens viravam ~700 KB de upload no exato
+            // momento de fechar a venda.
+            items: newSale.items.map(it => ({
+              id: it.id,
+              name: it.name,
+              price: it.price,
+              quantity: it.quantity,
+              costPrice: it.costPrice ?? 0,
+              category: it.category ?? '',
+              ref: it.ref ?? '',
+              unit: it.unit ?? 'UN',
+              ean13: it.ean13 ?? null,
+              controlStock: it.controlStock ?? true,
+              stock: it.stock ?? 0,
+              minStock: it.minStock ?? 0,
+              discount: it.discount ?? 0,
+            })),
             payments: newSale.payments,
           },
         });

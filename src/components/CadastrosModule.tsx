@@ -657,24 +657,42 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const confirmStockAdjustment = async () => {
     if (!stockModal.product) return;
 
-    let newStock = stockModal.product.stock || 0;
+    const atual = stockModal.product.stock || 0;
     const amount = stockModal.amount;
+    let newStock = atual;
     if (stockModal.action === 'sum') newStock += amount;
     else if (stockModal.action === 'subtract') newStock -= amount;
     else if (stockModal.action === 'correct') newStock = amount;
 
-    const updatedProduct = { ...stockModal.product, stock: newStock };
-
-    try {
-      await Storage.upsertProduct(updatedProduct);
-      setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? updatedProduct : p));
-      if (editingItem && editingItem.id === stockModal.product.id) {
-        setFormData((prev: any) => ({ ...prev, stock: newStock }));
-      }
-    } catch (err: any) {
-      showAlert('Erro ao ajustar estoque: ' + err.message);
+    // Estoque negativo trava a venda inteira daquele produto depois: o PDV
+    // recusa no carrinho e a finalize_sale_atomic levanta "Estoque
+    // insuficiente". Melhor barrar aqui, dizendo quanto tem, do que gravar
+    // um saldo que ninguém consegue desfazer pelo caixa.
+    if (newStock < 0) {
+      showAlert(
+        `Não dá para baixar ${amount} de "${stockModal.product.name}": o estoque atual é ${atual}. ` +
+        `Use "Corrigir" se o saldo do sistema estiver errado.`,
+      );
+      return;
     }
 
+    const updatedProduct = { ...stockModal.product, stock: newStock };
+
+    // O sucesso só é anunciado DEPOIS que o banco confirma. Antes, o catch
+    // mostrava o erro e as linhas seguintes o sobrescreviam com "atualizado
+    // com sucesso" — o operador via sucesso, a lista continuava com o número
+    // velho, e o ajuste tinha se perdido.
+    try {
+      await Storage.upsertProduct(updatedProduct);
+    } catch (err: any) {
+      showAlert('Erro ao ajustar estoque: ' + err.message);
+      return;
+    }
+
+    setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? updatedProduct : p));
+    if (editingItem && editingItem.id === stockModal.product.id) {
+      setFormData((prev: any) => ({ ...prev, stock: newStock }));
+    }
     setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
     showAlert('Estoque atualizado com sucesso!');
   };
@@ -2869,9 +2887,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
         )}
 
-        {/* Stock Adjustment Modal */}
+        {/* Stock Adjustment Modal
+            z-90: este modal SÓ abre de dentro do formulário de produto, que é
+            z-80. Em z-70 ele nascia ATRÁS do formulário, coberto pelo backdrop
+            escuro — o operador clicava em "Editar estoque" e a tela parecia não
+            fazer nada. Os alertas (z-300) seguem por cima. */}
         {stockModal.isOpen && (
-          <div className="fixed inset-0 min-h-screen z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="fixed inset-0 min-h-screen z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="neumorphic w-full max-w-lg bg-card overflow-hidden animate-in zoom-in duration-300 rounded-xl">
               <div className="bg-[#124163] p-4 text-center">
                  <h3 className="text-white font-black uppercase tracking-widest text-xl">EDITAR ESTOQUE</h3>
