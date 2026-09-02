@@ -313,26 +313,45 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     // Cadastros, mesmo estando em uma tela que só usa uma delas. Com ~100+
     // produtos na TechMax isso é vários MB trafegados e parseados à toa a
     // cada visita, e é o que fazia o módulo abrir com lentidão perceptível.
-    const load = () =>
-      Promise.all([
+    // allSettled, nao all: com `Promise.all` + `.catch(() => {})` UMA consulta
+    // que falhasse rejeitava o conjunto e nenhuma lista era preenchida — a tela
+    // inteira aparecia vazia, sem erro nenhum, como se o banco nao tivesse
+    // dado. Foi exatamente o que aconteceu quando `getUsers` quebrou: a Equipe
+    // ficou em branco e parecia que os usuarios tinham sumido do banco.
+    //
+    // Agora cada consulta responde por si: o que deu certo aparece, e o que
+    // falhou diz o que falhou em vez de virar silencio.
+    const load = async () => {
+      const [c, p, s, sv, u, cat] = await Promise.allSettled([
         Storage.getClients(nichoFilter),
         Storage.getProducts(nichoFilter),
         Storage.getSuppliers(nichoFilter),
         Storage.getServices(nichoFilter),
         Storage.getUsers(nichoFilter),
         Storage.getCategories(nichoFilter),
-      ])
-        .then(([c, p, s, sv, u, cat]) => {
-          if (!active) return;
-          setClients(c);
-          setProducts(p);
-          setSuppliers(s);
-          setServices(sv);
-          setUsers(u);
-          setCategories(cat);
-        })
-        .catch(() => {})
-        .finally(() => { if (active) setLoading(false); });
+      ]);
+      if (!active) return;
+
+      if (c.status === 'fulfilled')   setClients(c.value);
+      if (p.status === 'fulfilled')   setProducts(p.value);
+      if (s.status === 'fulfilled')   setSuppliers(s.value);
+      if (sv.status === 'fulfilled')  setServices(sv.value);
+      if (u.status === 'fulfilled')   setUsers(u.value);
+      if (cat.status === 'fulfilled') setCategories(cat.value);
+
+      const falhas = [
+        ['Clientes', c], ['Produtos', p], ['Fornecedores', s],
+        ['Serviços', sv], ['Usuários', u], ['Categorias', cat],
+      ].filter(([, r]) => (r as PromiseSettledResult<unknown>).status === 'rejected');
+
+      if (falhas.length > 0) {
+        const detalhe = falhas
+          .map(([nome, r]) => `${nome}: ${(r as PromiseRejectedResult).reason?.message ?? 'falha'}`)
+          .join(' · ');
+        showAlert(`Não foi possível carregar: ${detalhe}`);
+      }
+      setLoading(false);
+    };
 
     load();
 
@@ -377,7 +396,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         setUsers(prev => [...prev, created]);
         showAlert('Novo membro cadastrado! Ele pode acessar com o e-mail e senha definidos.');
       } catch (err: any) {
-        showAlert('Erro ao cadastrar membro: ' + err.message);
+        // "ja registrado" e a mensagem crua do Auth e ela confunde: o e-mail e
+        // unico em TODAS as empresas, entao a pessoa pode existir em outra
+        // loja e nao aparecer nesta lista, que e filtrada pela empresa ativa.
+        // Sem esta traducao parece que sobrou um usuario fantasma no banco.
+        const jaExiste = /already been registered|already exists|already registered/i.test(err?.message ?? '');
+        showAlert(jaExiste
+          ? `Este e-mail já está cadastrado no sistema — possivelmente em OUTRA empresa, `
+            + `por isso não aparece nesta lista. O e-mail é único entre as três empresas: `
+            + `para a mesma pessoa operar em duas, use um e-mail por empresa.`
+          : 'Erro ao cadastrar membro: ' + err.message);
       }
     }
     setShowAddUser(false);
