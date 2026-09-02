@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -14,6 +14,7 @@ import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
+import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
 import { LIMITE_VITRINE } from './VitrineModule';
 
@@ -29,6 +30,7 @@ interface CadastrosModuleProps {
 
 export default function CadastrosModule({ currentUser, subTab }: CadastrosModuleProps) {
   const { showAlert, host: alertHost } = useAlertDialog();
+  const toast = useToast();
   const { askConfirm, host: confirmHost } = useConfirmDialog();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -85,6 +87,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [marginDraft, setMarginDraft] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string, type: string, name: string } | null>(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: '' as UserRole });
+  const [senhaVisivel, setSenhaVisivel] = useState(false);
   const [barcodeModal, setBarcodeModal] = useState<{ isOpen: boolean, product: any | null }>({ isOpen: false, product: null });
   const [stockModal, setStockModal] = useState<{ isOpen: boolean, product: any | null, action: 'sum' | 'subtract' | 'correct', amount: number }>({ isOpen: false, product: null, action: 'sum', amount: 0 });
   const barcodeRef = useRef<SVGSVGElement>(null);
@@ -377,7 +380,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         await Storage.updateUserProfile(editingItem.id, { name: newUser.name, role: newUser.role as UserRole });
         const updatedUsers = users.map(u => u.id === editingItem.id ? { ...u, name: newUser.name, role: newUser.role as UserRole } : u);
         setUsers(updatedUsers);
-        showAlert('Membro atualizado com sucesso!');
+        toast.sucesso({ titulo: `${newUser.name} atualizado` });
       } catch (err: any) {
         showAlert('Erro ao atualizar membro: ' + err.message);
       }
@@ -394,7 +397,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           filialAtiva ?? 'supermax',
         );
         setUsers(prev => [...prev, created]);
-        showAlert('Novo membro cadastrado! Ele pode acessar com o e-mail e senha definidos.');
+        // Toast, nao modal: cadastrar cinco pessoas seguidas exigia cinco
+        // cliques em OK no meio da tela. Sucesso avisa, nao interrompe.
+        toast.sucesso({
+          titulo: `${created.name} cadastrado`,
+          mensagem: (
+            <>
+              Entra com <b>{created.email}</b> e a senha definida agora
+              {' '}— e já cai direto na {FILIAL_META[nichoFilter].label}.
+            </>
+          ),
+        });
       } catch (err: any) {
         // "ja registrado" e a mensagem crua do Auth e ela confunde: o e-mail e
         // unico em TODAS as empresas, entao a pessoa pode existir em outra
@@ -410,6 +423,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     }
     setShowAddUser(false);
     setNewUser({ name: '', email: '', password: '', role: '' as UserRole });
+    setSenhaVisivel(false);
     setEditingItem(null);
   };
 
@@ -1648,12 +1662,28 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               <div className="space-y-2">
                 <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Senha Temporária</label>
                 <div className="neumorphic-inset p-3 flex items-center gap-2">
-                  <Lock size={16} className="text-gray-600" />
+                  <Lock size={16} className="text-gray-600 shrink-0" />
                   <input
-                    type="password" required value={newUser.password}
+                    type={senhaVisivel ? 'text' : 'password'} required value={newUser.password}
                     onChange={e => setNewUser({...newUser, password: e.target.value})}
                     className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold"
+                    style={senhaVisivel ? { fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.05em' } : undefined}
                   />
+                  {/* Quem cadastra esta INVENTANDO a senha e vai dita-la ao
+                      operador — ver o que digitou nao e conveniencia, e o que
+                      evita entregar uma senha com typo que ninguem consegue
+                      usar depois. Monoespacado ao revelar, porque a duvida
+                      costuma ser entre l/I/1 e O/0. */}
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setSenhaVisivel(v => !v)}
+                    className="text-gray-500 hover:text-gray-900 transition-colors shrink-0"
+                    title={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
+                    aria-label={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
+                  >
+                    {senhaVisivel ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
               </div>
             )}

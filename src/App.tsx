@@ -23,6 +23,7 @@ import VitrineModule from './components/VitrineModule';
 import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
 import FilialSelector from './components/FilialSelector';
+import { ToastProvider } from './components/Toast';
 import { FilialProvider, useFilial, FILIAL_META } from './contexts/FilialContext';
 
 // Services
@@ -509,7 +510,10 @@ function AppInterno() {
 export default function App() {
   return (
     <FilialProvider>
-      <AppInterno />
+      {/* Dentro do FilialProvider: o toast se pinta com a empresa ativa. */}
+      <ToastProvider>
+        <AppInterno />
+      </ToastProvider>
     </FilialProvider>
   );
 }
