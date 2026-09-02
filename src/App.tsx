@@ -176,17 +176,17 @@ function AppInterno() {
     setUser(null);
   };
 
-  const pdvRoles = ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'];
+  const pdvRoles = ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'];
   const menuItems = [
-    { id: 'inicio', icon: Home, label: 'Início', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
+    { id: 'inicio', icon: Home, label: 'Início', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
     { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: pdvRoles, iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
-    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'], grupo: true },
-    { id: 'estoque', icon: Package, label: 'Estoque', roles: ['chairman', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
-    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
-    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['chairman', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
-    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
-    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['chairman', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
-    { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['chairman', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
+    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'], grupo: true },
+    { id: 'estoque', icon: Package, label: 'Estoque', roles: ['admin_master', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
+    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['admin_master', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
+    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['admin_master', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
+    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
+    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
+    { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
   ];
 
   const allowedItems = menuItems.filter(item => user && item.roles.includes(user.role as any));

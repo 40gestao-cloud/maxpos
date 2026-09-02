@@ -3,9 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Hierarquia por NIVEL (ver nivel_cargo() no banco, que e a autoridade):
+//   100 admin_master · 80 ceo/admin · 60 gerente_* · 40 colaborador_* · 20 operador
+// Voce so edita quem esta estritamente abaixo, e so concede cargo abaixo do seu.
+// `chairman` foi removido em 2026-09-01 (ninguem usava e era mais uma porta
+// lateral com poder de mexer em cargo).
 export type UserRole =
+  | 'admin_master'
   | 'admin'
-  | 'chairman'
   | 'ceo'
   | 'gerente_logistica'
   | 'gerente_vendas'

@@ -383,21 +383,45 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setEditingItem(null);
   };
 
-  const getAvailableRoles = (role?: UserRole): UserRole[] => {
-    if (!role) return [];
-    if (role === 'admin' || role === 'chairman') {
-      return ['admin', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'operador_geral'];
-    }
-    if (role === 'ceo') return ['gerente_logistica', 'gerente_vendas', 'gerente_financas'];
-    if (role === 'gerente_logistica') return ['colaborador_logistica'];
-    if (role === 'gerente_vendas') return ['colaborador_vendas', 'colaborador_atendimento'];
-    if (role === 'gerente_financas') return ['colaborador_financas'];
-    return [];
+  // Espelha nivel_cargo()/prevent_role_escalation() do banco. Aqui e so
+  // conveniencia de tela — quem decide de verdade e o trigger, que barra
+  // mesmo se alguem chamar a API pelo F12.
+  const NIVEL: Record<UserRole, number> = {
+    admin_master: 100,
+    ceo: 80,
+    admin: 80,
+    gerente_logistica: 60,
+    gerente_vendas: 60,
+    gerente_financas: 60,
+    colaborador_logistica: 40,
+    colaborador_vendas: 40,
+    colaborador_atendimento: 40,
+    colaborador_financas: 40,
+    operador_geral: 20,
   };
 
+  // Só cargos ESTRITAMENTE abaixo do seu. E o que impede a escalada em dois
+  // passos: o CEO nao cria outro CEO que depois o promoveria de volta.
+  // admin_master nunca aparece: o posto e unico e so muda por transferencia.
+  const getAvailableRoles = (role?: UserRole): UserRole[] => {
+    if (!role) return [];
+    const meu = NIVEL[role] ?? 0;
+    return (Object.keys(NIVEL) as UserRole[])
+      .filter(r => r !== 'admin_master' && NIVEL[r] < meu)
+      .sort((a, b) => NIVEL[b] - NIVEL[a]);
+  };
+
+  // Uma linha da lista de Equipe so e editavel por quem esta ACIMA dela — ou
+  // pela propria pessoa, que edita nome e avatar (o cargo, nao: o trigger
+  // barra mudar o proprio cargo, inclusive o do Admin Master). Espelha a
+  // policy `profiles_update_self_or_abaixo`.
+  const podeEditarUsuario = (alvo: { id: string; role: UserRole }): boolean =>
+    alvo.id === currentUser?.id ||
+    (NIVEL[currentUser?.role as UserRole] ?? 0) > (NIVEL[alvo.role] ?? 0);
+
   const ROLE_LABELS: Record<UserRole, string> = {
+    admin_master: 'Admin Master',
     admin: 'Acesso Total',
-    chairman: 'Chairman',
     ceo: 'CEO',
     gerente_logistica: 'Gerente Logística',
     gerente_vendas: 'Gerente Vendas',
@@ -1138,7 +1162,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="p-6 text-sm text-gray-600">{u.email}</td>
                   <td className="p-6 text-sm font-mono text-gray-600/60">{u.id}</td>
                   <td className="p-6">
-                    {availableRoles.length > 0 ? (
+                    {/* A tela nao oferece o que o banco vai negar: quem esta no
+                        seu nivel ou acima (o Admin Master, para todo mundo)
+                        aparece como somente leitura. Antes bastava ter algum
+                        cargo concedivel para os botoes surgirem em TODA linha,
+                        e o clique so morria no erro do trigger. */}
+                    {availableRoles.length > 0 && podeEditarUsuario(u) ? (
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => handleEdit(u, 'equipe')}
@@ -1156,7 +1185,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         </button>
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400 italic">somente leitura</span>
+                      <span className="text-xs text-gray-400 italic">
+                        {u.role === 'admin_master' ? 'Admin Master — intocável' : 'somente leitura'}
+                      </span>
                     )}
                   </td>
                 </tr>

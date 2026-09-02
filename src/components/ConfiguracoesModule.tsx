@@ -76,7 +76,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       .catch(() => {});
   }, []);
 
-  const canAudit = user?.role === 'admin' || user?.role === 'chairman';
+  const canAudit = user?.role === 'admin' || user?.role === 'admin_master';
   const canFactoryReset = canAudit;
 
   const loadAudit = async () => {
