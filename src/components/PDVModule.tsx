@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type Dispatch, type SetStateAction, type RefObject, type CSSProperties } from 'react';
 import { CreditCard, DollarSign, Wallet, Users, Banknote, X, Menu, Trash2, Pencil, Split, HelpCircle, Keyboard, ScanBarcode, Receipt, ArrowDownCircle, ArrowUpCircle, Lock, Package, Search, User as UserIcon, Ticket, Info, Maximize2, Minimize2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
@@ -3857,6 +3857,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     const MONEY = '#15803d';
     const RED = '#b91c1c';
 
+    // Identidade do modal de caixa. O navy + verde e a cara do SUPERMERCADO;
+    // nos nichos ele destoava — a MaxLook abria o turno com um botao verde de
+    // supermercado no meio do dourado, e a TechMax igual. Aqui o modal passa a
+    // usar o accent da propria loja, seguindo o mesmo par (preto + accent) que
+    // o header do PDV ja usa em MaxLook/TechMax.
+    const caixaBorda   = isSimulationMode ? modeMeta.accentDark : NAVY_DARK;
+    const caixaHeader  = isSimulationMode ? '#0A0A0A'           : NAVY_DARK;
+    const caixaTitulo  = isSimulationMode ? modeMeta.accent     : '#ffffff';
+    const caixaBotao   = isSimulationMode ? modeMeta.accentDark : MONEY;
+    const caixaBotaoFg = '#ffffff';
+    // O halo de foco acompanha: `ring-green-300` fixo era o verde vazando.
+    const caixaRing    = isSimulationMode ? modeMeta.accent     : '#86efac';
+
     return (
       <>
         <div
@@ -6519,8 +6532,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
             tabIndex={-1}
             ref={(el) => { if (el && openCashModal && !el.contains(document.activeElement)) el.focus(); }}
           >
-            <div data-training-target="open-cash-modal" className="bg-white border-4 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: NAVY_DARK }}>
-              <div className="px-5 py-3 text-white" style={{ background: NAVY_DARK }}>
+            <div data-training-target="open-cash-modal" className="bg-white border-4 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: caixaBorda }}>
+              <div className="px-5 py-3" style={{ background: caixaHeader, color: caixaTitulo }}>
                 <div className="text-xs font-black uppercase tracking-[0.3em] opacity-90">Início de turno</div>
                 <div className="text-2xl font-black tracking-wide mt-0.5">ABERTURA DE CAIXA</div>
               </div>
@@ -6559,8 +6572,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   )}
                   <button
                     onClick={confirmOpenCashSession}
-                    className="flex-1 py-3 text-white text-base font-black uppercase tracking-wide ring-4 ring-offset-2 ring-green-300"
-                    style={{ background: MONEY }}
+                    className="flex-1 py-3 text-base font-black uppercase tracking-wide ring-4 ring-offset-2"
+                    style={{ background: caixaBotao, color: caixaBotaoFg, '--tw-ring-color': caixaRing } as CSSProperties}
                   >
                     ABRIR CAIXA (Enter)
                   </button>
