@@ -45,7 +45,9 @@ export default function RelatoriosModule() {
   useEffect(() => {
     let active = true;
     const load = () =>
-      Storage.getSales()
+      // Escopo no servidor: o relatorio e SEMPRE de uma loja so, entao baixar
+      // as tres para descartar duas era trafego puro.
+      Storage.getSales(filialAtiva ?? 'supermax')
         .then(s => { if (active) setSales(s); })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -57,7 +59,7 @@ export default function RelatoriosModule() {
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [filialAtiva]);
 
   // Tudo abaixo lê desta lista, não de `sales` cru: sem isso o gráfico e o
   // ranking continuariam somando as três lojas mesmo com um filtro na tela.

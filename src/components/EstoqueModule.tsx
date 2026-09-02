@@ -54,7 +54,13 @@ export default function EstoqueModule() {
       // Lite: esta tela não mostra foto de produto, e o `image` em base64
       // respondia por ~1,5 MB do payload — era o que deixava os alertas de
       // reposição e a movimentação recente demorando pra aparecer.
-      Promise.all([Storage.getProductsLite(), Storage.getSales()])
+      // Escopo da loja vai NO SERVIDOR. Antes vinham as tres empresas e a tela
+      // descartava duas com `.filter` — pagando o trafego das outras e
+      // dependendo de um filtro de UI para nao mostrar a loja errada.
+      Promise.all([
+        Storage.getProductsLite(filialAtiva ?? 'supermax'),
+        Storage.getSales(filialAtiva ?? 'supermax'),
+      ])
         .then(([p, s]) => { if (active) { setProducts(p); setSales(s); } })
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
@@ -67,11 +73,11 @@ export default function EstoqueModule() {
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [filialAtiva]);
 
-  // Toda a tela lê destas listas. Antes somava as três lojas: o "estoque
-  // crítico" juntava arroz, camiseta e celular numa lista só, e o valor
-  // parado era o do grupo, não o da loja que o gerente administra.
+  // O recorte por loja agora vem pronto do servidor. O filtro segue aqui como
+  // segunda barreira — barato, e evita exibir a loja errada no intervalo entre
+  // trocar de empresa e a nova consulta responder.
   const produtos = products.filter(p => (p.pdvMode ?? 'supermax') === filialAtiva);
   const vendas = sales.filter(s => ((s as any).pdvMode ?? 'supermax') === filialAtiva);
 

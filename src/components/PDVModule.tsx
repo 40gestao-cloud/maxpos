@@ -5213,7 +5213,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     setReprintSearch(v);
                     if (v.length >= 4 && !isTraining) {
                       try {
-                        const results = await Storage.getSalesByIdPrefix(v);
+                        // Escopado na loja: sem isso o prefixo de um cupom do
+                        // SuperMax era encontrado aqui dentro da MaxLook.
+                        const results = await Storage.getSalesByIdPrefix(v, 10, pdvMode);
                         if (results.length > 0) setReprintList(results);
                       } catch { /* silêncio: mantém a lista atual */ }
                     }

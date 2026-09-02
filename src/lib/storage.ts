@@ -92,11 +92,14 @@ export const Storage = {
   // número — Estoque (alertas de reposição, movimentação, valor parado) não
   // desenha foto nenhuma, mas o `select('*')` fazia ela esperar ~1,5 MB de
   // base64 antes de mostrar o primeiro card.
-  getProductsLite: async (): Promise<Product[]> => {
-    const { data, error } = await supabase
+  getProductsLite: async (pdvMode?: Product['pdvMode']): Promise<Product[]> => {
+    // Escopo no SERVIDOR, como em getProducts. Sem ele o Estoque baixava as
+    // tres empresas e descartava duas no cliente — trafego a toa e, pior, um
+    // filtro que so existe na tela: some o `.filter` e a loja errada aparece.
+    const q = escopoFilial(supabase
       .from('products')
-      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine')
-      .order('name');
+      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine'), pdvMode);
+    const { data, error } = await q.order('name');
     if (error) throw error;
     return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
@@ -131,11 +134,11 @@ export const Storage = {
   },
 
   // ─── Categorias ──────────────────────────────────────────
-  getCategories: async (): Promise<Category[]> => {
-    const { data, error } = await supabase
+  getCategories: async (pdvMode?: string | null): Promise<Category[]> => {
+    const q = escopoFilial(supabase
       .from('categories')
-      .select('id, name, color, pdv_mode, active')
-      .order('name');
+      .select('id, name, color, pdv_mode, active'), pdvMode);
+    const { data, error } = await q.order('name');
     if (error) throw error;
     return (data ?? []).map((r: any) => ({
       id: r.id,
@@ -734,13 +737,21 @@ export const Storage = {
 
   // Busca vendas por prefixo do id (uso: reimpressão por número de cupom).
   // Case-insensitive. Retorna no máximo 10 matches, mais recentes primeiro.
-  getSalesByIdPrefix: async (prefix: string, limit: number = 10): Promise<Sale[]> => {
+  // pdvMode: a busca alimenta a TROCA/DEVOLUCAO. Sem escopo, digitar o
+  // prefixo de um cupom do SuperMax no PDV da MaxLook achava a venda e
+  // devolvia mercadoria de outra empresa ao estoque errado.
+  getSalesByIdPrefix: async (
+    prefix: string,
+    limit: number = 10,
+    pdvMode?: Sale['pdvMode'],
+  ): Promise<Sale[]> => {
     const p = prefix.trim();
     if (p.length < 4) return [];
-    const { data, error } = await supabase
+    const q = escopoFilial(supabase
       .from('sales')
       .select('*, sale_items(*), sale_payments(*)')
-      .ilike('id', `${p.toLowerCase()}%`)
+      .ilike('id', `${p.toLowerCase()}%`), pdvMode);
+    const { data, error } = await q
       .order('date', { ascending: false })
       .limit(limit);
     if (error) throw error;

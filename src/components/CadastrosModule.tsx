@@ -320,7 +320,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         Storage.getSuppliers(nichoFilter),
         Storage.getServices(nichoFilter),
         Storage.getUsers(),
-        Storage.getCategories(),
+        Storage.getCategories(nichoFilter),
       ])
         .then(([c, p, s, sv, u, cat]) => {
           if (!active) return;
@@ -1004,7 +1004,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       } else {
         await Storage.upsertCategory({ ...catForm, name: nome });
       }
-      setCategories(await Storage.getCategories());
+      setCategories(await Storage.getCategories(nichoFilter));
       // Escopado como a carga inicial: sem o nicho, renomear uma categoria
       // repovoava o estado com o catálogo das três empresas (e as imagens).
       setProducts(await Storage.getProducts(nichoFilter));
@@ -1028,7 +1028,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     }
     try {
       await Storage.deleteCategory(c.id);
-      setCategories(await Storage.getCategories());
+      setCategories(await Storage.getCategories(nichoFilter));
     } catch (err: any) {
       showAlert('Erro ao excluir: ' + (err?.message ?? err));
     }
