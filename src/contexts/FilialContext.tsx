@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { PdvMode } from '../types';
 
 // As três lojas são empresas separadas: cada uma tem seus produtos, seu caixa,
@@ -27,6 +27,10 @@ interface FilialContextValue {
   escolheu: boolean;
   setFilialAtiva: (f: PdvMode) => void;
   clearFilial: () => void;
+  /** Empresas que o usuario logado pode operar. */
+  permitidas: PdvMode[];
+  /** O App informa aqui as lojas do perfil recem-carregado. */
+  setLojasDoUsuario: (lojas: string[] | undefined) => void;
 }
 
 const FilialContext = createContext<FilialContextValue>({
@@ -34,9 +38,23 @@ const FilialContext = createContext<FilialContextValue>({
   escolheu: false,
   setFilialAtiva: () => {},
   clearFilial: () => {},
+  permitidas: VALIDAS,
+  setLojasDoUsuario: () => {},
 });
 
 export function FilialProvider({ children }: { children: ReactNode }) {
+  // Quem loga define quais empresas existem para ele. O App avisa via
+  // `setLojasDoUsuario` assim que o perfil carrega — o provider fica ACIMA do
+  // estado de usuario na arvore, entao a informacao sobe por aqui em vez de
+  // descer por prop.
+  const [lojasDoUsuario, setLojasDoUsuario] = useState<string[] | undefined>(undefined);
+  // As empresas que ESTE usuario pode operar. Admin Master e CEO tem as tres;
+  // Operador de Caixa tem exatamente uma, a de onde foi cadastrado. Sem a
+  // lista (ainda no login) cai em VALIDAS, e nada muda.
+  const permitidas: PdvMode[] = (lojasDoUsuario && lojasDoUsuario.length > 0)
+    ? VALIDAS.filter(f => lojasDoUsuario.includes(f))
+    : VALIDAS;
+
   const [filialAtiva, setState] = useState<PdvMode | null>(() => {
     try {
       const v = sessionStorage.getItem(STORAGE_KEY) as PdvMode | null;
@@ -49,7 +67,23 @@ export function FilialProvider({ children }: { children: ReactNode }) {
     try { sessionStorage.setItem(STORAGE_KEY, f); } catch { /* modo privado */ }
   };
 
+  // Operador de UMA empresa nao escolhe nada: entra direto na dele. Cadastrado
+  // na SuperMax, loga e ja esta na SuperMax — o seletor so faz sentido para
+  // quem tem para onde escolher (Admin Master e CEO).
+  //
+  // Tambem cobre a sessionStorage apontando para uma loja que o usuario nao
+  // opera mais: terminal compartilhado onde o turno anterior deixou outra.
+  useEffect(() => {
+    if (permitidas.length === 0) return;
+    if (permitidas.length === 1) {
+      if (filialAtiva !== permitidas[0]) setFilialAtiva(permitidas[0]);
+      return;
+    }
+    if (filialAtiva && !permitidas.includes(filialAtiva)) setState(null);
+  }, [permitidas.join(','), filialAtiva]);
+
   const clearFilial = () => {
+    if (permitidas.length <= 1) return; // nao ha para onde voltar
     setState(null);
     try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* modo privado */ }
   };
@@ -60,6 +94,8 @@ export function FilialProvider({ children }: { children: ReactNode }) {
       escolheu: filialAtiva !== null,
       setFilialAtiva,
       clearFilial,
+      permitidas,
+      setLojasDoUsuario,
     }}>
       {children}
     </FilialContext.Provider>

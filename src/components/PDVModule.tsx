@@ -1420,8 +1420,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         // atual pra simular o picker (não temos acesso ao user_profiles real).
         setSwapOperatorList([
           currentUser,
-          { id: 'trainer-op-1', email: 'julia@treino.local', name: 'Júlia (turno tarde)', role: 'operador_geral' } as User,
-          { id: 'trainer-op-2', email: 'marcos@treino.local', name: 'Marcos (turno noite)', role: 'operador_geral' } as User,
+          { id: 'trainer-op-1', email: 'julia@treino.local', name: 'Júlia (turno tarde)', role: 'operador_caixa' } as User,
+          { id: 'trainer-op-2', email: 'marcos@treino.local', name: 'Marcos (turno noite)', role: 'operador_caixa' } as User,
         ]);
       } else {
         const users = await Storage.getUsers();

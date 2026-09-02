@@ -8,18 +8,20 @@
 // Voce so edita quem esta estritamente abaixo, e so concede cargo abaixo do seu.
 // `chairman` foi removido em 2026-09-01 (ninguem usava e era mais uma porta
 // lateral com poder de mexer em cargo).
+// Tres cargos, so. Gerentes e colaboradores nunca foram usados — a base
+// inteira era admin ou operador — e cada cargo morto era mais uma linha nas
+// listas de permissao para revisar a cada mudanca.
+//
+//   admin_master     topo unico. Faz tudo, e o unico que mexe em cargos.
+//   ceo              faz tudo + cadastra Operador de Caixa.
+//   operador_caixa   faz tudo, MENOS gerir pessoas (menu Usuarios).
+//
+// O Operador fazer tudo e deliberado: o MaxPOS e simulador de ERP para treino
+// e o aluno precisa percorrer o sistema inteiro.
 export type UserRole =
   | 'admin_master'
-  | 'admin'
   | 'ceo'
-  | 'gerente_logistica'
-  | 'gerente_vendas'
-  | 'gerente_financas'
-  | 'colaborador_logistica'
-  | 'colaborador_vendas'
-  | 'colaborador_atendimento'
-  | 'colaborador_financas'
-  | 'operador_geral';
+  | 'operador_caixa';
 
 export interface User {
   id: string;
@@ -29,6 +31,8 @@ export interface User {
   name: string;
   avatar?: string; // Base64 or URL
   parentId?: string; // To track who registered whom
+  /** Empresas que este usuario opera. Criado no SuperMax => ['supermax']. */
+  lojas?: string[];
 }
 
 // Nicho do PDV a que um produto ou serviço pertence.

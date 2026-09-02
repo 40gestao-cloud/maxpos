@@ -453,11 +453,15 @@ export const Storage = {
   // dos outros — só o nome. Trazer `select('*')` fazia o picker de troca de
   // operador baixar 5 MB antes de abrir. Quem precisa da foto de UM usuário
   // usa getUserAvatar.
-  getUsers: async (): Promise<User[]> => {
-    const { data, error } = await supabase
+  // pdvMode filtra a EQUIPE por empresa. A RLS ja corta o que nao e visivel,
+  // mas o Admin Master enxerga todo mundo — sem este filtro ele veria os
+  // operadores das tres lojas misturados na tela de Usuarios.
+  getUsers: async (pdvMode?: string | null): Promise<User[]> => {
+    let q = supabase
       .from('user_profiles')
-      .select('id, email, name, role, parentId')
-      .order('name');
+      .select('id, email, name, role, parentId, lojas');
+    if (pdvMode) q = q.contains('lojas', [pdvMode]);
+    const { data, error } = await q.order('name');
     if (error) throw error;
     return (data ?? []).map((p: any) => ({
       id: p.id,
@@ -465,6 +469,7 @@ export const Storage = {
       name: p.name,
       role: p.role,
       parentId: p.parentId,
+      lojas: p.lojas ?? [],
     })) as User[];
   },
 
@@ -479,12 +484,17 @@ export const Storage = {
     return (data as any)?.avatar ?? undefined;
   },
 
+  // `loja` define a EMPRESA do novo usuario: criado no SuperMax, e do
+  // SuperMax. Vai no metadata do signUp e o trigger handle_new_user grava em
+  // user_profiles.lojas. Sem ela o usuario nasce sem empresa nenhuma — de
+  // proposito: some da lista e chama atencao, em vez de nascer com as tres.
   createUser: async (
     email: string,
     password: string,
     name: string,
     role: string,
-    parentId?: string
+    parentId?: string,
+    loja?: string | null,
   ): Promise<User> => {
     // Preserva a sessão do admin antes do signUp
     const { data: { session: adminSession } } = await supabase.auth.getSession();
@@ -492,7 +502,7 @@ export const Storage = {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name, role, parentId: parentId ?? null } },
+      options: { data: { name, role, parentId: parentId ?? null, loja: loja ?? null } },
     });
 
     if (error) throw error;
@@ -561,6 +571,10 @@ export const Storage = {
         role: profile.role,
         avatar: profile.avatar,
         parentId: profile.parentId,
+        // Sem `lojas` aqui o FilialContext nao sabe quais empresas este
+        // usuario opera, e o Operador de Caixa cairia no seletor das tres
+        // em vez de entrar direto na dele.
+        lojas: profile.lojas ?? [],
       } as User;
     }
 
@@ -615,6 +629,7 @@ export const Storage = {
       role: profile.role,
       avatar: profile.avatar,
       parentId: profile.parentId,
+      lojas: profile.lojas ?? [],
     } as User;
   },
 

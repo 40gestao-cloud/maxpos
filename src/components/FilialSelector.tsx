@@ -12,12 +12,17 @@ import { FILIAIS, FILIAL_META } from '../contexts/FilialContext';
 // misturadas e a separação só existiria em filtros — que é o oposto de "cada
 // uma com seus próprios dados".
 export default function FilialSelector({
-  operador, onEscolher, onSair,
+  operador, onEscolher, onSair, opcoes,
 }: {
   operador: string;
   onEscolher: (f: PdvMode) => void;
   onSair: () => void;
+  /** Empresas que ESTE usuario pode operar. Sem isto a tela ofereceria as
+   *  tres a todo mundo, e o Operador de Caixa entraria numa loja que nao e a
+   *  dele — a RLS o barraria depois, com o sistema ja aberto e vazio. */
+  opcoes?: PdvMode[];
 }) {
+  const lojas = opcoes && opcoes.length > 0 ? opcoes : FILIAIS;
   return (
     // Branco, nao o navy: navy e a cor do SuperMax, e esta tela vem ANTES da
     // escolha — pintar de azul dava vantagem visual a uma das tres. Branco e
@@ -59,7 +64,7 @@ export default function FilialSelector({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-          {FILIAIS.map(f => {
+          {lojas.map(f => {
             const m = FILIAL_META[f];
             return (
               <button

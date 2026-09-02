@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
   DollarSign, BarChart3, Wallet,
-  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2, Star
+  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2, Star, UserCog
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -34,11 +34,15 @@ import { User } from './types';
 // submenus, como no LogMax: cada cadastro tem a sua rota. A barra de abas
 // dentro da view empilhava seis botões + filtro + busca + exportar + novo na
 // mesma linha, e trocar de cadastro não mudava onde o operador "estava".
+// `equipe` saiu daqui: virou o menu de topo "Usuarios". Gerir gente nao e um
+// cadastro como produto ou fornecedor — e a unica coisa que o Operador de
+// Caixa NAO faz, entao precisa de um item proprio para poder sumir do menu.
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
 type Tab =
   | 'inicio' | 'pdv'
   | `cadastros-${SubCadastro}`
+  | 'usuarios'
   | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'vitrine' | 'configuracoes';
 
 const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
@@ -47,7 +51,6 @@ const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
   { id: 'servicos',     label: 'Serviços' },
   { id: 'clientes',     label: 'Clientes' },
   { id: 'fornecedores', label: 'Fornecedores' },
-  { id: 'equipe',       label: 'Equipe' },
 ];
 
 // A loja ativa vem do FilialContext, nao mais de uma aba por PDV. Antes eram
@@ -64,7 +67,14 @@ function AppInterno() {
   // Modo Treinamento: PDV em memória, nenhum dado real tocado.
   const [pdvTraining, setPdvTraining] = useState(false);
   const [cadastrosAberto, setCadastrosAberto] = useState(false);
-  const { filialAtiva, escolheu, setFilialAtiva, clearFilial } = useFilial();
+  const { filialAtiva, escolheu, setFilialAtiva, clearFilial, permitidas, setLojasDoUsuario } = useFilial();
+
+  // Assim que o perfil chega, o contexto sabe quais empresas este usuario
+  // opera. Operador de Caixa tem uma so e entra direto nela, sem passar pelo
+  // seletor; Admin Master e CEO seguem escolhendo entre as tres.
+  useEffect(() => {
+    setLojasDoUsuario(user?.lojas);
+  }, [user?.id, user?.lojas?.join(',')]);
   const isPdvTab = activeTab === 'pdv';
   // Abre o submenu sozinho ao entrar numa rota de cadastro (por link direto,
   // ou trocando de submenu). Sem isto o botão "Cadastros" ficava incapaz de
@@ -176,17 +186,23 @@ function AppInterno() {
     setUser(null);
   };
 
-  const pdvRoles = ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'];
+  // Sao tres cargos, e o Operador de Caixa faz TUDO menos gerir gente. Com
+  // isso a lista de permissao de quase todo item vira a mesma, e so
+  // `usuarios` destoa — por isso a constante em vez de repetir os tres nomes.
+  const TODOS = ['admin_master', 'ceo', 'operador_caixa'];
+  const SO_GESTAO = ['admin_master', 'ceo'];
   const menuItems = [
-    { id: 'inicio', icon: Home, label: 'Início', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_vendas', 'gerente_financas', 'colaborador_logistica', 'colaborador_vendas', 'colaborador_atendimento', 'colaborador_financas', 'operador_geral', 'admin'] },
-    { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: pdvRoles, iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
-    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_vendas', 'operador_geral', 'admin'], grupo: true },
-    { id: 'estoque', icon: Package, label: 'Estoque', roles: ['admin_master', 'ceo', 'gerente_logistica', 'colaborador_logistica', 'operador_geral', 'admin'] },
-    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: ['admin_master', 'ceo', 'gerente_financas', 'colaborador_financas', 'operador_geral', 'admin'] },
-    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: ['admin_master', 'ceo', 'gerente_financas', 'colaborador_financas', 'admin'] },
-    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'operador_geral', 'admin'] },
-    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: ['admin_master', 'ceo', 'gerente_logistica', 'gerente_financas', 'operador_geral', 'admin'] },
-    { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: ['admin_master', 'ceo', 'gerente_vendas', 'colaborador_vendas', 'admin'] },
+    { id: 'inicio', icon: Home, label: 'Início', roles: TODOS },
+    { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: TODOS, iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
+    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: TODOS, grupo: true },
+    { id: 'estoque', icon: Package, label: 'Estoque', roles: TODOS },
+    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: TODOS },
+    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: TODOS },
+    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: TODOS },
+    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: TODOS },
+    // Unico item restrito: cadastrar e editar pessoas.
+    { id: 'usuarios', icon: UserCog, label: 'Usuários', roles: SO_GESTAO },
+    { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: TODOS },
   ];
 
   const allowedItems = menuItems.filter(item => user && item.roles.includes(user.role as any));
@@ -219,6 +235,7 @@ function AppInterno() {
   if (!escolheu) {
     return (
       <FilialSelector
+        opcoes={permitidas}
         operador={user.name}
         onEscolher={(f) => { setFilialAtiva(f); setActiveTab('inicio'); }}
         onSair={handleLogout}
@@ -471,6 +488,9 @@ function AppInterno() {
               )}
               {subCadastroAtivo && (
                 <CadastrosModule currentUser={user} subTab={subCadastroAtivo} />
+              )}
+              {activeTab === 'usuarios' && (
+                <CadastrosModule currentUser={user} subTab="equipe" />
               )}
               {activeTab === 'estoque' && <EstoqueModule />}
               {activeTab === 'financeiro' && <FinanceiroModule />}

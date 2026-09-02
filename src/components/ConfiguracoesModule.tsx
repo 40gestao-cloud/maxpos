@@ -76,7 +76,9 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       .catch(() => {});
   }, []);
 
-  const canAudit = user?.role === 'admin' || user?.role === 'admin_master';
+  // Auditoria e leitura de rastro de quem fez o que — cabe a gestao, nao ao
+  // Operador de Caixa, que apareceria no proprio log.
+  const canAudit = user?.role === 'admin_master' || user?.role === 'ceo';
   const canFactoryReset = canAudit;
 
   const loadAudit = async () => {

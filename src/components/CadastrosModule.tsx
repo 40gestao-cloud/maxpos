@@ -319,7 +319,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         Storage.getProducts(nichoFilter),
         Storage.getSuppliers(nichoFilter),
         Storage.getServices(nichoFilter),
-        Storage.getUsers(),
+        Storage.getUsers(nichoFilter),
         Storage.getCategories(nichoFilter),
       ])
         .then(([c, p, s, sv, u, cat]) => {
@@ -370,7 +370,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           newUser.password,
           newUser.name,
           newUser.role,
-          currentUser?.id
+          currentUser?.id,
+          // A empresa do novo usuario e a que esta aberta na tela.
+          filialAtiva ?? 'supermax',
         );
         setUsers(prev => [...prev, created]);
         showAlert('Novo membro cadastrado! Ele pode acessar com o e-mail e senha definidos.');
@@ -389,15 +391,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const NIVEL: Record<UserRole, number> = {
     admin_master: 100,
     ceo: 80,
-    admin: 80,
-    gerente_logistica: 60,
-    gerente_vendas: 60,
-    gerente_financas: 60,
-    colaborador_logistica: 40,
-    colaborador_vendas: 40,
-    colaborador_atendimento: 40,
-    colaborador_financas: 40,
-    operador_geral: 20,
+    operador_caixa: 20,
   };
 
   // Só cargos ESTRITAMENTE abaixo do seu. E o que impede a escalada em dois
@@ -421,16 +415,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
   const ROLE_LABELS: Record<UserRole, string> = {
     admin_master: 'Admin Master',
-    admin: 'Acesso Total',
     ceo: 'CEO',
-    gerente_logistica: 'Gerente Logística',
-    gerente_vendas: 'Gerente Vendas',
-    gerente_financas: 'Gerente Finanças',
-    colaborador_logistica: 'Colaborador Logística',
-    colaborador_vendas: 'Colaborador Vendas',
-    colaborador_atendimento: 'Colaborador Atendimento',
-    colaborador_financas: 'Colaborador Finanças',
-    operador_geral: 'Operador Geral',
+    operador_caixa: 'Operador de Caixa',
   };
 
   const availableRoles = getAvailableRoles(currentUser?.role);

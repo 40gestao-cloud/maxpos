@@ -102,6 +102,10 @@ async function main() {
       email,
       password: senha,
       email_confirm: true, // caixa de loja não tem inbox para confirmar
+      // O trigger handle_new_user le daqui. Sem `loja`, o perfil nasce sem
+      // empresa e o trigger aplica_lojas_por_cargo recusa o cadastro — o erro
+      // chega como um generico "Database error creating new user".
+      user_metadata: { name: nome, role: 'operador_caixa', loja },
     });
 
     if (error) {
@@ -124,11 +128,11 @@ async function main() {
       id: data.user.id,
       email,
       name: nome,
-      // 'operador_geral' e o cargo de balcao do UserRole (src/types.ts) — nao
-      // invente cargo novo aqui: `tem_cargo()` e as policies de DELETE
-      // conhecem essa lista, e um valor fora dela vira um usuario sem permissao
-      // nenhuma e sem mensagem de erro clara.
-      role: 'operador_geral',
+      // 'operador_caixa' e o cargo de balcao (src/types.ts). Nao invente cargo
+      // novo aqui: o CHECK `user_profiles_role_valido` so aceita
+      // admin_master / ceo / operador_caixa, e qualquer outro valor faz o
+      // upsert falhar com o auth.user JA criado — sobra um usuario sem perfil.
+      role: 'operador_caixa',
       lojas: [loja],
     });
 
