@@ -54,11 +54,29 @@ export default function RelatoriosModule() {
 
     load();
 
-    const ch = supabase.channel('relatorios-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, load)
+    // Filtro no servidor + debounce, mesma regra do PDV: sem `filter` este
+    // canal recebia as vendas das TRES empresas, e cada uma disparava um
+    // `load()` que rebaixa o historico inteiro. Com 40 caixas vendendo, um
+    // relatorio aberto num telao vira dezenas de refetches por minuto — e o
+    // relatorio nem precisa ser ao vivo ao segundo.
+    let recarga: ReturnType<typeof setTimeout> | null = null;
+    const loadDebounced = () => {
+      if (recarga) clearTimeout(recarga);
+      recarga = setTimeout(load, 1500);
+    };
+
+    const ch = supabase.channel(`relatorios-rt-${filialAtiva ?? 'supermax'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'sales',
+        filter: `pdv_mode=eq.${filialAtiva ?? 'supermax'}`,
+      }, loadDebounced)
       .subscribe();
 
-    return () => { active = false; supabase.removeChannel(ch); };
+    return () => {
+      active = false;
+      if (recarga) clearTimeout(recarga);
+      supabase.removeChannel(ch);
+    };
   }, [filialAtiva]);
 
   // Tudo abaixo lê desta lista, não de `sales` cru: sem isso o gráfico e o

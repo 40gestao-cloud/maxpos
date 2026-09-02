@@ -88,6 +88,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string, type: string, name: string } | null>(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: '' as UserRole });
   const [senhaVisivel, setSenhaVisivel] = useState(false);
+  // Segundo passo da remocao: aparece so quando a empresa atual e a UNICA da
+  // pessoa, e a escolha passa a ser entre nada e apagar a conta.
+  const [excluirContaConfirm, setExcluirContaConfirm] = useState<{ id: string; name: string } | null>(null);
+  // Empresas marcadas no formulario de edicao. So vale para Operador de
+  // Caixa: gestao opera nas tres por definicao do cargo.
+  const [lojasForm, setLojasForm] = useState<string[]>([]);
   const [barcodeModal, setBarcodeModal] = useState<{ isOpen: boolean, product: any | null }>({ isOpen: false, product: null });
   const [stockModal, setStockModal] = useState<{ isOpen: boolean, product: any | null, action: 'sum' | 'subtract' | 'correct', amount: number }>({ isOpen: false, product: null, action: 'sum', amount: 0 });
   const barcodeRef = useRef<SVGSVGElement>(null);
@@ -374,12 +380,38 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUser.role) return showAlert('Selecione um cargo');
+    if (editingItem && newUser.role === 'operador_caixa' && lojasForm.length === 0) {
+      // Sem empresa nenhuma o usuario some de todas as listas e nao entra em
+      // lugar nenhum. Para tirar o acesso, o caminho e excluir a conta.
+      return showAlert('Marque pelo menos uma empresa para o Operador de Caixa.');
+    }
 
     if (editingItem) {
       try {
         await Storage.updateUserProfile(editingItem.id, { name: newUser.name, role: newUser.role as UserRole });
-        const updatedUsers = users.map(u => u.id === editingItem.id ? { ...u, name: newUser.name, role: newUser.role as UserRole } : u);
-        setUsers(updatedUsers);
+
+        // Empresas: so para Operador. Gestao recebe as tres do trigger, e
+        // mexer aqui seria brigar com ele.
+        let lojasFinais: string[] = (editingItem.lojas ?? []) as string[];
+        if (newUser.role === 'operador_caixa') {
+          const antes = new Set<string>((editingItem.lojas ?? []) as string[]);
+          const agora = new Set<string>(lojasForm);
+          // Adiciona antes de remover: passar por zero empresas faria a RPC
+          // recusar, e o usuario ficaria sem nenhuma no meio do caminho.
+          for (const l of agora) {
+            if (!antes.has(l)) await Storage.adicionarUsuarioNaEmpresa(editingItem.id, l);
+          }
+          for (const l of antes) {
+            if (!agora.has(l)) await Storage.removerUsuarioDaEmpresa(editingItem.id, l);
+          }
+          lojasFinais = [...agora];
+        }
+
+        const updatedUsers = users.map(u => u.id === editingItem.id
+          ? { ...u, name: newUser.name, role: newUser.role as UserRole, lojas: lojasFinais }
+          : u);
+        // Sai da lista se deixou de operar na empresa aberta.
+        setUsers(updatedUsers.filter(u => (u.lojas ?? []).includes(nichoFilter)));
         toast.sucesso({ titulo: `${newUser.name} atualizado` });
       } catch (err: any) {
         showAlert('Erro ao atualizar membro: ' + err.message);
@@ -696,8 +728,27 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         await Storage.deleteService(id);
         setServices(prev => prev.filter(s => s.id !== id));
       } else if (type === 'equipe') {
-        await Storage.deleteUser(id);
+        // A pessoa pode operar em mais de uma empresa, e e UM registro so.
+        // A lixeira desta lista significa "sai DESTA loja", nao "some do
+        // sistema" — senao remover alguem da MaxLook o apagaria tambem do
+        // SuperMax, onde ele continua trabalhando.
+        const r = await Storage.removerUsuarioDaEmpresa(id, nichoFilter);
+
+        if (r === 'ultima_empresa') {
+          // Nao ha loja para tirar: esta e a unica. Deixar o usuario sem
+          // nenhuma empresa o tornaria invisivel em todas as listas, sem
+          // conseguir entrar em lugar nenhum — pior que apagar. Entao a
+          // decisao volta para quem clicou, agora explicita.
+          setDeleteConfirm(null);
+          setExcluirContaConfirm({ id, name: deleteConfirm.name });
+          return;
+        }
+
         setUsers(prev => prev.filter(u => u.id !== id));
+        toast.sucesso({
+          titulo: `${deleteConfirm.name} saiu da ${FILIAL_META[nichoFilter].label}`,
+          mensagem: 'A conta continua ativa nas outras empresas em que ele opera.',
+        });
       }
     } catch (err: any) {
       showAlert('Erro ao excluir: ' + err.message);
@@ -758,6 +809,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     if (type === 'fornecedor') setShowAddSupplier(true);
     if (type === 'equipe') {
       setNewUser({ name: item.name, email: item.email, password: item.password, role: item.role });
+      setLojasForm((item.lojas ?? []) as string[]);
       setShowAddUser(true);
     }
   };
@@ -1703,6 +1755,56 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 </select>
               </div>
             </div>
+            {/* Empresas — so na EDICAO e so para Operador de Caixa.
+                No cadastro nao aparece porque a empresa e a que esta aberta na
+                tela; e para gestao nao faz sentido, ja que admin_master e ceo
+                operam as tres por definicao do cargo (o trigger
+                aplica_lojas_por_cargo sobrescreveria qualquer escolha). */}
+            {editingItem && newUser.role === 'operador_caixa' && (
+              <div className="space-y-2 lg:col-span-4">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
+                  Empresas em que opera
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  {(['supermax', 'maxlook', 'techmax'] as const).map(f => {
+                    const m = FILIAL_META[f];
+                    const marcada = lojasForm.includes(f);
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setLojasForm(prev =>
+                          prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f],
+                        )}
+                        className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border-2 transition-all active:scale-95"
+                        style={{
+                          borderColor: marcada ? m.dark : '#d1d5db',
+                          background: marcada ? `${m.color}22` : 'transparent',
+                        }}
+                        aria-pressed={marcada}
+                      >
+                        <span
+                          className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden shrink-0"
+                          style={{ background: m.plate, opacity: marcada ? 1 : 0.4 }}
+                        >
+                          <img src={m.logo} alt="" className="w-6 h-6 object-contain" />
+                        </span>
+                        <span
+                          className="text-xs font-black uppercase tracking-wider"
+                          style={{ color: marcada ? m.dark : '#9ca3af' }}
+                        >
+                          {m.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-500 ml-1">
+                  A mesma pessoa pode atender mais de uma empresa. Ao entrar, quem tem
+                  uma só vai direto para ela; quem tem mais escolhe no login.
+                </p>
+              </div>
+            )}
             <div className="lg:col-span-4 flex justify-end">
               <button type="submit" className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
                 {editingItem ? 'SALVAR ALTERAÇÕES' : 'CONFIRMAR CADASTRO'}
@@ -3032,12 +3134,28 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
               
               <div className="space-y-4">
-                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">Confirmar Exclusão</h3>
-                <p className="text-sm text-gray-600">
-                  Deseja realmente excluir <strong>{deleteConfirm.name}</strong>?
-                  <br />
-                  <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
-                </p>
+                {/* Pessoa nao e "excluida" desta tela: ela SAI DESTA EMPRESA.
+                    Dizer "excluir" aqui seria mentira — ela continua operando
+                    nas outras lojas dela. */}
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">
+                  {deleteConfirm.type === 'equipe' ? 'Remover da empresa' : 'Confirmar Exclusão'}
+                </h3>
+                {deleteConfirm.type === 'equipe' ? (
+                  <p className="text-sm text-gray-600">
+                    Tirar <strong>{deleteConfirm.name}</strong> da{' '}
+                    <strong>{FILIAL_META[nichoFilter].label}</strong>?
+                    <br />
+                    <span className="text-xs text-gray-500 mt-2 inline-block">
+                      A conta continua ativa nas outras empresas em que ele opera.
+                    </span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    Deseja realmente excluir <strong>{deleteConfirm.name}</strong>?
+                    <br />
+                    <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4 pt-4">
@@ -3052,6 +3170,56 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
                 >
                   Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Segundo passo: a empresa atual e a UNICA da pessoa, entao nao ha o
+            que remover. A escolha vira "apagar a conta" — e isso, sim, e
+            irreversivel, por isso vem separado e com outra pergunta. */}
+        {excluirContaConfirm && (
+          <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="neumorphic p-10 max-w-sm w-full space-y-8 text-center animate-in zoom-in duration-300">
+              <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]">
+                <Trash2 size={40} />
+              </div>
+              <div className="space-y-4">
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">Excluir a conta?</h3>
+                <p className="text-sm text-gray-600">
+                  A <strong>{FILIAL_META[nichoFilter].label}</strong> é a única empresa de{' '}
+                  <strong>{excluirContaConfirm.name}</strong> — não há de onde removê-lo.
+                  <br />
+                  <span className="text-xs text-gray-500 mt-2 inline-block">
+                    Excluir apaga o acesso dele por completo, e o e-mail volta a ficar livre.
+                  </span>
+                  <br />
+                  <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <button
+                  onClick={() => setExcluirContaConfirm(null)}
+                  className="p-4 neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    const alvo = excluirContaConfirm;
+                    setExcluirContaConfirm(null);
+                    try {
+                      await Storage.deleteUser(alvo.id);
+                      setUsers(prev => prev.filter(u => u.id !== alvo.id));
+                      toast.sucesso({ titulo: `Conta de ${alvo.name} excluída` });
+                    } catch (err: any) {
+                      showAlert('Erro ao excluir: ' + err.message);
+                    }
+                  }}
+                  className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
+                >
+                  Excluir
                 </button>
               </div>
             </div>

@@ -119,10 +119,25 @@ export default function FiscalModule() {
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
     load();
-    const ch = supabase.channel('fiscal-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, load)
+    // Ver RelatoriosModule: sem `filter` o canal trazia as vendas das tres
+    // empresas e cada evento recarregava a lista inteira de cupons.
+    let recarga: ReturnType<typeof setTimeout> | null = null;
+    const loadDebounced = () => {
+      if (recarga) clearTimeout(recarga);
+      recarga = setTimeout(load, 1500);
+    };
+
+    const ch = supabase.channel(`fiscal-rt-${filialAtiva ?? 'supermax'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'sales',
+        filter: `pdv_mode=eq.${filialAtiva ?? 'supermax'}`,
+      }, loadDebounced)
       .subscribe();
-    return () => { active = false; supabase.removeChannel(ch); };
+    return () => {
+      active = false;
+      if (recarga) clearTimeout(recarga);
+      supabase.removeChannel(ch);
+    };
   }, [filialAtiva]);
 
   const persistEmitted = (set: Set<string>) => {

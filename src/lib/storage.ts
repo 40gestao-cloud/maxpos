@@ -371,56 +371,18 @@ export const Storage = {
     return (data ?? []).map(mapSaleRow);
   },
 
-  saveSale: async (sale: Sale): Promise<void> => {
-    const { error: saleErr } = await supabase.from('sales').insert({
-      id: sale.id,
-      date: sale.date,
-      total: sale.total,
-      clientId: sale.clientId,
-      vendedorId: sale.vendedorId,
-      status: sale.status,
-      pdv_mode: sale.pdvMode ?? 'supermax',
-      vendedor_nome: sale.vendedorNome ?? null,
-      imei_serial: sale.imeiSerial ?? null,
-      tipo_atendimento: sale.tipoAtendimento ?? null,
-      defeito_relatado: sale.defeitoRelatado ?? null,
-    });
-    if (saleErr) throw saleErr;
-
-    if (sale.items.length > 0) {
-      const { error: itemsErr } = await supabase.from('sale_items').insert(
-        sale.items.map(item => ({
-          saleId: sale.id,
-          productId: item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-          costPrice: item.costPrice ?? 0,
-          category: item.category ?? '',
-          ref: item.ref ?? '',
-          unit: item.unit ?? 'UN',
-          ean13: item.ean13 ?? null,
-          controlStock: item.controlStock ?? true,
-          stock: item.stock ?? 0,
-          minStock: item.minStock ?? 0,
-        }))
-      );
-      if (itemsErr) throw itemsErr;
-    }
-
-    if (sale.payments.length > 0) {
-      const { error: paymentsErr } = await supabase.from('sale_payments').insert(
-        sale.payments.map(p => ({
-          saleId: sale.id,
-          method: p.method,
-          amount: p.amount,
-          installments: p.installments ?? null,
-          clientId: p.clientId ?? null,
-        }))
-      );
-      if (paymentsErr) throw paymentsErr;
-    }
-  },
+  // saveSale foi REMOVIDA em 2026-09-01.
+  //
+  // Era codigo morto — nenhuma tela a chamava — e uma armadilha esperando:
+  // ela inseria em `sales` sem `sessionId`, entao qualquer venda gravada por
+  // ela ficaria orfa de caixa. O fechamento nao a somaria, `getCashSalesTotal`
+  // nao a veria, e a conferencia do turno fecharia errado sem ninguem
+  // entender por que. Alem disso nao passava por finalize_sale_atomic, ou
+  // seja, nao travava estoque nem debitava fiado na mesma transacao.
+  //
+  // O caminho unico e correto e a RPC `finalize_sale_atomic` (ver PDVModule):
+  // insere venda + itens + pagamentos, baixa estoque com lock ordenado e
+  // debita fiado, tudo num bloco so.
 
   // ─── Parcelas de Crédito ─────────────────────────────────
   getInstallmentsBySale: async (saleId: string): Promise<CreditInstallment[]> => {
@@ -539,6 +501,32 @@ export const Storage = {
   // auto-deleção bloqueada.
   deleteUser: async (userId: string): Promise<void> => {
     const { error } = await supabase.rpc('delete_user_completely', { p_user_id: userId });
+    if (error) throw error;
+  },
+
+  // Tira a pessoa de UMA empresa, sem apagar a conta dela.
+  //
+  // A mesma pessoa pode operar em mais de uma loja, e ela e UM registro so —
+  // entao a lixeira na lista da MaxLook nao pode apagar quem tambem atende o
+  // SuperMax. Retorna 'ultima_empresa' quando aquela e a unica que ele tem:
+  // ai nao ha o que remover, e a tela oferece excluir a conta.
+  removerUsuarioDaEmpresa: async (
+    userId: string,
+    loja: string,
+  ): Promise<'removido' | 'ultima_empresa'> => {
+    const { data, error } = await supabase.rpc('remover_usuario_da_empresa', {
+      p_user_id: userId,
+      p_loja: loja,
+    });
+    if (error) throw error;
+    return data === 'ultima_empresa' ? 'ultima_empresa' : 'removido';
+  },
+
+  adicionarUsuarioNaEmpresa: async (userId: string, loja: string): Promise<void> => {
+    const { error } = await supabase.rpc('adicionar_usuario_na_empresa', {
+      p_user_id: userId,
+      p_loja: loja,
+    });
     if (error) throw error;
   },
 
