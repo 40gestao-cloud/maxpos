@@ -1726,9 +1726,30 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // viraria no-op silencioso.
     Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
 
-    const ch = supabase.channel(`pdv-products-${pdvMode}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' },
+    // O PDV NAO assina `products` em tempo real. Explicando, porque a
+    // tentacao de "religar isso" e grande:
+    //
+    // Cada venda faz um UPDATE em `products` por item, e o Realtime entrega
+    // esse evento a TODOS os caixas da loja. Com 40 caixas abertos, 20 vendas
+    // por hora e 2 itens por venda, sao ~64 mil mensagens/hora — uma aula de
+    // 4h consome ~256 mil das 2 milhoes/mes do plano free. Tres empresas
+    // juntas estouram a cota em poucas aulas. O custo cresce com o QUADRADO
+    // do numero de caixas, entao nenhuma otimizacao de payload resolve.
+    //
+    // E o que se perde e quase nada: um operador nao precisa ver, ao vivo,
+    // que outro caixa vendeu uma camisa. Quem garante o estoque e
+    // `finalize_sale_atomic`, que trava a linha e recusa a venda se faltar —
+    // no servidor, na hora certa, com mensagem propria (o catch de
+    // 'estoque insuficiente' recarrega a lista). A tela do proprio operador
+    // fica correta porque a venda baixa o estoque local ao concluir.
+    //
+    // `clients` continua assinado, mas so em INSERT: cliente novo cadastrado
+    // em outro terminal precisa aparecer, enquanto UPDATE era justamente o
+    // saldo de fiado mudando a cada venda — mesmo fan-out de `products`, e o
+    // limite de fiado tambem e validado no servidor.
+    const ch = supabase.channel(`pdv-clients-${pdvMode}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'clients', filter: `pdv_mode=eq.${pdvMode}` },
         () => { Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {}); })
       .subscribe();
 
@@ -3325,6 +3346,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         setTrainingSalesHistory(prev => [newSale, ...prev].slice(0, 10));
       }
       playBeep('finalize');
+
+      // Baixa o estoque na tela deste caixa. Antes isso chegava pelo Realtime
+      // de `products`, que saiu por custo (ver o comentario no efeito de
+      // carga). O servidor ja debitou dentro de finalize_sale_atomic — aqui e
+      // so refletir, sem nova ida ao banco.
+      if (!runsLocalOnly) {
+        const baixas = new Map<string, number>();
+        for (const it of newSale.items) {
+          if (it.controlStock === false) continue;
+          baixas.set(it.id, (baixas.get(it.id) ?? 0) + it.quantity);
+        }
+        if (baixas.size > 0) {
+          setProducts(prev => prev.map(p => {
+            const qtd = baixas.get(p.id);
+            if (qtd === undefined) return p;
+            // Arredonda: quantidade fracionada (granel) acumula erro de float.
+            return { ...p, stock: parseFloat(((p.stock ?? 0) - qtd).toFixed(3)) };
+          }));
+        }
+      }
 
       const trocoFinal = cashChange;
       setCart([]);

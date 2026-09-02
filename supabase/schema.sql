@@ -582,7 +582,8 @@ GRANT EXECUTE ON FUNCTION public.confirmar_pix_pendente(UUID)
 -- CAIXA (sessão de turno do operador + movimentos sangria/suprimento)
 -- ============================================================
 -- Sessão de caixa: aberta com fundo de troco, fechada com contagem física.
--- Cada operador pode ter no máximo UMA sessão aberta por vez.
+-- O caixa é POR LOJA (pdv_mode): o mesmo operador pode ter um caixa aberto
+-- no SuperMax e outro na MaxLook ao mesmo tempo, cada um com sua gaveta.
 CREATE TABLE IF NOT EXISTS cash_sessions (
   id                TEXT PRIMARY KEY,
   "operadorId"     TEXT NOT NULL,
@@ -592,13 +593,26 @@ CREATE TABLE IF NOT EXISTS cash_sessions (
   "dinheiroContado" NUMERIC(12,2),
   observacao        TEXT,
   status            TEXT NOT NULL DEFAULT 'aberto',
-  created_at        TIMESTAMPTZ DEFAULT NOW()
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  pdv_mode          TEXT NOT NULL DEFAULT 'supermax'
 );
 
--- Garante 1 sessão aberta por operador (índice parcial)
-CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_one_open_per_operator
-  ON cash_sessions ("operadorId")
+-- Bancos criados antes do multi-loja não têm a coluna.
+ALTER TABLE cash_sessions
+  ADD COLUMN IF NOT EXISTS pdv_mode TEXT NOT NULL DEFAULT 'supermax';
+
+-- O índice antigo só olhava "operadorId" e barrava a abertura do caixa da
+-- MaxLook/TechMax quando o do SuperMax já estava aberto. Ver o patch
+-- 2026-09-01_cash_sessions_um_caixa_por_loja.sql.
+DROP INDEX IF EXISTS cash_sessions_one_open_per_operator;
+
+-- Garante 1 sessão aberta por operador EM CADA loja (índice parcial)
+CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_um_aberto_por_loja
+  ON cash_sessions ("operadorId", pdv_mode)
   WHERE status = 'aberto';
+
+CREATE INDEX IF NOT EXISTS cash_sessions_operador_modo_idx
+  ON cash_sessions ("operadorId", pdv_mode, status);
 
 CREATE INDEX IF NOT EXISTS cash_sessions_status_idx
   ON cash_sessions (status, "aberturaAt" DESC);
