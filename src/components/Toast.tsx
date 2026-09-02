@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type Key } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
@@ -69,7 +69,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-live="polite"
       >
         <AnimatePresence initial={false}>
-          {fila.map((t: ToastInterno) => (
+          {fila.map(t => (
             <ToastCard key={t.id} toast={t} onClose={() => fechar(t.id)} />
           ))}
         </AnimatePresence>
@@ -78,13 +78,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// `key` declarada de proposito: este projeto nao instala @types/react, e o
-// shim de JSX em uso nao reconhece `key` como atributo implicito de componente
-// de funcao — sem isto o tsc acusa "Property 'key' does not exist". O React
-// consome a key antes de montar, entao ela nunca chega aqui dentro; a
-// declaracao existe so para o checker. (Instalar @types/react resolveria na
-// raiz, mas mexe no build inteiro por causa de um toast.)
-function ToastCard({ toast, onClose }: { toast: ToastInterno; onClose: () => void; key?: Key }) {
+function ToastCard({ toast, onClose }: { toast: ToastInterno; onClose: () => void }) {
   const m = FILIAL_META[toast.loja];
   const [pausado, setPausado] = useState(false);
 

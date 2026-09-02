@@ -104,12 +104,22 @@ export default function FinanceiroModule() {
   useEffect(() => {
     let active = true;
     const load = () =>
-      Promise.all([
+      // Ver o comentario em EstoqueModule: `Promise.all` + catch vazio faz uma
+      // falha unica apagar a tela toda, sem dizer nada.
+      Promise.allSettled([
         Storage.getSales(filialAtiva ?? 'supermax'),
         Storage.getAccounts(filialAtiva ?? 'supermax'),
       ])
-        .then(([s, a]) => { if (active) { setSales(s); setAccounts(a); } })
-        .catch(() => {})
+        .then(([rs, ra]) => {
+          if (!active) return;
+          if (rs.status === 'fulfilled') setSales(rs.value);
+          if (ra.status === 'fulfilled') setAccounts(ra.value);
+          const falhou = [
+            rs.status === 'rejected' ? `Vendas: ${rs.reason?.message ?? 'falha'}` : null,
+            ra.status === 'rejected' ? `Contas: ${ra.reason?.message ?? 'falha'}` : null,
+          ].filter(Boolean);
+          if (falhou.length) showAlert(`Não foi possível carregar: ${falhou.join(' · ')}`);
+        })
         .finally(() => { if (active) setLoading(false); });
 
     load();

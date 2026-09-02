@@ -57,12 +57,24 @@ export default function EstoqueModule() {
       // Escopo da loja vai NO SERVIDOR. Antes vinham as tres empresas e a tela
       // descartava duas com `.filter` — pagando o trafego das outras e
       // dependendo de um filtro de UI para nao mostrar a loja errada.
-      Promise.all([
+      // allSettled + erro visivel: com `Promise.all` e um catch vazio, UMA
+      // consulta que falhasse zerava a tela inteira em silencio — a de
+      // Cadastros ja mostrou como isso engana, parecendo banco vazio quando o
+      // problema era outro.
+      Promise.allSettled([
         Storage.getProductsLite(filialAtiva ?? 'supermax'),
         Storage.getSales(filialAtiva ?? 'supermax'),
       ])
-        .then(([p, s]) => { if (active) { setProducts(p); setSales(s); } })
-        .catch(() => {})
+        .then(([rp, rs]) => {
+          if (!active) return;
+          if (rp.status === 'fulfilled') setProducts(rp.value);
+          if (rs.status === 'fulfilled') setSales(rs.value);
+          const falhou = [
+            rp.status === 'rejected' ? `Produtos: ${rp.reason?.message ?? 'falha'}` : null,
+            rs.status === 'rejected' ? `Vendas: ${rs.reason?.message ?? 'falha'}` : null,
+          ].filter(Boolean);
+          if (falhou.length) showAlert(`Não foi possível carregar: ${falhou.join(' · ')}`);
+        })
         .finally(() => { if (active) setLoading(false); });
 
     load();

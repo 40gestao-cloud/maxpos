@@ -1665,3 +1665,33 @@ $$;
 REVOKE ALL ON FUNCTION public.debitar_maxbank_salario(NUMERIC, TEXT, UUID) FROM public;
 GRANT EXECUTE ON FUNCTION public.debitar_maxbank_salario(NUMERIC, TEXT, UUID) TO authenticated;
 -- ============================================================
+
+-- ============================================================
+-- ESTADO DE 2026-09-01 — aplicado DEPOIS de tudo acima
+-- ============================================================
+-- O corpo deste arquivo e o schema historico e ainda descreve o mundo de
+-- antes: um caixa por operador (sem loja), 11 cargos com chairman/gerentes, e
+-- policies com LISTA FIXA de cargo. Reescrever tudo acima linha a linha seria
+-- arriscado, entao as mudancas do dia entram aqui no fim, de forma
+-- idempotente e na ordem certa — recriar o banco do zero com este arquivo
+-- chega ao mesmo estado que a producao.
+--
+-- Cada bloco tem um patch proprio, com o porque completo:
+--   2026-09-01_cash_sessions_um_caixa_por_loja.sql
+--   2026-09-01b_concorrencia_40_caixas.sql
+--   2026-09-01c_isolamento_empresas_parte2.sql
+--   2026-09-01d_hierarquia_admin_master.sql
+--   2026-09-01e_cargos_enxutos_e_usuario_por_empresa.sql
+--   2026-09-01f_policies_legadas_com_cargos_extintos.sql
+--
+-- AO RECRIAR: rode este arquivo e depois os patches na ordem acima. O unico
+-- passo manual e eleger o Admin Master, porque o e-mail muda por ambiente:
+--   UPDATE user_profiles SET role='admin_master' WHERE email='<o seu>';
+--
+-- A LICAO QUE ATRAVESSA TODOS ELES: nunca escreva LISTA FIXA DE CARGO em
+-- policy ou funcao. Ela envelhece calada — quando os cargos mudaram, 12
+-- policies e 2 funcoes ficaram apontando para nomes que nao existiam mais, e
+-- o dono do sistema perdeu auditoria, folha, MaxBank, Modo Visitante e o
+-- direito de apagar cadastros. Nenhuma delas deu erro: a policy so nao casava
+-- e a tela vinha vazia. Use `public.meu_nivel()`, que acompanha renomeacao.
+-- ============================================================
