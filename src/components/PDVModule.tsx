@@ -4239,6 +4239,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                                 Oferta
                               </span>
                             )}
+                            {/* Desconto por item saiu do supermercado (a oferta é
+                                decidida antes e chega no preço), mas nos nichos a
+                                negociação de balcão é o trabalho do vendedor — e
+                                sem este botão só sobrava o F6, invisível para
+                                quem opera no mouse. */}
+                            {pdvMode !== 'supermax' && (
+                              <button
+                                onClick={() => openItemDiscountModal(item.id)}
+                                tabIndex={-1}
+                                className="shrink-0 px-1.5 text-[10px] font-black border rounded hover:bg-yellow-100"
+                                style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
+                                title="Desconto neste item (F6)"
+                              >%</button>
+                            )}
                             {desc > 0 && (
                               <span className="text-[11px] font-bold tracking-wider align-middle inline-flex items-center gap-1 shrink-0" style={{ color: RED }}>
                                 · DESC −R$ {fmt(desc)}

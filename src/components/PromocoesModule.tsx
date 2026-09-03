@@ -16,14 +16,22 @@ import { buscarProdutos } from '../lib/produtoBusca';
 /**
  * Promoções — a oferta é decidida ANTES do caixa.
  *
- * O ciclo é o da loja de verdade e o mesmo do LogMax, onde a turma vai operar:
- * alguém propõe a oferta, a gestão aprova, e é a APROVAÇÃO que troca o preço do
- * produto. Do caixa em diante ninguém decide preço: o PDV bipa e mostra "de/por"
- * porque o preço anterior ficou guardado aqui. No fim do período o preço volta
- * sozinho.
+ * O ciclo é o da loja de verdade e o mesmo do LogMax, onde a turma vai operar,
+ * e tem TRÊS passos:
  *
- * Por isso o operador de caixa vê esta tela (precisa entender de onde vem o
- * preço) mas só propõe — aprovar é da gestão, e a RPC recusa o resto.
+ *   Marketing  propõe (produto, preço promocional, período);
+ *   Financeiro confere a margem contra o custo e dá o parecer;
+ *   Gestão     libera — e é a liberação que troca o preço do produto.
+ *
+ * Do caixa em diante ninguém decide preço: o PDV bipa e mostra "de/por" porque
+ * o preço anterior ficou guardado aqui. No fim do período o preço volta sozinho.
+ *
+ * Os dois primeiros passos são livres de propósito: aqui é simulador, e a graça
+ * é o Operador de Caixa percorrer a cadeia inteira — cada passo fica registrado
+ * com nome e hora. Só a liberação é da gestão (`meu_nivel() >= 80`, que com o
+ * CHECK de cargos vigente é exatamente admin_master e ceo), e a RPC recusa o
+ * resto. Reprovar cabe nos dois passos: o Financeiro barra na análise, a gestão
+ * barra na revisão.
  */
 
 const HOJE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Rio_Branco' });
@@ -43,9 +51,10 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
   const { filialAtiva } = useFilial();
   const loja = filialAtiva ?? 'supermax';
   const meta = FILIAL_META[loja];
-  // Aprovar é da gestão. O caixa propõe — quem decide preço é quem responde
-  // pela margem.
-  const podeDecidir = currentUser.role === 'admin_master' || currentUser.role === 'ceo';
+  // Liberar é da gestão — é o passo que troca o preço. Espelha o
+  // `meu_nivel() >= 80` das RPCs: com o CHECK `user_profiles_role_valido`
+  // vigente (admin_master, ceo, operador_caixa) esses dois são a gestão inteira.
+  const podeLiberar = currentUser.role === 'admin_master' || currentUser.role === 'ceo';
 
   const [promos, setPromos] = useState<Promocao[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -122,7 +131,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
         createdBy: currentUser.id,
         createdByName: currentUser.name,
       });
-      toast.sucesso({ titulo: 'Oferta proposta', mensagem: 'Aguardando a gestão aprovar.' });
+      toast.sucesso({ titulo: 'Oferta proposta', mensagem: 'Agora vai ao Financeiro, para o parecer de margem.' });
       setForm(null);
       await carregar();
     } catch (err: any) {
@@ -134,18 +143,18 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
 
   const aprovar = (p: Promocao) => {
     askConfirm({
-      title: 'APROVAR OFERTA',
+      title: 'LIBERAR OFERTA',
       message:
         `${p.productName}\n` +
         `De ${formatBRL(p.priceBefore)} por ${formatBRL(p.promoPrice)}.\n\n` +
-        'Ao aprovar, o preço do produto muda AGORA e o caixa passa a vender pelo promocional. ' +
+        'Ao liberar, o preço do produto muda AGORA e o caixa passa a vender pelo promocional. ' +
         'No fim do período o preço volta sozinho.',
-      confirmLabel: 'APROVAR E TROCAR O PREÇO',
+      confirmLabel: 'LIBERAR E TROCAR O PREÇO',
       cancelLabel: 'VOLTAR',
       onConfirm: async () => {
         try {
           await Storage.aprovarPromocao(p.id);
-          toast.sucesso({ titulo: 'Oferta aprovada', mensagem: `${p.productName} agora sai por ${formatBRL(p.promoPrice)}.` });
+          toast.sucesso({ titulo: 'Oferta liberada', mensagem: `${p.productName} agora sai por ${formatBRL(p.promoPrice)}.` });
           await carregar();
         } catch (err: any) {
           showAlert('Erro ao aprovar: ' + (err?.message ?? err));
@@ -400,17 +409,29 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
                   {vigente ? 'Vigente no caixa' : chip.label}
                 </span>
 
+                {/* Passo 1. Recusar cabe aqui também: o Financeiro que não vê
+                    margem barra a oferta em vez de empurrá-la para a gestão. */}
                 {p.status === 'Pendente' && (
-                  <button
-                    onClick={() => setAnalisando({ id: p.id, parecer: '' })}
-                    className="neumorphic neumorphic-clickable px-3 py-2 text-[11px] font-black uppercase tracking-wider text-gray-900"
-                    title="Parecer do Financeiro — confere a margem antes de a oferta ir para a gestão"
-                  >
-                    Dar parecer
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setAnalisando({ id: p.id, parecer: '' })}
+                      className="neumorphic neumorphic-clickable px-3 py-2 text-[11px] font-black uppercase tracking-wider text-gray-900"
+                      title="Parecer do Financeiro — confere a margem antes de a oferta ir para a gestão"
+                    >
+                      Dar parecer
+                    </button>
+                    <button
+                      onClick={() => setReprovando({ id: p.id, motivo: '' })}
+                      title="Reprovar — a margem não fecha"
+                      className="w-9 h-9 rounded-lg flex items-center justify-center text-white"
+                      style={{ background: '#dc2626' }}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 )}
 
-                {podeDecidir && (
+                {podeLiberar && (
                   <div className="flex items-center gap-1.5">
                     {p.status === 'Em Analise' && (
                       <>
