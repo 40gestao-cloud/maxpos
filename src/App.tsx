@@ -110,6 +110,23 @@ function AppInterno() {
     // que fazia todo Ctrl+Shift+R voltar pra tela de login.
     const loadingTimeout = setTimeout(() => { if (alive) setIsLoading(false); }, 8000);
 
+    // Fim de promoção devolve o preço. O MaxPOS não tem cron (é SPA), então a
+    // varredura roda quando o app abre — idempotente e barata. Falhar não pode
+    // impedir o login: no pior caso a oferta vencida segue no preço até a
+    // próxima abertura, que é o que acontecia antes de existir.
+    //
+    // Só DEPOIS de haver sessão: a RPC é `GRANT ... TO authenticated`, então
+    // chamada no mount ela respondia 401 antes de o token existir, o `.catch`
+    // engolia e a varredura simplesmente não acontecia — nem ali, nem no
+    // primeiro login, porque o efeito não roda de novo. Uma vez por sessão do
+    // app basta; o `TOKEN_REFRESHED` de hora em hora não precisa repetir.
+    let varreuPromocoes = false;
+    const reverterPromocoes = () => {
+      if (varreuPromocoes) return;
+      varreuPromocoes = true;
+      Storage.reverterPromocoesExpiradas().catch(() => { varreuPromocoes = false; });
+    };
+
     const boot = async () => {
       // Passo 1 — existe sessão? Leitura do token no localStorage; só toca a
       // rede se ele estiver expirado (aí o refresh é o que decide mesmo).
@@ -125,6 +142,9 @@ function AppInterno() {
         setIsLoading(false);
         return;
       }
+
+      // Há sessão: agora a RPC de reversão tem token para apresentar.
+      reverterPromocoes();
 
       // Passo 2 — há sessão: o operador está autenticado, então a tela do
       // sistema já pode aparecer. name/role viajam no próprio token, o que
@@ -157,12 +177,6 @@ function AppInterno() {
 
     boot();
 
-    // Fim de promoção devolve o preço. O MaxPOS não tem cron (é SPA), então a
-    // varredura roda quando o app abre — idempotente e barata. Falhar aqui não
-    // pode impedir o login: no pior caso a oferta vencida segue no preço até a
-    // próxima abertura, que é exatamente o que acontecia antes de existir.
-    Storage.reverterPromocoesExpiradas().catch(() => {});
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') {
         setUser(null);
@@ -181,6 +195,11 @@ function AppInterno() {
           Storage.getSession()
             .then(u => { if (u) setUser(u); })
             .catch(() => { /* mantém a sessão em memória */ });
+
+          // Primeiro login da máquina: o boot rodou sem sessão e não voltou a
+          // rodar. É aqui que a varredura acontece — e o mesmo `setTimeout`
+          // serve, porque a restrição do supabase-js #1120 vale para ela.
+          reverterPromocoes();
         }, 0);
       }
     });
