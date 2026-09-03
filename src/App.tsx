@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import InicioModule from './components/InicioModule';
 import PDVModule from './components/PDVModule';
 import CadastrosModule from './components/CadastrosModule';
+import PromocoesModule from './components/PromocoesModule';
 import EstoqueModule from './components/EstoqueModule';
 import FinanceiroModule from './components/FinanceiroModule';
 import FolhaPagamentoModule from './components/FolhaPagamentoModule';
@@ -38,7 +39,7 @@ import { User } from './types';
 // `equipe` saiu daqui: virou o menu de topo "Usuarios". Gerir gente nao e um
 // cadastro como produto ou fornecedor — e a unica coisa que o Operador de
 // Caixa NAO faz, entao precisa de um item proprio para poder sumir do menu.
-type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
+type SubCadastro = 'categorias' | 'produtos' | 'promocoes' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
 type Tab =
   | 'inicio' | 'pdv'
@@ -49,6 +50,9 @@ type Tab =
 const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
   { id: 'categorias',   label: 'Categorias' },
   { id: 'produtos',     label: 'Produtos' },
+  // Oferta é cadastro, não é decisão de caixa: fica ao lado do produto cujo
+  // preço ela troca.
+  { id: 'promocoes',    label: 'Promoções' },
   { id: 'servicos',     label: 'Serviços' },
   { id: 'clientes',     label: 'Clientes' },
   { id: 'fornecedores', label: 'Fornecedores' },
@@ -152,6 +156,12 @@ function AppInterno() {
     };
 
     boot();
+
+    // Fim de promoção devolve o preço. O MaxPOS não tem cron (é SPA), então a
+    // varredura roda quando o app abre — idempotente e barata. Falhar aqui não
+    // pode impedir o login: no pior caso a oferta vencida segue no preço até a
+    // próxima abertura, que é exatamente o que acontecia antes de existir.
+    Storage.reverterPromocoesExpiradas().catch(() => {});
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') {
@@ -487,7 +497,10 @@ function AppInterno() {
                 />
                 </div>
               )}
-              {subCadastroAtivo && (
+              {subCadastroAtivo === 'promocoes' && (
+                <PromocoesModule currentUser={user} />
+              )}
+              {subCadastroAtivo && subCadastroAtivo !== 'promocoes' && (
                 <CadastrosModule currentUser={user} subTab={subCadastroAtivo} />
               )}
               {activeTab === 'usuarios' && (

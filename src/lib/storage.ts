@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao } from '../types';
+import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao, Promocao, OfertaVigente } from '../types';
 
 /**
  * Restringe uma query à empresa informada. Sem `pdvMode` a query passa
@@ -904,6 +904,104 @@ export const Storage = {
       .maybeSingle();
     if (error) throw error;
     return (data as MaxbankConta | null) ?? null;
+  },
+
+  // ─── Promoções ────────────────────────────────────────────
+  // Preço promocional NÃO é decisão do caixa: a oferta é proposta, aprovada
+  // pela gestão, e é a aprovação que troca o preço do produto. Aqui só ficam
+  // as chamadas; as regras (quem aprova, o que muda, quando volta) moram nas
+  // RPCs, que são as mesmas para qualquer tela que venha depois.
+  getPromocoes: async (pdvMode?: Product['pdvMode']): Promise<Promocao[]> => {
+    const q = escopoFilial(supabase.from('promocoes').select('*'), pdvMode);
+    const { data, error } = await q.order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      id: r.id,
+      productId: r.product_id,
+      productName: r.product_name ?? '',
+      priceBefore: Number(r.price_before ?? 0),
+      promoPrice: Number(r.promo_price ?? 0),
+      startDate: r.start_date,
+      endDate: r.end_date,
+      description: r.description,
+      status: r.status,
+      pdvMode: r.pdv_mode ?? 'supermax',
+      createdByName: r.created_by_name,
+      parecerFinanceiro: r.parecer_financeiro,
+      margemPct: r.margem_pct != null ? Number(r.margem_pct) : null,
+      analisadoPorNome: r.analisado_por_nome,
+      analisadoEm: r.analisado_em,
+      decidedByName: r.decided_by_name,
+      decidedAt: r.decided_at,
+      observacao: r.observacao,
+      createdAt: r.created_at,
+    })) as Promocao[];
+  },
+
+  // O PDV lê a VIEW, não a tabela: ela traz só de/por/vigência e já recorta a
+  // loja de quem consulta.
+  getOfertasVigentes: async (pdvMode?: Product['pdvMode']): Promise<OfertaVigente[]> => {
+    const q = escopoFilial(supabase.from('v_promocao_vigente').select('product_id, preco_de, preco_por'), pdvMode);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      productId: r.product_id,
+      precoDe: Number(r.preco_de ?? 0),
+      precoPor: Number(r.preco_por ?? 0),
+    }));
+  },
+
+  criarPromocao: async (p: {
+    productId: string; productName: string; priceBefore: number; promoPrice: number;
+    startDate: string; endDate: string; description?: string;
+    pdvMode: string; createdBy?: string | null; createdByName?: string | null;
+  }): Promise<void> => {
+    const { error } = await supabase.from('promocoes').insert({
+      product_id: p.productId,
+      product_name: p.productName,
+      price_before: p.priceBefore,
+      promo_price: p.promoPrice,
+      start_date: p.startDate,
+      end_date: p.endDate,
+      description: p.description ?? null,
+      pdv_mode: p.pdvMode,
+      created_by: p.createdBy ?? null,
+      created_by_name: p.createdByName ?? null,
+    });
+    if (error) throw error;
+  },
+
+  // Passo 1 — parecer de viabilidade. O banco calcula a margem que sobra no
+  // preço promocional; o texto é obrigatório porque é o que a gestão lê.
+  analisarPromocao: async (id: string, parecer: string): Promise<{ margem: number | null }> => {
+    const { data, error } = await supabase.rpc('analisar_promocao', { p_id: id, p_parecer: parecer });
+    if (error) throw error;
+    const m = (data as any)?.margem_pct;
+    return { margem: m != null ? Number(m) : null };
+  },
+
+  aprovarPromocao: async (id: string, observacao?: string): Promise<void> => {
+    const { error } = await supabase.rpc('aprovar_promocao', { p_id: id, p_observacao: observacao ?? null });
+    if (error) throw error;
+  },
+
+  reprovarPromocao: async (id: string, motivo: string): Promise<void> => {
+    const { error } = await supabase.rpc('reprovar_promocao', { p_id: id, p_motivo: motivo });
+    if (error) throw error;
+  },
+
+  excluirPromocao: async (id: string): Promise<void> => {
+    const { error } = await supabase.from('promocoes').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  // Chamada quando o app abre: devolve o preço das ofertas que venceram. É
+  // idempotente — o MaxPOS não tem cron, e o preço só precisa estar certo
+  // quando alguém está operando.
+  reverterPromocoesExpiradas: async (): Promise<number> => {
+    const { data, error } = await supabase.rpc('reverter_promocoes_expiradas');
+    if (error) throw error;
+    return Number(data ?? 0);
   },
 
   getMaxbankExtrato: async (contaId: string): Promise<MaxbankTransacao[]> => {

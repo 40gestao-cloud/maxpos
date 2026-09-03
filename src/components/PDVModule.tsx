@@ -1299,6 +1299,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(null);
   const [editingPaymentValue, setEditingPaymentValue] = useState('');
   const [lastAdded, setLastAdded] = useState<CartItem | null>(null);
+  // Ofertas vigentes desta loja (view `v_promocao_vigente`). A aprovação da
+  // promoção já trocou o preço do produto — o que vem daqui é o "de", que o
+  // caixa mostra ao lado do preço cobrado e usa para somar a economia do cupom.
+  const [ofertas, setOfertas] = useState<Map<string, { de: number; por: number }>>(new Map());
   const [cardPickerOpen, setCardPickerOpen] = useState(false);
   const [valePickerOpen, setValePickerOpen] = useState(false);
   const [cardPickerIdx, setCardPickerIdx] = useState(0);
@@ -1421,6 +1425,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [quickClientsCount, setQuickClientsCount] = useState(0);
   // Reimpressão por número de cupom (busca livre no modal reprintList).
   const [reprintSearch, setReprintSearch] = useState('');
+
+  // Só é oferta quando o "de" está acima do que está sendo cobrado: o preço do
+  // catálogo é a verdade da venda, a promoção só explica de onde ele veio.
+  const ofertaDoItem = (productId: string, precoCobrado: number) => {
+    const o = ofertas.get(productId);
+    return o && o.de > precoCobrado + 0.001 ? o : null;
+  };
 
   const askSupervisorAuth = (title: string, message: string, onOk: () => void) => {
     setSupervisorAuthPin('');
@@ -1742,6 +1753,18 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // no id de um cliente que não existe em `clients` — o débito de saldo
     // viraria no-op silencioso.
     Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
+
+    // Ofertas vigentes: o preço já vem promocional do cadastro; isto aqui é só
+    // o "de", para o caixa mostrar de/por e somar a economia. Falhar não pode
+    // travar a venda — o PDV segue com o preço do catálogo.
+    Storage.getOfertasVigentes(pdvMode)
+      .then(list => {
+        if (!active) return;
+        const mapa = new Map<string, { de: number; por: number }>();
+        for (const o of list) mapa.set(o.productId, { de: o.precoDe, por: o.precoPor });
+        setOfertas(mapa);
+      })
+      .catch(() => {});
 
     // O PDV NAO assina `products` em tempo real. Explicando, porque a
     // tentacao de "religar isso" e grande:
@@ -2332,6 +2355,21 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       showAlert({ title: 'Carrinho vazio', message: 'Adicione um item antes de aplicar desconto.', variant: 'warning' });
       return;
     }
+    // No supermercado o operador não decide preço de item: promoção é aprovada
+    // antes e chega dentro do preço (Cadastros › Promoções). Abatimento no
+    // caixa existe, mas é no total e com o supervisor — que é o que a tela de
+    // fechamento oferece. Nos nichos (moda/eletrônico) a negociação de balcão
+    // é real e continua valendo.
+    if (pdvMode === 'supermax') {
+      showAlert({
+        title: 'Desconto por item não é do caixa',
+        message:
+          'Em supermercado a oferta é decidida antes e já vem no preço — cadastre em Cadastros › Promoções.\n\n' +
+          'Para divergência de etiqueta ou avaria, use o desconto no total na tela de fechamento (F4), que passa pelo supervisor.',
+        variant: 'warning',
+      });
+      return;
+    }
     const target = itemId ? cart.find(c => c.id === itemId) : cart[cart.length - 1];
     if (!target) return;
     setDiscountModal({ scope: 'item', itemId: target.id });
@@ -2366,10 +2404,18 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // Teto de operador: acima de DISCOUNT_SUPERVISOR_THRESHOLD_PCT do bruto,
     // exige PIN de supervisor. Padrão de supermercado (evita operador dar
     // "50% na cara" sem autorização).
-    if (base > 0 && (desc / base) * 100 > DISCOUNT_SUPERVISOR_THRESHOLD_PCT + 0.001) {
+    // No supermercado QUALQUER desconto no caixa é supervisionado — é assim
+    // que a loja trata divergência de etiqueta e avaria. Nos nichos vale o teto
+    // de 20%, porque ali negociar faz parte do trabalho do vendedor.
+    const exigeSupervisor = pdvMode === 'supermax'
+      ? desc > 0
+      : base > 0 && (desc / base) * 100 > DISCOUNT_SUPERVISOR_THRESHOLD_PCT + 0.001;
+    if (exigeSupervisor) {
       askSupervisorAuth(
         'Desconto acima do limite',
-        `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} (${((desc / base) * 100).toFixed(1)}%) excede o limite de ${DISCOUNT_SUPERVISOR_THRESHOLD_PCT}% permitido ao operador. Peça ao supervisor para digitar o PIN.`,
+        pdvMode === 'supermax'
+          ? `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} no caixa precisa do supervisor. Peça o PIN — e registre o motivo (etiqueta divergente, avaria).`
+          : `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} (${((desc / base) * 100).toFixed(1)}%) excede o limite de ${DISCOUNT_SUPERVISOR_THRESHOLD_PCT}% permitido ao operador. Peça ao supervisor para digitar o PIN.`,
         () => { applyDiscountValidated(desc); },
       );
       return;
@@ -2838,6 +2884,13 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity - (item.discount ?? 0), 0);
   const cupomDesconto = nichoCupomAplicado?.desconto ?? 0;
   const total = Math.max(0, parseFloat((subtotal - saleDiscount - cupomDesconto).toFixed(2)));
+  // Economia das OFERTAS (preço de tabela − preço cobrado). Não se soma ao
+  // desconto: o desconto é abatimento na venda, a economia já está dentro do
+  // preço. É o "você economizou" do rodapé do cupom.
+  const economiaOfertas = cart.reduce((acc, item) => {
+    const o = ofertaDoItem(item.id, item.price);
+    return o ? acc + (o.de - item.price) * item.quantity : acc;
+  }, 0);
   const paid = payments.reduce((acc, p) => acc + p.amount, 0);
   const remaining = total - paid;
 
@@ -4177,13 +4230,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                                 Ruptura
                               </span>
                             )}
-                            <button
-                              onClick={() => openItemDiscountModal(item.id)}
-                              tabIndex={-1}
-                              className="shrink-0 px-1.5 text-[10px] font-black border rounded hover:bg-yellow-100"
-                              style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
-                              title="Desconto neste item"
-                            >%</button>
+                            {ofertaDoItem(item.id, item.price) && (
+                              <span
+                                className="shrink-0 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded border"
+                                style={{ background: '#dcfce7', color: '#166534', borderColor: MONEY }}
+                                title="Preço promocional aprovado — veio do cadastro, não do caixa"
+                              >
+                                Oferta
+                              </span>
+                            )}
                             {desc > 0 && (
                               <span className="text-[11px] font-bold tracking-wider align-middle inline-flex items-center gap-1 shrink-0" style={{ color: RED }}>
                                 · DESC −R$ {fmt(desc)}
@@ -4204,7 +4259,18 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                           >
                             {controla ? fmtQty(baseStock, item.unit) : '∞'}
                           </div>
-                          <div className="text-right">{fmt(item.price)}</div>
+                          <div className="text-right">
+                            {(() => {
+                              const o = ofertaDoItem(item.id, item.price);
+                              if (!o) return fmt(item.price);
+                              return (
+                                <>
+                                  <span className="block text-xs font-normal text-gray-400 line-through">{fmt(o.de)}</span>
+                                  <span style={{ color: MONEY }} title={`Em oferta — preço de tabela R$ ${fmt(o.de)}`}>{fmt(item.price)}</span>
+                                </>
+                              );
+                            })()}
+                          </div>
                           <div className="text-right font-bold">{fmt(liquido)}</div>
                           <button
                             onClick={() => requestCancelItem(item.id)}
@@ -4260,6 +4326,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       <div className="flex justify-between">
                         <span className="text-gray-600">DESCONTO</span>
                         <span className="tabular-nums font-bold" style={{ color: RED }}>− R$ {fmt(subtotal - total)}</span>
+                      </div>
+                    )}
+                    {economiaOfertas > 0.001 && (
+                      <div className="flex justify-between border-t pt-3" style={{ borderColor: '#d1d5db' }}>
+                        <span className="text-gray-600">VOCÊ ECONOMIZOU</span>
+                        <span className="tabular-nums font-bold" style={{ color: MONEY }}>R$ {fmt(economiaOfertas)}</span>
                       </div>
                     )}
                   </div>

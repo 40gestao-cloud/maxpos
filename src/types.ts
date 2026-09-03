@@ -40,6 +40,43 @@ export interface User {
 // Coluna `pdv_mode` no banco. PDVModule filtra por este campo ao carregar.
 export type PdvMode = 'supermax' | 'maxlook' | 'techmax';
 
+/**
+ * Oferta com hora marcada. O ciclo é o mesmo do LogMax e o mesmo da loja:
+ * alguém PROPÕE, a gestão APROVA, e a aprovação troca o preço do produto — o
+ * PDV passa a vender pelo preço novo sem saber que houve promoção. `priceBefore`
+ * é o "de": sem ele não existe "de/por" no caixa nem "você economizou" no cupom.
+ * No fim do período o preço volta sozinho (`reverter_promocoes_expiradas`).
+ */
+export interface Promocao {
+  id: string;
+  productId: string;
+  productName: string;
+  priceBefore: number;
+  promoPrice: number;
+  startDate: string;   // YYYY-MM-DD
+  endDate: string;     // YYYY-MM-DD
+  description?: string | null;
+  status: 'Pendente' | 'Em Analise' | 'Aprovado' | 'Reprovado' | 'Encerrado';
+  pdvMode?: PdvMode;
+  createdByName?: string | null;
+  /** Parecer de viabilidade: a margem que sobra e o texto de quem analisou. */
+  parecerFinanceiro?: string | null;
+  margemPct?: number | null;
+  analisadoPorNome?: string | null;
+  analisadoEm?: string | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  observacao?: string | null;
+  createdAt?: string;
+}
+
+/** O que o PDV precisa saber para mostrar a oferta: só o de/por. */
+export interface OfertaVigente {
+  productId: string;
+  precoDe: number;
+  precoPor: number;
+}
+
 export interface Product {
   id: string;
   name: string;
