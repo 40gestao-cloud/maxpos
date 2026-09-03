@@ -3496,21 +3496,39 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       // a checagem local e a finalizacao). Aqui o cache local esta fora de sync
       // — recarregamos products pra refletir o estado real do servidor.
       const isStockError = /estoque insuficiente|nao encontrado no estoque/i.test(msg);
-      if (isStockError) {
+      // Patch 2026-09-02f: o servidor recusou o preço. Acontece quando a tela
+      // está aberta desde antes de uma oferta entrar ou terminar — o PDV não
+      // assina `products` em tempo real de propósito. O cache local está fora
+      // de sync, e sem recarregar o operador tentaria de novo para sempre.
+      const isPriceError = /nao confere|saiu do cadastro/i.test(msg);
+      if (isStockError || isPriceError) {
         try {
           // Escopado no pdvMode: sem isso o recarregamento pós-erro trocava a
           // lista filtrada pela lista das TRÊS lojas, e o PDV passava a exibir
           // produto de outro nicho até o próximo reload.
           const fresh = await Storage.getProducts(pdvMode);
           setProducts(fresh);
+          if (isPriceError) {
+            // As ofertas junto: é a metade da conta do preço efetivo, e é
+            // justamente ela que costuma ter mudado.
+            const lista = await Storage.getOfertasVigentes(pdvMode);
+            const mapa = new Map<string, { de: number; por: number }>();
+            for (const o of lista) mapa.set(o.productId, { de: o.precoDe, por: o.precoPor });
+            ofertasRef.current = mapa;
+            setOfertas(mapa);
+          }
         } catch { /* silencia: a venda ja falhou, nao queremos mascarar */ }
       }
       showAlert({
-        title: isStockError ? 'Estoque insuficiente' : 'Erro ao salvar venda',
+        title: isStockError ? 'Estoque insuficiente'
+             : isPriceError ? 'O preço mudou'
+             : 'Erro ao salvar venda',
         message: isStockError
           ? `${msg}\n\nO estoque foi atualizado. Ajuste a quantidade no carrinho e tente novamente.`
+          : isPriceError
+          ? `${msg}\n\nO preço e as ofertas foram atualizados. Remova o item do carrinho e bipe de novo — ele entra pelo preço de hoje.`
           : msg,
-        variant: isStockError ? 'warning' : 'error',
+        variant: isStockError || isPriceError ? 'warning' : 'error',
       });
     } finally {
       setSaving(false);
