@@ -624,11 +624,18 @@ function NichoLeituraView({
                     key={p.id}
                     onClick={onClick}
                     disabled={semEstoque}
-                    className="rounded-xl p-2 flex flex-col gap-1.5 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40"
+                    // O produto sob o Tab tem de estar MARCADO, não apenas
+                    // contornado pela borda preta do navegador: quem opera de
+                    // teclado precisa ver qual item o Enter vai adicionar.
+                    // Anel na cor da loja + fundo, igual ao destaque da busca.
+                    className="rounded-xl p-2 flex flex-col gap-1.5 text-left transition-all border relative bg-white hover:shadow-md disabled:opacity-40 outline-none focus-visible:ring-4 focus-visible:ring-offset-1 focus-visible:shadow-lg"
                     style={{
                       borderColor: inCart ? modeMeta.accent : 'rgba(0,0,0,0.08)',
                       background: inCart ? `${modeMeta.accent}15` : 'white',
                       boxShadow: inCart ? undefined : '0 1px 2px rgba(0,0,0,0.04)',
+                      // Tailwind não aceita cor dinâmica em classe (`ring-${x}`
+                      // não existe em build); a cor vai pela variável do anel.
+                      ['--tw-ring-color' as any]: modeMeta.accent,
                     }}
                   >
                     {inCart && (
@@ -639,7 +646,11 @@ function NichoLeituraView({
                     )}
                     <span
                       role="button"
-                      tabIndex={0}
+                      // Fora da ordem do Tab: com tabIndex 0 cada produto valia
+                      // DOIS toques de Tab, e o primeiro parava no selo de
+                      // ficha em vez do produto. No caixa, Tab anda de produto
+                      // em produto; a ficha continua no clique.
+                      tabIndex={-1}
                       aria-label={`Ver ficha de ${p.name}`}
                       onClick={e => { e.stopPropagation(); setDetalheProduto(p); }}
                       onKeyDown={e => {
@@ -1625,6 +1636,19 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   useEffect(() => { if (showClientPicker) setClientPickerIdx(0); }, [showClientPicker]);
   useEffect(() => { if (classicSearchOpen) setClassicSearchIdx(0); }, [classicSearchOpen]);
   useEffect(() => { if (reprintList) setReprintListIdx(0); }, [reprintList]);
+  // A seta movia o destaque, mas ninguém rolava a lista: passado o quinto item
+  // a linha selecionada saía da área visível e, para quem está no caixa, "a
+  // lista ficou parada" — e o operador era obrigado a pegar o mouse, que é
+  // exatamente o que a busca por teclado existe para evitar.
+  const classicListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!classicSearchOpen) return;
+    // 'nearest' rola o mínimo necessário: não sacode a lista quando o item já
+    // está visível (inclusive no hover do mouse, que também mexe no índice).
+    classicListRef.current
+      ?.querySelector<HTMLElement>(`[data-classic-idx="${classicSearchIdx}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [classicSearchIdx, classicSearchOpen]);
   useEffect(() => { setClientPickerIdx(0); }, [clientSearch]);
   useEffect(() => { setClassicSearchIdx(0); }, [classicSearchTerm]);
   // Fora do intervalo válido → reset. Também zera quando o carrinho fica vazio.
@@ -2852,14 +2876,23 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         return;
       }
 
-      // TAB — em treinamento, impede que o foco escape para a chrome do
-      // navegador. Só trapa quando o foco está no input do CÓDIGO (leitura):
-      // no checkout o Tab natural é usado pelo fluxo F5→Tab→CPF/CLIENTE,
-      // então não interferimos ali. Modais têm seu próprio trapTab.
-      if (e.key === 'Tab' && isTraining && !modalOpen && !pickerOpen
-          && !checkoutMode && target === codeInputRef.current) {
-        e.preventDefault();
-        codeInputRef.current?.focus();
+      // TAB — o foco NUNCA sai da operação.
+      //
+      // Isto valia só em treinamento, e só quando o foco estava no input do
+      // código: no uso real o operador tabulava e entregava o foco à barra do
+      // navegador. Num caixa isso é básico — o Tab é da operação, não da
+      // janela.
+      //
+      // `trapTab` só intercepta nas PONTAS: no meio da lista o Tab continua
+      // andando naturalmente pelos produtos, e ao chegar no último ele volta
+      // para o primeiro em vez de vazar. Por isso pode valer também no
+      // checkout, onde o fluxo F5→Tab→CPF/CLIENTE segue funcionando igual.
+      // Modais continuam com o trapTab próprio deles.
+      if (e.key === 'Tab' && !modalOpen && !pickerOpen) {
+        const escopo = (target?.closest('main') as HTMLElement | null)
+          ?? document.querySelector<HTMLElement>('main')
+          ?? document.body;
+        trapTab(e as unknown as ReactKeyboardEvent, escopo);
         return;
       }
 
@@ -5436,11 +5469,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               className="flex flex-col items-center justify-center text-center px-8 py-6 max-h-screen w-full"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
             >
+              {/* O teto é por loja porque as logos têm proporções diferentes:
+                  a da SuperMax é um brasão largo, e com o teto de 60vh ela
+                  parava bem antes de encher a tela — a de agradecimento é vista
+                  de longe, pelo cliente do outro lado do caixa. */}
               <img
                 src={modeMeta.logo}
                 alt={modeMeta.label}
                 className="object-contain drop-shadow-2xl"
-                style={{ maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
+                style={pdvMode === 'supermax'
+                  ? { maxHeight: '76vh', maxWidth: '88vw', width: 'auto', height: 'auto' }
+                  : { maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
                 draggable={false}
               />
               <div
@@ -5817,7 +5856,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     </span>
                   )}
                 </div>
-                <div className="mt-4 max-h-[55vh] overflow-y-auto custom-scrollbar border border-gray-300">
+                <div ref={classicListRef} className="mt-4 max-h-[55vh] overflow-y-auto custom-scrollbar border border-gray-300">
                   {filteredClassic.length === 0 ? (
                     <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto.</div>
                   ) : (
@@ -5825,6 +5864,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       <button
                         key={p.id}
                         tabIndex={-1}
+                        data-classic-idx={idx}
                         onMouseEnter={() => setClassicSearchIdx(idx)}
                         onClick={() => { addToCart(p, qtdDoF8); setClassicSearchOpen(false); setClassicMsg(null); }}
                         className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${idx === classicSearchIdx ? 'bg-yellow-100' : 'hover:bg-yellow-50'}`}
