@@ -180,14 +180,24 @@ const DEMO_VENDEDORES_MAXLOOK = [
   { id: 'vml4', nome: 'Rodrigo Lima' },
 ];
 
-// Formas de pagamento do painel direito (padrão LogMax — igual pros dois nichos).
-const NICHO_PAY_METHODS: Array<{ method: Payment['method']; label: string }> = [
-  { method: 'dinheiro', label: 'Dinheiro' },
-  { method: 'debito',   label: 'Cartão Débito' },
-  { method: 'credito',  label: 'Cartão Crédito' },
-  { method: 'pix',      label: 'PIX' },
-  { method: 'fiado',    label: 'Fiado' },
-];
+// A prazo tem nome e existência diferentes por nicho:
+//   MaxLook  — a loja de moda chama de CREDIÁRIO. Mesmo mecanismo do fiado
+//              (limite de crédito, conta a receber), outro nome no balcão.
+//   TechMax  — não vende a prazo pela loja: aparelho não sai sem pagamento,
+//              o parcelamento de eletrônico vive no cartão de crédito.
+const rotuloFiado = (pdvMode?: PdvMode): string =>
+  pdvMode === 'maxlook' ? 'Crediário' : 'Fiado';
+
+const nichoPayMethods = (pdvMode: PdvMode): Array<{ method: Payment['method']; label: string }> => {
+  const base: Array<{ method: Payment['method']; label: string }> = [
+    { method: 'dinheiro', label: 'Dinheiro' },
+    { method: 'debito',   label: 'Cartão Débito' },
+    { method: 'credito',  label: 'Cartão Crédito' },
+    { method: 'pix',      label: 'PIX' },
+  ];
+  if (pdvMode === 'techmax') return base;
+  return [...base, { method: 'fiado', label: rotuloFiado(pdvMode) }];
+};
 
 // Cupons de simulação (padrão LogMax mas com regras locais fixas em vez de
 // RPC validar_cupom). Operador aprende a checar erro/sucesso e ver o desconto
@@ -273,6 +283,11 @@ function NichoLeituraView({
   const [cupomStr, setCupomStr] = useState('');
   const [cupomErro, setCupomErro] = useState<string | null>(null);
   const [selectedPay, setSelectedPay] = useState<Payment['method']>('dinheiro');
+  // Trocar de nicho com 'fiado' selecionado deixava a TechMax com uma forma
+  // escolhida que não existe mais no grid — e o FECHAR VENDA lançava a prazo.
+  useEffect(() => {
+    if (pdvMode === 'techmax' && selectedPay === 'fiado') setSelectedPay('dinheiro');
+  }, [pdvMode, selectedPay]);
   // Ficha do produto (padrão LogMax) — abre pelo botão ⓘ do card, nunca pelo
   // clique do card (esse continua adicionando ao carrinho).
   const [detalheProduto, setDetalheProduto] = useState<Product | null>(null);
@@ -950,7 +965,7 @@ function NichoLeituraView({
               Forma de pagamento
             </div>
             <div className="grid grid-cols-3 gap-1.5">
-              {NICHO_PAY_METHODS.map(({ method, label }) => {
+              {nichoPayMethods(pdvMode).map(({ method, label }) => {
                 const active = selectedPay === method;
                 return (
                   <button
@@ -1142,7 +1157,9 @@ function NichoLeituraView({
             onClick={() => onQuickFinalize(selectedPay)}
             disabled={cart.length === 0 || fiadoBloqueado}
             title={fiadoBloqueado
-              ? (clienteFiado ? 'Fiado indisponível para este cliente — veja a situação de crédito acima.' : 'Selecione o cliente do fiado.')
+              ? (clienteFiado
+                  ? `${rotuloFiado(pdvMode)} indisponível para este cliente — veja a situação de crédito acima.`
+                  : `Selecione o cliente do ${rotuloFiado(pdvMode).toLowerCase()}.`)
               : undefined}
             className="w-full py-3.5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             style={{
@@ -3475,8 +3492,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       return;
     }
     if (method === 'fiado') {
+      if (pdvMode === 'techmax') {
+        showAlert({
+          title: 'TechMax não vende a prazo',
+          message: 'O aparelho não sai da loja sem pagamento. Para parcelar, use Cartão Crédito.',
+          variant: 'warning',
+        });
+        return;
+      }
       if (!nichoClienteFiadoId) {
-        showAlert({ title: 'Cliente obrigatório', message: 'Selecione o cliente para venda em fiado.', variant: 'warning' });
+        showAlert({
+          title: 'Cliente obrigatório',
+          message: `Selecione o cliente para venda em ${rotuloFiado(pdvMode).toLowerCase()}.`,
+          variant: 'warning',
+        });
         return;
       }
       const c = clients.find(cl => cl.id === nichoClienteFiadoId);
@@ -5062,7 +5091,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
                     <div className="font-bold">FORMAS DE PAGAMENTO</div>
                     {s.payments.map((p, i) => {
-                      const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale' };
+                      const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: rotuloFiado(s.pdvMode), vale: 'Vale' };
                       const label = (labels[p.method] ?? p.method) +
                         (p.installments && p.installments > 1 ? ` ${p.installments}x` : '') +
                         (p.method === 'fiado' && p.clientName ? ` — ${p.clientName}` : '');
@@ -7087,7 +7116,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     <div className="border-t border-dashed border-gray-400 mt-2 pt-2 text-[11px] space-y-0.5">
                       <div className="font-bold">FORMAS DE PAGAMENTO</div>
                       {s.payments.map((p, i) => {
-                        const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale' };
+                        const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', fiado: rotuloFiado(s.pdvMode), vale: 'Vale' };
                         const label = (labels[p.method] ?? p.method) +
                           (p.installments && p.installments > 1 ? ` ${p.installments}x` : '');
                         return (
