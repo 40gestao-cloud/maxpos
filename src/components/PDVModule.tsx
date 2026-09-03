@@ -5469,17 +5469,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               className="flex flex-col items-center justify-center text-center px-8 py-6 max-h-screen w-full"
               style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
             >
-              {/* O teto é por loja porque as logos têm proporções diferentes:
-                  a da SuperMax é um brasão largo, e com o teto de 60vh ela
-                  parava bem antes de encher a tela — a de agradecimento é vista
-                  de longe, pelo cliente do outro lado do caixa. */}
+              {/* A logo daqui NÃO é a mesma dos menus. O `modeMeta.logo` é o
+                  selo pequeno (256x194), que servia para o ícone de 24px e
+                  ficava macio e estreito ampliado 3x nesta tela — que é vista
+                  de longe, pelo cliente do outro lado do caixa.
+
+                  O LogMax já resolvia assim e é de onde veio o arquivo: lá
+                  `icon-supermax-view.png` é o selo dos menus e
+                  `icon-supermax.png` (1280x720) é o desta tela. Trazer os dois
+                  papéis para cá deixa o agradecimento do MaxPOS igual ao do
+                  LogMax — mesmo arquivo, mesmo teto —, que é a paridade que o
+                  aluno percebe quando troca de sistema.
+
+                  Trocar o `modeMeta.logo` inteiro não servia: ele também é o
+                  ícone de 24-36px do menu, do seletor de empresa e do toast, e
+                  um 16:9 encolhe dentro daqueles quadrados. */}
               <img
-                src={modeMeta.logo}
+                src={pdvMode === 'supermax' ? '/logo-supermax-agradecimento.png' : modeMeta.logo}
                 alt={modeMeta.label}
                 className="object-contain drop-shadow-2xl"
-                style={pdvMode === 'supermax'
-                  ? { maxHeight: '76vh', maxWidth: '88vw', width: 'auto', height: 'auto' }
-                  : { maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
+                style={{ maxHeight: '60vh', maxWidth: '70vw', width: 'auto', height: 'auto' }}
                 draggable={false}
               />
               <div
