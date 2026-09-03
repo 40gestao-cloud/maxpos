@@ -1299,10 +1299,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(null);
   const [editingPaymentValue, setEditingPaymentValue] = useState('');
   const [lastAdded, setLastAdded] = useState<CartItem | null>(null);
-  // Ofertas vigentes desta loja (view `v_promocao_vigente`). A aprovação da
-  // promoção já trocou o preço do produto — o que vem daqui é o "de", que o
-  // caixa mostra ao lado do preço cobrado e usa para somar a economia do cupom.
+  // Ofertas valendo hoje nesta loja (view `v_promocao_vigente`).
+  //
+  // Patch 2026-09-02d: isto deixou de ser enfeite. A promoção virou REGRA DE
+  // PREÇO — o cadastro guarda o preço de tabela e não é mais sobrescrito pela
+  // liberação —, então é daqui que sai o preço que o caixa cobra. O "de" vem
+  // junto, para o de/por na linha e a economia no rodapé do cupom.
   const [ofertas, setOfertas] = useState<Map<string, { de: number; por: number }>>(new Map());
+  // O item entra no carrinho dentro de callbacks do leitor: com state, uma
+  // oferta carregada depois do primeiro render entraria pelo preço cheio.
+  const ofertasRef = useRef<Map<string, { de: number; por: number }>>(new Map());
   const [cardPickerOpen, setCardPickerOpen] = useState(false);
   const [valePickerOpen, setValePickerOpen] = useState(false);
   const [cardPickerIdx, setCardPickerIdx] = useState(0);
@@ -1754,14 +1760,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // viraria no-op silencioso.
     Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
 
-    // Ofertas vigentes: o preço já vem promocional do cadastro; isto aqui é só
-    // o "de", para o caixa mostrar de/por e somar a economia. Falhar não pode
-    // travar a venda — o PDV segue com o preço do catálogo.
+    // Ofertas valendo hoje. Patch 2026-09-02d: daqui sai o preço COBRADO, não
+    // só o "de" — a liberação da promoção não mexe mais no cadastro. Falhar
+    // erra para o lado seguro: o carrinho monta pelo preço de tabela, que é o
+    // cheio. Nunca cobra a menos por engano.
     Storage.getOfertasVigentes(pdvMode)
       .then(list => {
         if (!active) return;
         const mapa = new Map<string, { de: number; por: number }>();
         for (const o of list) mapa.set(o.productId, { de: o.precoDe, por: o.precoPor });
+        ofertasRef.current = mapa;
         setOfertas(mapa);
       })
       .catch(() => {});
@@ -1796,7 +1804,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     return () => { active = false; supabase.removeChannel(ch); };
   }, [isTraining, pdvMode]);
 
-  const addToCart = (product: Product, qty?: number) => {
+  const addToCart = (produtoCatalogo: Product, qty?: number) => {
+    // Patch 2026-09-02d: o item entra no carrinho pelo preço EFETIVO — a oferta
+    // valendo hoje, se houver; senão o preço de tabela. O cadastro deixou de
+    // ser sobrescrito pela liberação da promoção, então usar `price` cru aqui
+    // cobraria o preço cheio de um item em oferta. Trocado UMA vez, na porta:
+    // todo caminho de adição (bipe, clique, balança) passa por aqui.
+    const ofertaAtiva = ofertasRef.current.get(produtoCatalogo.id);
+    const product: Product = ofertaAtiva
+      ? { ...produtoCatalogo, price: ofertaAtiva.por }
+      : produtoCatalogo;
     // Sem quantidade explícita, vale a que estiver ARMADA — e ela vale UMA
     // vez, como no caixa de mercado: armou 2, o próximo item sai 2, o
     // seguinte volta a 1. Lê do ref (não do state) porque este callback às
@@ -7333,7 +7350,22 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                             ? <>Estoque: <b className={p.stock <= 0 ? 'text-red-700' : ''}>{p.stock}</b></>
                             : <span className="text-gray-400">Sem controle</span>}
                         </span>
-                        <span className="text-right font-bold tabular-nums text-2xl" style={{ color: MONEY }}>R$ {fmt(p.price)}</span>
+                        {/* Patch 2026-09-02d: a consulta responde o preço que
+                            a loja VAI COBRAR. Mostrar o de tabela aqui faria o
+                            terminal de preço mentir para o cliente enquanto o
+                            caixa cobra a oferta. */}
+                        {(() => {
+                          const o = ofertas.get(p.id);
+                          const cobrado = o ? o.por : p.price;
+                          return (
+                            <span className="text-right font-bold tabular-nums text-2xl" style={{ color: MONEY }}>
+                              {o && (
+                                <span className="block text-xs font-normal text-gray-400 line-through">R$ {fmt(o.de)}</span>
+                              )}
+                              R$ {fmt(cobrado)}
+                            </span>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
