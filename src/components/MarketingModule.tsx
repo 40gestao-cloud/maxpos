@@ -35,7 +35,7 @@ export default function MarketingModule({ currentUser }: { currentUser: User }) 
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex items-center gap-4 mb-2">
         <div className="p-3 bg-[var(--accent)]/10 rounded-2xl">
-          <Megaphone className="text-[var(--accent)]" size={24} />
+          <Megaphone className="text-[var(--accent-text)]" size={24} />
         </div>
         <div>
           <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Marketing</h2>

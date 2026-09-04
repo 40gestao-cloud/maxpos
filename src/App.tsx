@@ -39,9 +39,16 @@ import { User } from './types';
 // Caixa NAO faz, entao precisa de um item proprio para poder sumir do menu.
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
+// `equipe` e um subTab valido do CadastrosModule (a aba Usuarios o passa como
+// prop), mas NAO e uma rota: nao esta em SUBMENUS_CADASTRO e ninguem seta
+// 'cadastros-equipe'. Sem este Exclude o tipo autorizava essa rota, e quem a
+// setasse veria o cabecalho renderizar "Cadastros › " com o nome vazio —
+// porque o titulo vem justamente de SUBMENUS_CADASTRO.
+type RotaCadastro = Exclude<SubCadastro, 'equipe'>;
+
 type Tab =
   | 'inicio' | 'pdv'
-  | `cadastros-${SubCadastro}`
+  | `cadastros-${RotaCadastro}`
   | 'usuarios'
   | 'estoque' | 'financeiro' | 'folha' | 'marketing' | 'configuracoes';
 

@@ -350,6 +350,21 @@ body {
     color: var(--danger);
   }
 
+  /* ── Coluna de acoes presa a direita ──
+     Tabela larga (Produtos tem 8 colunas e ~1.2k de largura) num container
+     que rola na horizontal: as acoes ficavam FORA da tela, e sem nenhuma
+     pista de que existiam. Grudada a direita, ela acompanha a rolagem e
+     continua alcancavel. A sombra a esquerda avisa que ha conteudo passando
+     por baixo — senao a coluna parece so o fim da tabela. */
+  .col-acoes-fixa {
+    position: sticky;
+    right: 0;
+    background: var(--bg-card);
+    box-shadow: -10px 0 12px -8px rgb(var(--brand-rgb) / 0.22);
+  }
+  tr:hover > .col-acoes-fixa { background: #f9fafb; }
+  thead .col-acoes-fixa { background: var(--accent); box-shadow: none; }
+
   /* Shimmer — gradiente diagonal varrendo o elemento */
   .shimmer {
     position: relative;

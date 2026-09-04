@@ -1257,7 +1257,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => handleEdit(u, 'equipe')}
-                          className="p-2 rounded glass-blue shimmer"
+                          className="row-ghost-btn hover:!text-[var(--navy)]"
                           title="Editar"
                         >
                           <Edit2 size={16} className="relative z-[2]" />
@@ -1269,7 +1269,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         {podeExcluirCadastro && u.id !== currentUser?.id && (
                           <button
                             onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                            className="p-2 rounded glass-red shimmer"
+                            className="row-ghost-btn is-danger"
                             title="Excluir"
                           >
                             <Trash2 size={16} className="relative z-[2]" />
@@ -1296,10 +1296,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 <th className="px-5 py-3">Categoria</th>
                 <th className="px-5 py-3 text-right">Custo</th>
                 <th className="px-5 py-3 text-right">Venda</th>
-                <th className="px-5 py-3 text-right">Margem</th>
+                {/* Margem some abaixo de xl: e o unico valor DERIVADO da tabela (sai
+                    de Custo x Venda), entao e o primeiro que pode ceder quando
+                    a largura aperta. */}
+                <th className="px-5 py-3 text-right hidden xl:table-cell">Margem</th>
                 <th className="px-5 py-3 text-right">Estoque</th>
-                <th className="px-5 py-3">Cód. Barras</th>
-                <th className="px-5 py-3 text-center">Ações</th>
+                {/* A coluna "Cód. Barras" saiu: a coluna Produto ja mostra
+                    "EAN 7896187755481" embaixo do nome, e esta repetia o mesmo
+                    numero 140px adiante — 140px gastos pra dizer duas vezes a
+                    mesma coisa numa tabela que ja nao cabia na tela. */}
+                <th className="px-5 py-3 text-center col-acoes-fixa">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 text-base">
@@ -1344,7 +1350,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="px-5 py-4 text-right tabular-nums text-base font-bold whitespace-nowrap" style={{ color: 'var(--navy)' }}>
                     {formatBRL(p.price)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums">
+                  <td className="px-5 py-4 text-right tabular-nums hidden xl:table-cell">
                     <div className="font-bold text-base" style={{ color: 'var(--navy)' }}>{margem.toFixed(1)}%</div>
                   </td>
                   <td className="px-5 py-4 text-right">
@@ -1356,10 +1362,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-4">
-                    <span className="text-sm text-gray-600 font-mono">{p.ean13 || '—'}</span>
-                  </td>
-                  <td className="px-5 py-4">
+                  <td className="px-5 py-4 col-acoes-fixa">
                     {/* Quatro botoes solidos com gradiente e shimmer POR LINHA
                         somavam 236 pecas brilhantes numa lista de 59 produtos: a
                         tela inteira piscava e nada se destacava, porque tudo se
@@ -1441,7 +1444,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => handleEdit(s, 'servico')}
-                        className="p-2 rounded glass-blue shimmer"
+                        className="row-ghost-btn hover:!text-[var(--navy)]"
                         title="Editar"
                       >
                         <Edit2 size={16} className="relative z-[2]" />
@@ -1449,7 +1452,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(s.id, 'servico', s.name)}
-                          className="p-2 rounded glass-red shimmer"
+                          className="row-ghost-btn is-danger"
                           title="Excluir"
                         >
                           <Trash2 size={16} className="relative z-[2]" />
@@ -1500,7 +1503,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => handleEdit(s, 'fornecedor')}
-                        className="p-2 rounded glass-blue shimmer"
+                        className="row-ghost-btn hover:!text-[var(--navy)]"
                         title="Editar"
                       >
                         <Edit2 size={16} className="relative z-[2]" />
@@ -1508,7 +1511,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
-                          className="p-2 rounded glass-red shimmer"
+                          className="row-ghost-btn is-danger"
                           title="Excluir"
                         >
                           <Trash2 size={16} className="relative z-[2]" />
@@ -1566,7 +1569,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => handleEdit(client, 'cliente')}
-                        className="p-2 rounded glass-blue shimmer"
+                        className="row-ghost-btn hover:!text-[var(--navy)]"
                         title="Editar"
                       >
                         <Edit2 size={16} className="relative z-[2]" />
@@ -1574,7 +1577,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(client.id, 'cliente', client.name)}
-                          className="p-2 rounded glass-red shimmer"
+                          className="row-ghost-btn is-danger"
                           title="Excluir"
                         >
                           <Trash2 size={16} className="relative z-[2]" />
@@ -2184,7 +2187,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             {fichaDefs.length > 0 && (
               <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
                 <div className="flex items-center gap-2 mb-2">
-                  <ChevronRight size={18} className="text-[var(--accent)] rotate-90" />
+                  <ChevronRight size={18} className="text-[var(--accent-text)] rotate-90" />
                   <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">
                     Ficha {meta.label}
                   </h4>
@@ -2331,7 +2334,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
             <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
               <div className="flex items-center gap-2 mb-2">
-                <ChevronRight size={18} className="text-[var(--accent)] rotate-90" />
+                <ChevronRight size={18} className="text-[var(--accent-text)] rotate-90" />
                 <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
               </div>
 

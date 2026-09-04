@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, X, Trash2 } from 'lucide-react';
+import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { supabase } from '../lib/supabase';

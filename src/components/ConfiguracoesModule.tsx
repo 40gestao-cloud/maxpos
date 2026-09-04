@@ -12,7 +12,6 @@ import { resizeImageToDataUrl } from '../lib/imageResize';
 const DATA_CACHE_KEYS = [
   'fiscal_emitted_nfce',
   'estoque_dismissed_moves',
-  'relatorios_dismissed_top',
   'financeiro_dismissed_flow',
 ];
 
@@ -200,7 +199,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       {alertHost}
       <div className="flex items-center gap-4 mb-2">
         <div className="p-3 bg-[var(--accent)]/10 rounded-2xl">
-          <Settings className="text-[var(--accent)]" size={24} />
+          <Settings className="text-[var(--accent-text)]" size={24} />
         </div>
         <div>
           <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Configurações</h2>

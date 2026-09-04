@@ -316,7 +316,7 @@ export default function FolhaPagamentoModule() {
           {folhas.map(f => (
             <div key={f.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 neumorphic-inset gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto min-w-0">
-                <div className="p-2 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] shrink-0">
+                <div className="p-2 rounded-lg bg-[var(--accent)]/10 text-[var(--accent-text)] shrink-0">
                   <Users size={18} />
                 </div>
                 <div className="min-w-0">

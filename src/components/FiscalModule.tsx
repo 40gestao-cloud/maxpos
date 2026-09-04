@@ -211,7 +211,7 @@ export default function FiscalModule() {
         <div className="flex justify-between items-start">
           <div className="space-y-2">
             <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-900">
-              <Shield className="text-[var(--accent)]" /> Status SEFAZ — Online (Simulado)
+              <Shield className="text-[var(--accent-text)]" /> Status SEFAZ — Online (Simulado)
             </h2>
             <p className="text-sm text-gray-600">Ambiente de Homologação • Autorização em Contingência Desativada</p>
           </div>

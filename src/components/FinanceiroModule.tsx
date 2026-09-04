@@ -493,7 +493,7 @@ export default function FinanceiroModule() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
             <h3 className="text-base md:text-lg font-bold flex items-center gap-2 text-gray-900">
-              <History className="text-[var(--accent)]" /> Fluxo de Caixa Recente
+              <History className="text-[var(--accent-text)]" /> Fluxo de Caixa Recente
               {dismissedFlowCount > 0 && (
                 <button
                   onClick={restoreAllFlow}
