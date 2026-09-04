@@ -6,8 +6,8 @@
 import { useState, useEffect } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
-  DollarSign, BarChart3, Wallet,
-  LayoutDashboard, UserCircle, Settings, Home, ChevronDown, Building2, Star, UserCog
+  DollarSign, Wallet,
+  LayoutDashboard, UserCircle, Home, ChevronDown, Building2, UserCog, Megaphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -15,12 +15,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import InicioModule from './components/InicioModule';
 import PDVModule from './components/PDVModule';
 import CadastrosModule from './components/CadastrosModule';
-import PromocoesModule from './components/PromocoesModule';
 import EstoqueModule from './components/EstoqueModule';
 import FinanceiroModule from './components/FinanceiroModule';
 import FolhaPagamentoModule from './components/FolhaPagamentoModule';
-import RelatoriosModule from './components/RelatoriosModule';
-import VitrineModule from './components/VitrineModule';
+import MarketingModule from './components/MarketingModule';
 import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
 import FilialSelector from './components/FilialSelector';
@@ -39,20 +37,17 @@ import { User } from './types';
 // `equipe` saiu daqui: virou o menu de topo "Usuarios". Gerir gente nao e um
 // cadastro como produto ou fornecedor — e a unica coisa que o Operador de
 // Caixa NAO faz, entao precisa de um item proprio para poder sumir do menu.
-type SubCadastro = 'categorias' | 'produtos' | 'promocoes' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
+type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
 type Tab =
   | 'inicio' | 'pdv'
   | `cadastros-${SubCadastro}`
   | 'usuarios'
-  | 'estoque' | 'financeiro' | 'folha' | 'relatorios' | 'vitrine' | 'configuracoes';
+  | 'estoque' | 'financeiro' | 'folha' | 'marketing' | 'configuracoes';
 
 const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
   { id: 'categorias',   label: 'Categorias' },
   { id: 'produtos',     label: 'Produtos' },
-  // Oferta é cadastro, não é decisão de caixa: fica ao lado do produto cujo
-  // preço ela troca.
-  { id: 'promocoes',    label: 'Promoções' },
   { id: 'servicos',     label: 'Serviços' },
   { id: 'clientes',     label: 'Clientes' },
   { id: 'fornecedores', label: 'Fornecedores' },
@@ -221,18 +216,32 @@ function AppInterno() {
   // `usuarios` destoa — por isso a constante em vez de repetir os tres nomes.
   const TODOS = ['admin_master', 'ceo', 'operador_caixa'];
   const SO_GESTAO = ['admin_master', 'ceo'];
+  // `bloco` agrupa os itens em faixas nomeadas, no mesmo padrão da sidebar do
+  // LogMax (cabeçalho em pílula amarela antes do primeiro item de cada bloco).
+  // O aluno usa os dois sistemas na mesma aula: se a lista aqui é uma tira
+  // corrida de 10 itens e lá é dividida por área, ele tem de reaprender onde
+  // as coisas ficam a cada troca de tela. Os nomes dos blocos são os MESMOS do
+  // LogMax onde a área existe nos dois lados.
+  //
+  // Início fica fora de bloco de propósito — no LogMax ele também é botão
+  // solto acima das faixas.
   const menuItems = [
     { id: 'inicio', icon: Home, label: 'Início', roles: TODOS },
-    { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: TODOS, iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
-    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: TODOS, grupo: true },
-    { id: 'estoque', icon: Package, label: 'Estoque', roles: TODOS },
-    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: TODOS },
-    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: TODOS },
-    { id: 'vitrine', icon: Star, label: 'Vitrine', roles: TODOS },
-    { id: 'relatorios', icon: BarChart3, label: 'Relatórios', roles: TODOS },
-    // Unico item restrito: cadastrar e editar pessoas.
-    { id: 'usuarios', icon: UserCog, label: 'Usuários', roles: SO_GESTAO },
-    { id: 'configuracoes', icon: Settings, label: 'Configurações', roles: TODOS },
+    { id: 'pdv', icon: ShoppingCart, label: 'PDV', roles: TODOS, bloco: 'Vendas e Atendimento', iconSrc: FILIAL_META[filialAtiva ?? 'supermax'].logo },
+    { id: 'cadastros', icon: Users, label: 'Cadastros', roles: TODOS, bloco: 'Logística e Finanças', grupo: true },
+    { id: 'estoque', icon: Package, label: 'Estoque', roles: TODOS, bloco: 'Logística e Finanças' },
+    { id: 'financeiro', icon: DollarSign, label: 'Financeiro', roles: TODOS, bloco: 'Logística e Finanças' },
+    // Unico item restrito: cadastrar e editar pessoas. Vem antes da Folha —
+    // a pessoa é cadastrada primeiro, depois entra na folha.
+    { id: 'usuarios', icon: UserCog, label: 'Usuários', roles: SO_GESTAO, bloco: 'Gestão de Pessoas' },
+    { id: 'folha', icon: Wallet, label: 'Folha de Pagamento', roles: TODOS, bloco: 'Gestão de Pessoas' },
+    // Promoções saiu de Cadastros (2026-09-04): a oferta não é dado de
+    // referência que se cadastra uma vez — é campanha, com vigência e objetivo
+    // comercial. Juntou-se à Vitrine numa tela só de duas abas, do mesmo jeito
+    // que o LogMax tem UM módulo Marketing com as telas dele dentro: são as
+    // duas pontas da mesma decisão — a oferta define o preço, a vitrine define
+    // o que o cliente vê antes de entrar na loja.
+    { id: 'marketing', icon: Megaphone, label: 'Marketing', roles: TODOS, bloco: 'Marketing e Brand' },
   ];
 
   const allowedItems = menuItems.filter(item => user && item.roles.includes(user.role as any));
@@ -245,7 +254,11 @@ function AppInterno() {
     : null;
   const tituloDaAba = subCadastroAtivo
     ? `Cadastros › ${SUBMENUS_CADASTRO.find(x => x.id === subCadastroAtivo)?.label ?? ''}`
-    : menuItems.find((t) => t.id === activeTab)?.label;
+    // Configurações não está mais em `menuItems` (chega-se por ela pelo avatar),
+    // então o título precisa vir daqui — senão o header ficava em branco.
+    : activeTab === 'configuracoes'
+      ? 'Configurações'
+      : menuItems.find((t) => t.id === activeTab)?.label;
 
   if (isLoading) {
     return (
@@ -326,10 +339,34 @@ function AppInterno() {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 custom-scrollbar">
-          {allowedItems.map((item) => {
+        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1 custom-scrollbar sidebar-scroll">
+          {allowedItems.map((item, idx) => {
             const Icon = item.icon;
             const iconSrc = (item as any).iconSrc as string | undefined;
+
+            // Cabeçalho de bloco — pílula amarela antes do PRIMEIRO item
+            // visível de cada faixa (mesmo desenho da sidebar do LogMax).
+            //
+            // A comparação é com o item anterior JÁ FILTRADO por role: assim um
+            // bloco que perdeu todos os seus itens não deixa um título órfão
+            // sobre o bloco seguinte. Hoje o único item restrito é Usuários,
+            // que divide bloco com Folha de Pagamento — mas a régua vale pra
+            // quando o próximo item restrito aparecer.
+            const bloco = (item as any).bloco as string | undefined;
+            const blocoAnterior = (allowedItems[idx - 1] as any)?.bloco as string | undefined;
+            const cabecalho = bloco && bloco !== blocoAnterior ? (
+              <div className="mt-4 mb-1.5 px-1">
+                {/* Tokens do tema, não amarelo fixo: o MaxPOS troca o accent
+                    por bege e laranja nos outros temas, e uma pílula #FFC107
+                    cravada ficaria gritando fora do esquema. */}
+                <span
+                  className="inline-block text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full"
+                  style={{ background: 'var(--accent)', color: 'var(--accent-fg)', border: '1px solid var(--accent)' }}
+                >
+                  {bloco}
+                </span>
+              </div>
+            ) : null;
 
             // Cadastros é um GRUPO: abre a lista de submenus em vez de navegar.
             // Abre sozinho ao entrar num cadastro (useEffect acima), mas quem
@@ -340,6 +377,7 @@ function AppInterno() {
               const aberto = cadastrosAberto;
               return (
                 <div key={item.id}>
+                  {cabecalho}
                   <div
                     onClick={() => setCadastrosAberto(o => !o)}
                     className={`nav-item ${dentro && !aberto ? 'active' : ''}`}
@@ -377,39 +415,44 @@ function AppInterno() {
 
             const isActive = activeTab === item.id;
             return (
-              <div
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id as Tab);
-                  setIsSidebarOpen(false);
-                }}
-                className={`nav-item ${isActive ? 'active' : ''}`}
-              >
-                {iconSrc ? (
-                  // As três logos têm fundo diferente no próprio arquivo:
-                  // supermax é RGBA transparente (sumia no navy), techmax vem
-                  // com branco embutido e maxlook com PRETO (a marca é preto +
-                  // dourado). O branco do container só aparece atrás da que é
-                  // transparente; sem padding, as opacas preenchem o chip
-                  // inteiro — senão a preta virava um quadrado dentro de outro.
-                  <span className="w-6 h-6 rounded overflow-hidden bg-white flex items-center justify-center shrink-0 border" style={{ borderColor: 'rgba(255,255,255,0.35)' }}>
-                    <img src={iconSrc} alt="" className="w-full h-full object-contain" />
-                  </span>
-                ) : (
-                  <Icon size={18} />
-                )}
-                <span className="text-sm">{item.label}</span>
+              <div key={item.id}>
+                {cabecalho}
+                <div
+                  onClick={() => {
+                    setActiveTab(item.id as Tab);
+                    setIsSidebarOpen(false);
+                  }}
+                  className={`nav-item ${isActive ? 'active' : ''}`}
+                >
+                  {iconSrc ? (
+                    // As três logos têm fundo diferente no próprio arquivo:
+                    // supermax é RGBA transparente (sumia no navy), techmax vem
+                    // com branco embutido e maxlook com PRETO (a marca é preto +
+                    // dourado). O branco do container só aparece atrás da que é
+                    // transparente; sem padding, as opacas preenchem o chip
+                    // inteiro — senão a preta virava um quadrado dentro de outro.
+                    <span className="w-6 h-6 rounded overflow-hidden bg-white flex items-center justify-center shrink-0 border" style={{ borderColor: 'rgba(255,255,255,0.35)' }}>
+                      <img src={iconSrc} alt="" className="w-full h-full object-contain" />
+                    </span>
+                  ) : (
+                    <Icon size={18} />
+                  )}
+                  <span className="text-sm">{item.label}</span>
+                </div>
               </div>
             );
           })}
         </nav>
 
         <div className="px-3 pb-3 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+          {/* Discreto de propósito: sair é a ação MENOS frequente da sidebar e
+              estava com o mesmo peso visual dos itens de navegação — um bloco
+              amarelo de 48px fechando a coluna. Agora ocupa uma linha só. */}
           <button
             onClick={handleLogout}
-            className="w-full px-3 py-3 flex items-center justify-center gap-2 font-bold text-sm uppercase tracking-wide glass-yellow shimmer rounded-md"
+            className="w-full px-3 py-1.5 flex items-center justify-center gap-1.5 font-bold text-[11px] uppercase tracking-wide glass-yellow shimmer rounded-md"
           >
-            <LogOut size={16} className="relative z-[2]" />
+            <LogOut size={13} className="relative z-[2]" />
             <span className="relative z-[2]">Sair do Sistema</span>
           </button>
         </div>
@@ -457,13 +500,23 @@ function AppInterno() {
                 <p className="text-xs font-bold uppercase tracking-wider leading-none mb-1" style={{ color: 'var(--accent)' }}>Operador</p>
                 <p className="font-bold text-base text-white">{user.name}</p>
               </div>
-              <div className="w-11 h-11 rounded-full bg-white border-2 flex items-center justify-center overflow-hidden" style={{ borderColor: 'var(--accent)' }}>
+              {/* O avatar é a porta do perfil, como no LogMax — trocar a
+                  própria foto é a razão nº 1 de alguém procurar "Configurações",
+                  e procurar isso num item de menu no fim da barra nunca foi
+                  óbvio. Com a porta aqui, o menu deixou de precisar da linha. */}
+              <button
+                onClick={() => { setActiveTab('configuracoes'); setIsSidebarOpen(false); }}
+                title="Meu perfil — foto, senha e preferências"
+                aria-label="Abrir meu perfil"
+                className={`w-11 h-11 rounded-full bg-white border-2 flex items-center justify-center overflow-hidden shrink-0 transition hover:brightness-110 hover:scale-105 ${activeTab === 'configuracoes' ? 'ring-2 ring-white ring-offset-2 ring-offset-[var(--navy)]' : ''}`}
+                style={{ borderColor: 'var(--accent)' }}
+              >
                 {user.avatar ? (
                   <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <UserCircle size={30} className="text-gray-400" />
                 )}
-              </div>
+              </button>
             </div>
           </header>
         )}
@@ -516,10 +569,10 @@ function AppInterno() {
                 />
                 </div>
               )}
-              {subCadastroAtivo === 'promocoes' && (
-                <PromocoesModule currentUser={user} />
+              {activeTab === 'marketing' && (
+                <MarketingModule currentUser={user} />
               )}
-              {subCadastroAtivo && subCadastroAtivo !== 'promocoes' && (
+              {subCadastroAtivo && (
                 <CadastrosModule currentUser={user} subTab={subCadastroAtivo} />
               )}
               {activeTab === 'usuarios' && (
@@ -528,8 +581,6 @@ function AppInterno() {
               {activeTab === 'estoque' && <EstoqueModule />}
               {activeTab === 'financeiro' && <FinanceiroModule />}
               {activeTab === 'folha' && <FolhaPagamentoModule />}
-              {activeTab === 'relatorios' && <RelatoriosModule />}
-              {activeTab === 'vitrine' && <VitrineModule />}
               {activeTab === 'configuracoes' && <ConfiguracoesModule onUserUpdate={setUser} />}
             </motion.div>
           </AnimatePresence>

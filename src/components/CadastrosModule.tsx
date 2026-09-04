@@ -55,17 +55,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // Badge sólido de empresa. A paleta mora no FilialContext (FILIAL_META) —
   // estava duplicada aqui, no FiltroLoja e no PDV, e as três já tinham
   // divergido: SuperMax chegou a ser amarelo num lugar e azul no outro.
-  const FilialBadge = ({ modo }: { modo?: string | null }) => {
-    const m = FILIAL_META[(modo ?? 'supermax') as keyof typeof FILIAL_META] ?? FILIAL_META.supermax;
-    return (
-      <span
-        className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.15em] shrink-0 border"
-        style={{ background: m.color, color: m.fg, borderColor: m.dark }}
-      >
-        {m.label}
-      </span>
-    );
-  };
+  // FilialBadge saiu das listas (2026-09-04). Toda lista desta tela filtra por
+  // `pdvMode === nichoFilter`, e `nichoFilter` E a empresa da sessao — entao o
+  // selo mostrava a MESMA empresa em todas as linhas, por construcao. Eram 59
+  // etiquetas azuis repetindo o que o botao de empresa no topo ja diz, cada uma
+  // disputando atencao com o nome do produto ao lado. Se um dia alguma lista
+  // passar a misturar empresas, o selo volta — mas por linha DIVERGENTE.
   const [, _setSessionUser] = useState<User | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddClient, setShowAddClient] = useState(false);
@@ -1175,7 +1170,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-4">Categoria</th>
-                <th className="px-5 py-4">PDV</th>
+                {/* A coluna PDV saiu junto com o FilialBadge: mostrava a
+                    empresa da sessao em toda linha, e a lista ja filtra por
+                    ela. Sem esta remocao o cabecalho ficaria com uma coluna a
+                    mais que o corpo e a tabela inteira desalinhava. */}
                 <th className="px-5 py-4 text-right">Itens</th>
                 <th className="px-5 py-4 text-right">Ações</th>
               </tr>
@@ -1193,7 +1191,6 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-4"><FilialBadge modo={c.pdvMode} /></td>
                   <td className="px-5 py-4 text-right tabular-nums font-bold" style={{ color: 'var(--navy)' }}>{usos(c.name)}</td>
                   <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-2">
@@ -1321,10 +1318,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         )}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
-                          <FilialBadge modo={p.pdvMode} />
-                        </div>
+                        <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
                         {/* Identificação útil pra quem opera: REF e código de
                             barras. O UUID interno não é digitável, não é
                             conferível na etiqueta e só roubava a linha. */}
@@ -1341,10 +1335,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="px-5 py-4">
                     <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded text-sm font-bold">{p.category || '—'}</span>
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums text-base text-gray-700">
+                  {/* whitespace-nowrap: formatBRL devolve "R$ 4,50" com espaco
+                      normal, e na largura desta coluna o "R$" ficava numa linha
+                      e o valor na de baixo — em TODAS as 59 linhas. */}
+                  <td className="px-5 py-4 text-right tabular-nums text-base text-gray-500 whitespace-nowrap">
                     {formatBRL(p.costPrice)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold" style={{ color: 'var(--navy)' }}>
+                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold whitespace-nowrap" style={{ color: 'var(--navy)' }}>
                     {formatBRL(p.price)}
                   </td>
                   <td className="px-5 py-4 text-right tabular-nums">
@@ -1363,36 +1360,40 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <span className="text-sm text-gray-600 font-mono">{p.ean13 || '—'}</span>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex gap-1.5 justify-center">
+                    {/* Quatro botoes solidos com gradiente e shimmer POR LINHA
+                        somavam 236 pecas brilhantes numa lista de 59 produtos: a
+                        tela inteira piscava e nada se destacava, porque tudo se
+                        destacava. Fantasmas — ganham cor quando o ponteiro chega. */}
+                    <div className="flex gap-0.5 justify-center">
                       <button
                         onClick={() => setBarcodeModal({ isOpen: true, product: p })}
-                        className="p-2 rounded glass-yellow shimmer"
-                        title="Gerar Etiqueta"
+                        className="row-ghost-btn hover:!text-[var(--accent-text)]"
+                        title="Gerar etiqueta"
                       >
-                        <Barcode size={16} className="relative z-[2]" />
+                        <Barcode size={16} />
                       </button>
                       <button
                         onClick={() => handleEdit(p, 'produto')}
-                        className="p-2 rounded glass-blue shimmer"
+                        className="row-ghost-btn hover:!text-[var(--navy)]"
                         title="Editar"
                       >
-                        <Edit2 size={16} className="relative z-[2]" />
+                        <Edit2 size={16} />
                       </button>
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(p.id, 'produto', p.name)}
-                          className="p-2 rounded glass-red shimmer"
+                          className="row-ghost-btn is-danger"
                           title="Excluir"
                         >
-                          <Trash2 size={16} className="relative z-[2]" />
+                          <Trash2 size={16} />
                         </button>
                       )}
                       <button
                         onClick={() => handleView(p)}
-                        className="p-2 rounded glass-blue shimmer"
+                        className="row-ghost-btn hover:!text-[var(--navy)]"
                         title="Detalhes"
                       >
-                        <ChevronRight size={16} className="relative z-[2]" />
+                        <ChevronRight size={16} />
                       </button>
                     </div>
                   </td>
@@ -1421,7 +1422,6 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="p-6">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <div className="font-bold text-gray-900">{s.name}</div>
-                      <FilialBadge modo={s.pdvMode} />
                     </div>
                   </td>
                   <td className="p-6 text-sm text-gray-600">
@@ -3431,13 +3431,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
         )}
 
-        <div className="mt-auto p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-600 font-black uppercase tracking-widest border-t border-gray-200 bg-main/50 backdrop-blur-sm sticky bottom-0">
-          <span>Mostrando {currentListLength} de {totalLength} registros</span>
-          <div className="flex gap-2">
-            <button className="px-3 py-1 neumorphic-inset disabled:opacity-30 text-gray-600 hover:text-[var(--accent)] transition-colors">Anterior</button>
-            <button className="px-3 py-1 neumorphic-inset text-[var(--accent)] bg-main shadow-inner">1</button>
-            <button className="px-3 py-1 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-colors">Próximo</button>
-          </div>
+        {/* Deixou de ser `sticky bottom-0`: a lista nao rola dentro do card —
+            o card cresce com ela (4.877px com 59 produtos) e quem rola e a
+            pagina. Preso ao rodape da JANELA, o contador ficava boiando por
+            cima da linha que estivesse embaixo, o tempo todo. No fim da lista
+            ele nao atrapalha ninguem e continua respondendo "quantos sao?".
+            Os botoes Anterior / 1 / Proximo sairam: nao tinham onClick nem
+            estado de pagina — eram desenho de paginacao, e a lista ja mostra
+            todos os registros de uma vez. Controle que nao controla nada custa
+            mais confianca do que economiza espaco. */}
+        <div className="mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-xs text-gray-500 font-bold uppercase tracking-widest border-t border-gray-200 bg-white">
+          <span>{currentListLength} de {totalLength} registros</span>
         </div>
       </div>
     </div>

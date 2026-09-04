@@ -119,8 +119,9 @@ export default function FiscalModule() {
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
     load();
-    // Ver RelatoriosModule: sem `filter` o canal trazia as vendas das tres
-    // empresas e cada evento recarregava a lista inteira de cupons.
+    // Sem `filter` no canal, chegavam as vendas das tres empresas e cada
+    // evento recarregava a lista inteira de cupons. (A referencia era ao
+    // RelatoriosModule, removido em 2026-09-04 junto com o menu Relatorios.)
     let recarga: ReturnType<typeof setTimeout> | null = null;
     const loadDebounced = () => {
       if (recarga) clearTimeout(recarga);

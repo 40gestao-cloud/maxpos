@@ -83,7 +83,10 @@ select:-webkit-autofill {
      cara ao entrar em MaxLook ou TechMax, em vez das três usarem o navy do
      SuperMax e a identidade viver só num badge. */
   --brand-rgb:      23 37 84;
-  --border:         rgb(var(--brand-rgb) / 0.28);  /* borda padrão de card  */
+  /* Borda mais leve que antes (era 0.28). Sobre branco, 0.28 lia como um
+     traço cinza-sujo em volta de tudo — era isso que dava o ar de "wireframe".
+     Quem define a superfície agora é a SOMBRA; a borda só fecha o contorno. */
+  --border:         rgb(var(--brand-rgb) / 0.13);  /* borda padrão de card  */
   --border-strong:  rgb(var(--brand-rgb) / 0.55);  /* inputs/botões         */
   --border-hover:   rgb(var(--brand-rgb) / 0.55);  /* realce de clicável    */
   --text-main:      #111827;   /* texto principal                        */
@@ -93,6 +96,22 @@ select:-webkit-autofill {
   --accent-fg:      #172554;   /* texto legível SOBRE o accent           */
   --navy:           rgb(var(--brand-rgb));  /* cor escura da marca       */
   --money:          #15803d;   /* verde dinheiro (valores/positivos)     */
+  /* Amarelo NÃO serve como cor de texto sobre branco: #FFC107 sobre #fff dá
+     ~1.7:1 de contraste — o "R$ 240,48" do Ticket Médio era praticamente
+     invisível. Este dourado escuro mantém a leitura de "cor da marca" com
+     ~4.6:1. Use --accent para FUNDO, --accent-text para TEXTO sobre claro. */
+  --accent-text:    #8a6508;
+
+  /* ── Elevação ──
+     O sistema era 100% plano: card, botão e fundo separados só por 1px de
+     borda. Sobre fundo branco isso lê como papel quadriculado, não como
+     interface. Sombra curta e de baixa opacidade, tingida com o azul da
+     marca (sombra cinza-neutra suja o branco) — profundidade que se sente
+     sem virar drop-shadow de 2010. */
+  --shadow-card:    0 1px 2px rgb(var(--brand-rgb) / 0.05),
+                    0 4px 14px -4px rgb(var(--brand-rgb) / 0.10);
+  --shadow-raised:  0 2px 4px rgb(var(--brand-rgb) / 0.06),
+                    0 14px 28px -8px rgb(var(--brand-rgb) / 0.18);
   --danger:         #b91c1c;   /* vermelho (erros)                       */
 
   /* legado (mantidos para compat com componentes antigos) */
@@ -158,6 +177,7 @@ select:-webkit-autofill {
     border: 1px solid var(--border);
     border-radius: 0.75rem;
     color: var(--text-main);
+    box-shadow: var(--shadow-card);
   }
 
   /* Card clicável: a borda EXISTE em repouso e apenas escurece no hover.
@@ -166,11 +186,21 @@ select:-webkit-autofill {
      esconde do operador que aquilo é clicável (e some no touch, onde não
      existe hover). Use junto de .neumorphic. */
   .neumorphic-clickable {
-    transition: border-color 120ms ease, background-color 120ms ease;
+    transition: border-color 150ms ease, background-color 150ms ease,
+                box-shadow 150ms ease, transform 150ms ease;
   }
+  /* Sobe 1px e ganha sombra: o card clicável passa a responder ao mouse como
+     objeto físico. Antes só trocava a cor da borda — mudança que, num card
+     grande, o olho quase não registra. */
   .neumorphic-clickable:hover {
     border-color: var(--border-hover);
-    background: var(--bg-soft);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-raised);
+    transform: translateY(-1px);
+  }
+  .neumorphic-clickable:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow-card);
   }
   /* Faixa amarela à esquerda para o card em destaque, dentro do mesmo trio
      branco/azul/amarelo — realce sem inventar cor nova. */
@@ -217,15 +247,24 @@ select:-webkit-autofill {
      marcava a seleção; sobre navy isso vira navy-sobre-navy e o item
      selecionado some. O amarelo é o accent fazendo o trabalho dele — "você
      está aqui" — e é o mesmo indicador das abas de Cadastros. */
+  /* "Você está aqui" com peso de item de lista, não de banner.
+     O bloco amarelo CHEIO nasceu quando a sidebar era branca e o navy sumia.
+     Sobre a sidebar navy ele virou a maior mancha da coluna: o item ativo —
+     quase sempre o Início, no topo — lia como um item MAIOR que os outros, e
+     não como um item marcado. Barra lateral + fundo tênue + texto no accent é
+     a régua da sidebar do LogMax, e continua perfeitamente legível sobre
+     navy, que era todo o motivo do fundo cheio existir.
+     box-shadow inset (e não border-left) pra não empurrar o conteúdo 3px. */
   .nav-item.active {
-    background: var(--accent);
-    color: var(--accent-fg);
+    background: rgba(255, 255, 255, 0.10);
+    color: var(--accent);
     font-weight: 800;
+    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .nav-item.active:hover {
-    background: var(--accent);
-    color: var(--accent-fg);
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--accent);
   }
 }
 
@@ -285,6 +324,32 @@ body {
     border-color: #4c0a0a;
   }
 
+  /* ── Botão-fantasma de linha de lista ──
+     Ação que se repete em TODA linha (apagar, ocultar) não pode ter o peso
+     de um botão sólido: vinte lixeiras vermelhas com shimmer faziam da ação
+     mais perigosa da tela o elemento mais chamativo dela. Em repouso é um
+     ícone cinza discreto; a cor só aparece quando o ponteiro chega nele, que
+     é quando a intenção existe. */
+  .row-ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem;
+    border-radius: 0.5rem;
+    color: #9ca3af;
+    background: transparent;
+    transition: color 130ms ease, background-color 130ms ease;
+  }
+  .row-ghost-btn:hover {
+    background: var(--bg-soft);
+    color: var(--text-muted);
+  }
+  /* Variante destrutiva: só ela vira vermelha, e só no hover. */
+  .row-ghost-btn.is-danger:hover {
+    background: #fee2e2;
+    color: var(--danger);
+  }
+
   /* Shimmer — gradiente diagonal varrendo o elemento */
   .shimmer {
     position: relative;
@@ -334,7 +399,62 @@ body {
     border-radius: 0.75rem;
     padding: 1.5rem;
     color: var(--text-main);
+    box-shadow: var(--shadow-card);
   }
+
+  /* ── KPI ──
+     O valor é a informação, mas num card de peso uniforme ele não se
+     destacava de um label em CAPS do mesmo tamanho. Barra fina no topo com a
+     cor DO indicador (verde entra, vermelho sai) — cor que informa, não que
+     decora. A cor chega por --kpi-cor, então um stat novo não pede CSS novo. */
+  .kpi-card {
+    position: relative;
+    overflow: hidden;
+    padding-top: calc(1rem + 3px);
+  }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--kpi-cor, var(--navy));
+  }
+
+  /* ── Ação de destaque de uma seção ("Lançar conta a pagar") ──
+     Antes era um card com um "+" a 20% de opacidade no canto: lia como painel
+     decorativo, não como botão — e o subtítulo repetia o título com outras
+     palavras. Aqui o ícone vive num chip sólido na cor da ação e o "+" tem
+     contraste real, então a peça se anuncia como clicável em repouso. */
+  .action-tile {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    padding: 1rem 1.25rem;
+    text-align: left;
+  }
+  .action-tile .action-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.75rem;
+    flex-shrink: 0;
+    color: #fff;
+    background: var(--acao-cor, var(--navy));
+    box-shadow: 0 2px 8px -2px var(--acao-cor, var(--navy));
+    transition: transform 150ms ease;
+  }
+  .action-tile:hover .action-chip { transform: scale(1.06); }
+  .action-tile .action-plus {
+    margin-left: auto;
+    color: var(--acao-cor, var(--navy));
+    flex-shrink: 0;
+    opacity: 0.55;
+    transition: opacity 150ms ease;
+  }
+  .action-tile:hover .action-plus { opacity: 1; }
 
   /* Cabeçalho de página: faixa amarela como o PDV */
   .page-header {
@@ -535,6 +655,20 @@ body {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
+}
+
+/* Scrollbar da sidebar — o thumb cinza-claro do .custom-scrollbar é feito pra
+   fundo branco (listas, modais) e sobre a coluna navy virava um risco branco
+   descendo a lateral. Aqui ele é da cor do próprio fundo: some. Só no hover
+   ganha um tom acima, pra quem for arrastar ainda achar. Regra separada de
+   propósito — mexer no .custom-scrollbar global apagaria a barra também nas
+   telas claras, onde ela precisa aparecer. */
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: var(--navy);
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 /* ── Seletor de empresa — shimmer correndo na borda do card ──

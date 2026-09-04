@@ -125,7 +125,11 @@ export default function EstoqueModule() {
   // o card nao pular de tamanho quando o dado chega.
   const stats = [
     { label: 'Estoque Crítico', value: criticalProducts.length.toString(), skelW: '2.5rem', icon: AlertTriangle, accent: '#b91c1c', desc: 'Produtos abaixo do mínimo' },
-    { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: 'var(--navy)', desc: 'Total investido', tint: 'var(--accent)' },
+    // tint era 'var(--accent)': amarelo #FFC107 sobre o branco do card dá
+    // ~1.7:1 de contraste — o valor investido era o número mais importante da
+    // tela e o mais difícil de ler. --accent-text é o mesmo dourado, escuro o
+    // suficiente pra se ler (~4.6:1).
+    { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: 'var(--navy)', desc: 'Total investido', tint: 'var(--accent-text)' },
     { label: 'Movimentações', value: visibleMoves.length.toString(), skelW: '3rem', icon: TrendingUp, accent: 'var(--navy)', desc: 'Saídas registradas' },
     { label: 'Total de Itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, accent: 'var(--navy)', desc: 'Unidades em estoque' },
   ] as Array<{ label: string; value: string; skelW: string; icon: any; accent: string; desc: string; tint?: string }>;

@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import {
   DollarSign, ArrowUpCircle, ArrowDownCircle, CreditCard, History,
   Printer, Plus, X, Search, Filter, Calendar, Trash2, CheckCircle2,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, EyeOff,
 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
@@ -265,11 +265,15 @@ export default function FinanceiroModule() {
     }
   };
 
+  // `cor` é a cor crua do indicador: pinta a barra do topo do card E o valor.
+  // O Ticket Médio era 'text-[var(--accent)]' — amarelo #FFC107 sobre branco,
+  // ~1.7:1 de contraste. O número simplesmente não se lia; agora usa o dourado
+  // escuro de --accent-text.
   const stats = [
-    { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, color: 'text-emerald-500', icon: DollarSign },
-    { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, color: 'text-blue-500', icon: ArrowUpCircle },
-    { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, color: 'text-red-500', icon: ArrowDownCircle },
-    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, color: 'text-[var(--accent)]', icon: CreditCard },
+    { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, cor: 'var(--money)', icon: DollarSign },
+    { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, cor: '#2563eb', icon: ArrowUpCircle },
+    { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, cor: 'var(--danger)', icon: ArrowDownCircle },
+    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, cor: 'var(--accent-text)', icon: CreditCard },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
@@ -337,11 +341,12 @@ export default function FinanceiroModule() {
       {confirmHost}
       {alertHost}
       {/* Tudo nesta tela e da empresa da sessao — vendas E contas. */}
-      <div className="neumorphic neumorphic-accent p-4">
-        <p className="text-[11px] font-bold text-gray-600">
-          Vendas e contas abaixo são de <b>{FILIAL_META[filialAtiva ?? 'supermax'].label}</b>.
-          Cada empresa tem o próprio contas a pagar e a receber — troque de empresa
-          no topo para ver as das outras.
+      {/* Era um parágrafo de três linhas explicando o que o botão de empresa no
+          topo já mostra. Uma frase basta: o que o operador precisa saber é de
+          QUEM são estes números. */}
+      <div className="neumorphic neumorphic-accent px-4 py-2.5">
+        <p className="text-xs font-semibold text-gray-600">
+          Números de <b className="text-gray-900">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.
         </p>
       </div>
 
@@ -350,14 +355,18 @@ export default function FinanceiroModule() {
         {stats.map((stat, i) => {
           const Icon = stat.icon;
           return (
-            <div key={i} className="neumorphic p-4 md:p-6 group cursor-default relative overflow-hidden">
-              <div className="flex justify-between items-start mb-2 relative z-10">
-                <span className="text-[8px] md:text-sm text-gray-600 font-black uppercase tracking-widest leading-tight">{stat.label}</span>
-                <Icon size={14} className={`${stat.color} opacity-40`} />
+            <div
+              key={i}
+              className="neumorphic kpi-card p-4 md:p-5 cursor-default"
+              style={{ ['--kpi-cor' as string]: stat.cor }}
+            >
+              <div className="flex justify-between items-start gap-2 mb-1.5">
+                <span className="text-[9px] md:text-[11px] text-gray-500 font-bold uppercase tracking-[0.12em] leading-tight">{stat.label}</span>
+                <Icon size={15} style={{ color: stat.cor }} className="opacity-70 shrink-0" />
               </div>
-              <h3 className={`text-sm md:text-2xl font-black ${stat.color} relative z-10`}>
+              <h3 className="text-lg md:text-3xl font-black tabular-nums tracking-tight" style={{ color: stat.cor }}>
                 {loading
-                  ? <span className="skeleton" style={{ width: '5.5rem', height: '1.5rem' }} aria-hidden="true">&nbsp;</span>
+                  ? <span className="skeleton" style={{ width: '5.5rem', height: '1.75rem' }} aria-hidden="true">&nbsp;</span>
                   : stat.value}
               </h3>
             </div>
@@ -365,34 +374,36 @@ export default function FinanceiroModule() {
         })}
       </div>
 
-      {/* Action Buttons */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      {/* Ações de lançamento.
+          O subtítulo saiu: "Registrar nova saída financeira" era o título dito
+          de novo com outras palavras, em CAPS, do mesmo tamanho — dois textos
+          concorrendo onde bastava um. Sem ele os dois cartões também param de
+          ter alturas diferentes (o da direita quebrava em duas linhas). */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <button
           onClick={() => openAddModal('payable')}
-          className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95"
+          className="neumorphic neumorphic-clickable action-tile"
+          style={{ ['--acao-cor' as string]: 'var(--danger)' }}
         >
-          <div className="flex items-center gap-4">
-            <div className="p-4 rounded-2xl bg-red-500/10 text-red-500"><ArrowDownCircle size={24} /></div>
-            <div className="text-left">
-              <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Lançar Conta a Pagar</h4>
-              <p className="text-sm text-gray-600 uppercase font-bold">Registrar nova saída financeira</p>
-            </div>
-          </div>
-          <Plus size={24} className="text-red-500 opacity-20 group-hover:opacity-100 transition-opacity" />
+          <span className="action-chip"><ArrowDownCircle size={22} /></span>
+          <span className="min-w-0">
+            <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a pagar</span>
+            <span className="block text-xs text-gray-500 font-medium">Uma saída que ainda vai acontecer</span>
+          </span>
+          <Plus size={20} className="action-plus" strokeWidth={3} />
         </button>
 
         <button
           onClick={() => openAddModal('receivable')}
-          className="neumorphic neumorphic-clickable p-6 flex items-center justify-between group active:scale-95"
+          className="neumorphic neumorphic-clickable action-tile"
+          style={{ ['--acao-cor' as string]: '#2563eb' }}
         >
-          <div className="flex items-center gap-4">
-            <div className="p-4 rounded-2xl bg-blue-500/10 text-blue-500"><ArrowUpCircle size={24} /></div>
-            <div className="text-left">
-              <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Lançar Conta a Receber</h4>
-              <p className="text-sm text-gray-600 uppercase font-bold">Registrar nova entrada financeira</p>
-            </div>
-          </div>
-          <Plus size={24} className="text-blue-500 opacity-20 group-hover:opacity-100 transition-opacity" />
+          <span className="action-chip"><ArrowUpCircle size={22} /></span>
+          <span className="min-w-0">
+            <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a receber</span>
+            <span className="block text-xs text-gray-500 font-medium">Uma entrada que ainda vai acontecer</span>
+          </span>
+          <Plus size={20} className="action-plus" strokeWidth={3} />
         </button>
       </div>
 
@@ -559,8 +570,10 @@ export default function FinanceiroModule() {
             </div>
           )}
 
-          {/* List */}
-          <div className="space-y-4">
+          {/* Lista. Era `space-y-4`: cada linha já é um bloco com borda, e com
+              16px entre elas o fluxo virava uma pilha de cartões soltos em vez
+              de uma lista que se lê de cima a baixo. */}
+          <div className="space-y-2">
             {loading && (
               <div className="flex justify-center py-10 opacity-40">
                 <div className="w-8 h-8 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
@@ -578,19 +591,21 @@ export default function FinanceiroModule() {
                     </div>
                     <div className="min-w-0">
                       <p className="font-bold text-sm text-gray-900 truncate">{a.description}</p>
-                      <p className="text-sm text-gray-600">{new Date(a.dueDate + 'T12:00:00').toLocaleDateString()} • {a.status.toUpperCase()}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{new Date(a.dueDate + 'T12:00:00').toLocaleDateString()} • {a.status === 'paid' ? 'Pago' : 'Pendente'}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
-                    <span className={`font-black whitespace-nowrap ${a.type === 'payable' ? 'text-red-500' : 'text-blue-500'}`}>
+                    <span className={`font-black tabular-nums whitespace-nowrap ${a.type === 'payable' ? 'text-red-600' : 'text-blue-600'}`}>
                       {a.type === 'payable' ? '-' : '+'} R$ {a.amount.toFixed(2)}
                     </span>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleToggleAccountStatus(a.id)} className={`p-2 rounded-lg transition-colors ${a.status === 'paid' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-gray-100 text-gray-600 hover:text-emerald-500'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
-                        <CheckCircle2 size={14} />
+                    <div className="flex gap-1">
+                      <button onClick={() => handleToggleAccountStatus(a.id)} className={`row-ghost-btn ${a.status === 'paid' ? 'text-emerald-600 bg-emerald-500/10' : 'hover:!text-emerald-600'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
+                        <CheckCircle2 size={16} />
                       </button>
-                      <button onClick={() => handleDeleteAccount(a.id)} className="p-2 rounded glass-red shimmer" title="Excluir Lançamento">
-                        <Trash2 size={14} className="relative z-[2]" />
+                      {/* Este SIM apaga o lançamento — por isso é a variante
+                          destrutiva. Fica cinza até o ponteiro chegar. */}
+                      <button onClick={() => handleDeleteAccount(a.id)} className="row-ghost-btn is-danger" title="Excluir lançamento">
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
@@ -621,24 +636,20 @@ export default function FinanceiroModule() {
                             </span>
                           )}
                         </p>
-                        <p className="text-sm text-gray-600">
+                        <p className="text-xs text-gray-500 mt-0.5 tabular-nums">
                           {new Date(s.date).toLocaleDateString()} • {new Date(s.date).toLocaleTimeString()}
                         </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0 ml-2">
-                      <span className="font-black text-emerald-500 whitespace-nowrap">
+                      <span className="font-black tabular-nums text-emerald-600 whitespace-nowrap">
                         + R$ {s.total.toFixed(2)}
                       </span>
                       {credit && (
                         <button
                           onClick={() => handleExpandSale(s)}
-                          className={`p-2 rounded-lg transition-all ${
-                            isExpanded
-                              ? 'bg-violet-500/20 text-violet-400'
-                              : 'bg-gray-100 text-gray-600 hover:text-violet-400 hover:bg-violet-500/10'
-                          }`}
+                          className={`row-ghost-btn ${isExpanded ? 'bg-violet-500/15 text-violet-600' : 'hover:!text-violet-600'}`}
                           title={isExpanded ? 'Ocultar Parcelas' : 'Ver Parcelas'}
                         >
                           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -646,10 +657,14 @@ export default function FinanceiroModule() {
                       )}
                       <button
                         onClick={() => dismissFlow(`sale-${s.id}`)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Apagar da visualização"
+                        className="row-ghost-btn"
+                        title="Ocultar da lista (reversível em 'Mostrar todas')"
                       >
-                        <Trash2 size={16} className="relative z-[2]" />
+                        {/* Era uma lixeira vermelha com shimmer — o botão mais
+                            gritante da tela para a ação MENOS grave que ela tem:
+                            isto some da lista e volta em 'Mostrar todas', não
+                            apaga venda nenhuma. Olho de riscado diz a verdade. */}
+                        <EyeOff size={16} />
                       </button>
                     </div>
                   </div>
