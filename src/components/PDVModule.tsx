@@ -1583,6 +1583,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
+
+  // ─── "Tem alguma janela por cima?" — LISTA ÚNICA ───────────────
+  // Existiam duas listas paralelas: uma no guarda de foco do CÓDIGO e outra
+  // (`modalOpen`) no atalho global de teclado. Cada uma esquecia modais
+  // diferentes — trava de tela, PIN de supervisor, troca de operador, cliente
+  // rápido, devolução, processamento de cartão. Toda janela nova tinha de ser
+  // lembrada nos dois lugares e nunca era. Agora é uma só: quem abre um modal
+  // registra o estado AQUI e as duas travas passam a valer juntas.
+  //
+  // Pickers (cartão/vale) ficam de fora de propósito: são menus flutuantes
+  // dentro do próprio checkout, não janelas por cima dele.
+  const anyOverlayOpen =
+    openCashModal || sangriaModal || supModal || closeCashModal ||
+    discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null ||
+    cashModalOpen || pixModalOpen || showInstallments || showClientPicker ||
+    classicSearchOpen || helpOpen || changeModal !== null || thankYouOpen ||
+    confirmDialog !== null || alertDialog !== null ||
+    postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null ||
+    supervisorAuthModal !== null || screenLocked || swapOperatorModal ||
+    quickClientModal || cartaoModal !== null || devolucaoModal !== null;
   // Beeps do PDV — pré-carregados como elementos Audio (HTMLAudioElement reaproveita o buffer)
   const beepScanRef = useRef<HTMLAudioElement | null>(null);
   const beepFinalizeRef = useRef<HTMLAudioElement | null>(null);
@@ -1687,12 +1707,25 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
   };
 
-  // Ao entrar na tela de fechamento, foca direto no VALOR DESTA FORMA
+  // Ao entrar na tela de fechamento, foca direto no VALOR DESTA FORMA.
+  //
+  // O atraso de 60ms existe pra esperar o React montar o campo — mas um
+  // operador rápido aperta F4 e F1 dentro dessa janela, e o timer disparava
+  // DEPOIS do modal de dinheiro abrir: o foco era arrancado do VALOR RECEBIDO
+  // e jogado no campo atrás do modal. Quem digitava o valor recebido via o
+  // número não aparecer em lugar nenhum. Por isso o timer reconfere na hora
+  // de disparar se ainda é ele quem deve mandar no foco.
   useEffect(() => {
     if (!checkoutMode) return;
-    const t = setTimeout(() => partialAmountRef.current?.focus(), 60);
+    const t = setTimeout(() => {
+      if (anyOverlayOpen || cardPickerOpen || valePickerOpen) return;
+      const ae = document.activeElement;
+      // Se o operador já escolheu outro campo/botão do fechamento, respeita.
+      if (ae && ae !== document.body && ae !== partialAmountRef.current) return;
+      partialAmountRef.current?.focus();
+    }, 60);
     return () => clearTimeout(t);
-  }, [checkoutMode]);
+  }, [checkoutMode, anyOverlayOpen, cardPickerOpen, valePickerOpen]);
 
   // Mantém o foco no input do CÓDIGO sempre que nenhum modal/picker está aberto.
   // Roda na leitura E no checkout (codeInputRef troca para o input certo
@@ -1703,13 +1736,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // (useEffect acima), mas ao fechar um modal o foco vai para CÓDIGO.
   useEffect(() => {
     if (loading) return;
-    const anyModalOpen = openCashModal || sangriaModal || supModal || closeCashModal ||
-      discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null ||
-      cashModalOpen || pixModalOpen || showInstallments || showClientPicker ||
-      classicSearchOpen || helpOpen || changeModal !== null || thankYouOpen ||
-      confirmDialog !== null || alertDialog !== null || cardPickerOpen || valePickerOpen ||
-      postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null;
-    if (anyModalOpen) return;
+    if (anyOverlayOpen || cardPickerOpen || valePickerOpen) return;
     const t = setTimeout(() => {
       const ae = document.activeElement;
       // No checkout, se o foco já está no partialAmount ou num botão de pagamento
@@ -1718,11 +1745,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       if (!ae || ae === document.body) codeInputRef.current?.focus();
     }, 30);
     return () => clearTimeout(t);
-  }, [loading, checkoutMode, openCashModal, sangriaModal, supModal, closeCashModal,
-      discountModal, cpfModalOpen, priceQueryOpen, reprintSale, cashModalOpen,
-      pixModalOpen, showInstallments, showClientPicker, classicSearchOpen, helpOpen,
-      changeModal, thankYouOpen, confirmDialog, alertDialog, cardPickerOpen, valePickerOpen,
-      postSaleReceipt, valeAuthModal, reprintList]);
+  }, [loading, checkoutMode, anyOverlayOpen, cardPickerOpen, valePickerOpen]);
 
   // Carrega sessão de caixa aberta do operador ao entrar no PDV
   useEffect(() => {
@@ -2583,7 +2606,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const modalOpen = showInstallments || showClientPicker || classicSearchOpen || pixModalOpen || cashModalOpen || helpOpen || changeModal !== null || thankYouOpen || confirmDialog !== null || alertDialog !== null || openCashModal || sangriaModal || supModal || closeCashModal || discountModal !== null || cpfModalOpen || priceQueryOpen || reprintSale !== null || postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null || supervisorAuthModal !== null || screenLocked;
+      const modalOpen = anyOverlayOpen;
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
@@ -2917,7 +2940,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, swapOperatorModal, quickClientModal, isTraining, onExitToMenu, onExitTraining, onSwapOperator, qtdArmada, partialAmount]);
+  }, [anyOverlayOpen, cart, showInstallments, showClientPicker, classicSearchOpen, pixModalOpen, cashModalOpen, cardPickerOpen, valePickerOpen, products, classicCode, payments, checkoutMode, saving, helpOpen, changeModal, thankYouOpen, confirmDialog, alertDialog, openCashModal, sangriaModal, supModal, closeCashModal, cashSession, discountModal, cpfModalOpen, priceQueryOpen, reprintSale, postSaleReceipt, valeAuthModal, reprintList, selectedCartIdx, suspendedSale, saleDiscount, supervisorAuthModal, screenLocked, swapOperatorModal, quickClientModal, isTraining, onExitToMenu, onExitTraining, onSwapOperator, qtdArmada, partialAmount]);
 
   // Formata quantidade conforme a unidade: KG/G com até 3 casas (vírgula, zeros à direita
   // removidos); demais unidades exibem inteiro quando possível.
@@ -4514,8 +4537,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       autoComplete="off"
                       spellCheck={false}
                       placeholder="EAN / REF ou nome do produto"
-                      className="w-96 bg-white border-2 text-2xl font-bold text-gray-900 outline-none px-3 py-1.5 focus:border-blue-700"
-                      style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                      // Mesma correção do VALOR DESTA FORMA: borda pela classe,
+                      // senão o inline vence e o campo nunca mostra que está focado.
+                      className="w-96 bg-white border-2 border-[#9ca3af] text-2xl font-bold text-gray-900 outline-none px-3 py-1.5 focus:border-blue-700 focus:ring-4 focus:ring-blue-500/60"
+                      style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
                     />
                     {classicSuggestions.length > 0 && (
                       <div
@@ -4718,8 +4743,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       }
                     }}
                     placeholder={`Restante: ${maskCurrency(Math.round(Math.max(remaining, 0) * 100))}`}
-                    className="w-full bg-white border-2 text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-2 focus:ring-blue-500/30"
-                    style={{ borderColor: '#9ca3af', fontFamily: 'Consolas, "Courier New", monospace' }}
+                    // A cor da borda saiu do `style` inline: estilo inline vence
+                    // classe, então `focus:border-blue-700` nunca pintava nada e
+                    // o campo ficava igual focado ou não. Sem sinal visual o
+                    // operador acha que o foco não veio pra cá — e no
+                    // treinamento, com a tela escurecida pelo holofote, o anel
+                    // de 30% de opacidade sumia de vez.
+                    className="w-full bg-white border-2 border-[#9ca3af] text-xl font-bold text-gray-900 outline-none px-3 py-1.5 tabular-nums focus:border-blue-700 focus:ring-4 focus:ring-blue-500/60"
+                    style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
                   />
                   {/* Fix #9 — feedback inline quando valor digitado passa do restante. */}
                   {partialAmount && parseCurrencyToNumber(partialAmount) > remaining + 0.001 && remaining > 0 && (
@@ -4803,7 +4834,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                     do valor parcial (era o que sobrava no fim de um scroll). */}
                 <div className="px-6 pt-4">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">
-                    FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab/← → navegar · Enter selecionar · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span>
+                    FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(← → e ↑ ↓ navegam · Tab sai do quadro · Enter seleciona · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span>
                   </h3>
                   <div className="relative grid grid-cols-3 gap-2">
                     {(() => {
@@ -4838,14 +4869,57 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                               else addPayment(m.id as any);
                             }}
                             onKeyDown={(e) => {
-                              if (e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
-                                e.preventDefault();
-                                const next = arr[(mIdx + 1) % arr.length];
-                                document.querySelector<HTMLButtonElement>(`[data-pay-method="${next.id}"]`)?.focus();
-                              } else if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
-                                e.preventDefault();
-                                const prev = arr[(mIdx - 1 + arr.length) % arr.length];
-                                document.querySelector<HTMLButtonElement>(`[data-pay-method="${prev.id}"]`)?.focus();
+                              // Setas andam DENTRO do grid (roving). Tab NÃO:
+                              // ele é a navegação da tela inteira e precisa
+                              // sair do grid — subindo para VALOR DESTA FORMA
+                              // e descendo para DESCONTO/CPF/CLIENTE/FECHAR.
+                              //
+                              // Antes o Tab era sequestrado aqui e girava em
+                              // círculo entre as 6 formas: quem entrasse no
+                              // grid não voltava mais ao campo do valor. Pior
+                              // no pagamento misto — PIX/VALE/FIADO ficam
+                              // desabilitados, `.focus()` neles não faz nada
+                              // e o preventDefault já tinha matado o Tab
+                              // nativo: a tecla morria de vez no DÉBITO.
+                              const horiz = e.key === 'ArrowRight' || e.key === 'ArrowLeft';
+                              const vert = e.key === 'ArrowDown' || e.key === 'ArrowUp';
+                              if (!horiz && !vert) return;
+                              e.preventDefault();
+                              // Focar um botão `disabled` é no-op: sem pular os
+                              // desabilitados a seta morre igual o Tab morria.
+                              const focusAt = (i: number): boolean => {
+                                const cand = arr[i];
+                                if (!cand) return false;
+                                const el = document.querySelector<HTMLButtonElement>(`[data-pay-method="${cand.id}"]`);
+                                if (!el || el.disabled) return false;
+                                el.focus();
+                                return true;
+                              };
+                              if (horiz) {
+                                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                                for (let hop = 1; hop <= arr.length; hop++) {
+                                  if (focusAt(((mIdx + dir * hop) % arr.length + arr.length) % arr.length)) return;
+                                }
+                                return;
+                              }
+                              // ↑↓ andam POR LINHA (o grid tem 3 colunas), que é
+                              // o que o olho espera de um teclado numérico de
+                              // caixa: DINHEIRO/CRÉDITO/DÉBITO em cima,
+                              // PIX/VALE/FIADO embaixo.
+                              const COLS = 3;
+                              const rows = Math.ceil(arr.length / COLS);
+                              const col = mIdx % COLS;
+                              const row = Math.floor(mIdx / COLS);
+                              const dir = e.key === 'ArrowDown' ? 1 : -1;
+                              for (let hop = 1; hop <= rows; hop++) {
+                                const r = ((row + dir * hop) % rows + rows) % rows;
+                                // Mesma coluna primeiro; se ela estiver
+                                // desabilitada, a mais próxima daquela linha.
+                                if (focusAt(r * COLS + col)) return;
+                                for (let d = 1; d < COLS; d++) {
+                                  if (col - d >= 0 && focusAt(r * COLS + col - d)) return;
+                                  if (col + d < COLS && focusAt(r * COLS + col + d)) return;
+                                }
                               }
                             }}
                             disabled={isDisabled}

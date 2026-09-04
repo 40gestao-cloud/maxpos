@@ -144,8 +144,13 @@ const reviewSaleStep: Step = {
     s.checkoutMode && s.paymentsCount > 0 && s.confirmDialog === null && s.postSaleReceipt === null
       ? {
           target: '[data-action="confirm-sale"]',
+          // Este texto aparece nas DUAS situações: na chegada normal ao passo
+          // (a venda ficou paga, mas a janela de revisão ainda não foi aberta)
+          // e quando o aluno apertou VOLTAR nela. Antes falava só do segundo
+          // caso — "você voltou da confirmação" — e era a primeira frase que
+          // TODO aluno lia, num momento em que ele não tinha voltado de nada.
           message:
-            'Você voltou da confirmação — tudo bem, nada se perdeu: os pagamentos continuam lançados.\n\nQuando quiser fechar, aperte Enter (ou clique em FECHAR VENDA) para a janela de revisão aparecer de novo.',
+            'Os pagamentos estão lançados e a venda já está paga — falta só fechar.\n\nAperte Enter (ou clique em FECHAR VENDA) para abrir a janela de revisão. Se você tinha voltado dela, nada se perdeu: os pagamentos continuam aí.',
         }
       : null,
   done: (s) => s.postSaleReceipt !== null,
@@ -1834,19 +1839,49 @@ function useTargetRect(selector: string | null, deps: unknown[]) {
   useEffect(() => {
     if (!selector) { setRect(null); return; }
     let cancelled = false;
+    const apply = (next: { top: number; left: number; width: number; height: number } | null) => {
+      if (cancelled) return;
+      setRect(prev => {
+        if (prev === next) return prev;
+        if (!prev || !next) return next;
+        if (prev.top === next.top && prev.left === next.left &&
+            prev.width === next.width && prev.height === next.height) return prev;
+        return next;
+      });
+    };
     const measure = () => {
       const el = document.querySelector(selector) as HTMLElement | null;
-      if (!el) { setRect(null); return false; }
+      if (!el) { apply(null); return; }
       const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) { setRect(null); return false; }
-      if (!cancelled) setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-      return true;
+      if (r.width === 0 && r.height === 0) { apply(null); return; }
+      // O alvo pode estar DEBAIXO de um modal que abriu depois (o modal de
+      // dinheiro sobre o botão DINHEIRO, o de parcelas sobre CRÉDITO...).
+      // Recortar o holofote ali abria um retângulo aceso no meio do modal,
+      // como se a resposta fosse a célula que calhou de cair debaixo dele.
+      // Sem alvo visível, escurece a tela inteira e deixa só o balão.
+      // Amostra centro + quatro cantos: um modal pode cobrir só metade do
+      // alvo (o de parcelas cobre a direita do botão DINHEIRO) e o recorte
+      // ainda assim vazaria por cima dele. Qualquer ponto tapado já basta
+      // para desistir do recorte.
+      const inset = 4;
+      const pts: [number, number][] = [
+        [r.left + r.width / 2, r.top + r.height / 2],
+        [r.left + inset, r.top + inset],
+        [r.right - inset, r.top + inset],
+        [r.left + inset, r.bottom - inset],
+        [r.right - inset, r.bottom - inset],
+      ];
+      const covered = pts.some(([x, y]) => {
+        const hit = document.elementFromPoint(x, y);
+        return !!hit && hit !== el && !el.contains(hit) && !hit.contains(el);
+      });
+      if (covered) { apply(null); return; }
+      apply({ top: r.top, left: r.left, width: r.width, height: r.height });
     };
-    let tries = 0;
-    const interval = window.setInterval(() => {
-      tries += 1;
-      if (measure() || tries > 10) window.clearInterval(interval);
-    }, 50);
+    // Remede enquanto o passo estiver vivo: antes o intervalo parava na
+    // primeira medição bem-sucedida, então o recorte congelava na posição
+    // antiga quando a tela mudava embaixo dele.
+    const interval = window.setInterval(measure, 120);
     measure();
     window.addEventListener('resize', measure);
     window.addEventListener('scroll', measure, true);
