@@ -487,6 +487,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     alvo.id === currentUser?.id ||
     (NIVEL[currentUser?.role as UserRole] ?? 0) > (NIVEL[alvo.role] ?? 0);
 
+  // Excluir cadastro e da cupula. Espelha as policies `*_delete_cadastro` /
+  // `accounts_delete_financeiro` (patch 2026-09-03_seguranca_parte5), que sao
+  // RESTRICTIVE em `meu_nivel() >= 80`.
+  //
+  // Esconder importa mais aqui do que nos outros botoes: DELETE barrado por RLS
+  // nao devolve erro, devolve ZERO LINHAS. O operador clicaria, veria o toast
+  // de sucesso e so descobriria no F5 que o produto continua la.
+  const podeExcluirCadastro = (NIVEL[currentUser?.role as UserRole] ?? 0) >= 80;
+
   const ROLE_LABELS: Record<UserRole, string> = {
     admin_master: 'Admin Master',
     ceo: 'CEO',
@@ -1256,13 +1265,19 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         >
                           <Edit2 size={16} className="relative z-[2]" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                          className="p-2 rounded glass-red shimmer"
-                          title="Excluir"
-                        >
-                          <Trash2 size={16} className="relative z-[2]" />
-                        </button>
+                        {/* Editar e excluir nao andam juntos: a propria pessoa
+                            edita nome e avatar, mas nao se exclui — a
+                            delete_user_completely recusa auto-delecao e exige
+                            nivel 80. */}
+                        {podeExcluirCadastro && u.id !== currentUser?.id && (
+                          <button
+                            onClick={() => handleDelete(u.id, 'equipe', u.name)}
+                            className="p-2 rounded glass-red shimmer"
+                            title="Excluir"
+                          >
+                            <Trash2 size={16} className="relative z-[2]" />
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <span className="text-xs text-gray-400 italic">
@@ -1363,13 +1378,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       >
                         <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(p.id, 'produto', p.name)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Excluir"
-                      >
-                        <Trash2 size={16} className="relative z-[2]" />
-                      </button>
+                      {podeExcluirCadastro && (
+                        <button
+                          onClick={() => handleDelete(p.id, 'produto', p.name)}
+                          className="p-2 rounded glass-red shimmer"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} className="relative z-[2]" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleView(p)}
                         className="p-2 rounded glass-blue shimmer"
@@ -1429,13 +1446,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       >
                         <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(s.id, 'servico', s.name)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Excluir"
-                      >
-                        <Trash2 size={16} className="relative z-[2]" />
-                      </button>
+                      {podeExcluirCadastro && (
+                        <button
+                          onClick={() => handleDelete(s.id, 'servico', s.name)}
+                          className="p-2 rounded glass-red shimmer"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} className="relative z-[2]" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleView(s)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
@@ -1486,13 +1505,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       >
                         <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Excluir"
-                      >
-                        <Trash2 size={16} className="relative z-[2]" />
-                      </button>
+                      {podeExcluirCadastro && (
+                        <button
+                          onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
+                          className="p-2 rounded glass-red shimmer"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} className="relative z-[2]" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleView(s)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
@@ -1550,13 +1571,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       >
                         <Edit2 size={16} className="relative z-[2]" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(client.id, 'cliente', client.name)}
-                        className="p-2 rounded glass-red shimmer"
-                        title="Excluir"
-                      >
-                        <Trash2 size={16} className="relative z-[2]" />
-                      </button>
+                      {podeExcluirCadastro && (
+                        <button
+                          onClick={() => handleDelete(client.id, 'cliente', client.name)}
+                          className="p-2 rounded glass-red shimmer"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} className="relative z-[2]" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleView(client)}
                         className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"

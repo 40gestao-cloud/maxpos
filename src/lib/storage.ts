@@ -447,9 +447,15 @@ export const Storage = {
   },
 
   // `loja` define a EMPRESA do novo usuario: criado no SuperMax, e do
-  // SuperMax. Vai no metadata do signUp e o trigger handle_new_user grava em
-  // user_profiles.lojas. Sem ela o usuario nasce sem empresa nenhuma — de
-  // proposito: some da lista e chama atencao, em vez de nascer com as tres.
+  // SuperMax.
+  //
+  // O cadastro tem DOIS passos, e desde o patch 2026-09-03_seguranca_parte5
+  // isso e proposital. O signUp roda dentro do Auth, onde nao existe sessao:
+  // o banco nao consegue distinguir esta tela de um estranho batendo em
+  // /auth/v1/signup com a chave publica. Por isso o trigger handle_new_user
+  // ignora cargo e empresa — todo mundo nasce Operador de Caixa sem empresa,
+  // que nao enxerga nada — e quem decide e a RPC provisionar_usuario, ja com
+  // a sessao do admin restaurada e o nivel dele conferido no servidor.
   createUser: async (
     email: string,
     password: string,
@@ -461,10 +467,12 @@ export const Storage = {
     // Preserva a sessão do admin antes do signUp
     const { data: { session: adminSession } } = await supabase.auth.getSession();
 
+    // Só `name` vai no metadata: é rótulo, não concede nada. Cargo e empresa
+    // não viajam por aqui — quem os manda é o passo 2, autenticado.
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name, role, parentId: parentId ?? null, loja: loja ?? null } },
+      options: { data: { name } },
     });
 
     if (error) throw error;
@@ -476,7 +484,23 @@ export const Storage = {
         access_token: adminSession.access_token,
         refresh_token: adminSession.refresh_token,
       });
+    } else {
+      // Sem a sessão do admin o passo 2 seria recusado pelo servidor, e a
+      // conta ficaria criada porém inerte. Melhor falhar dizendo isso.
+      throw new Error(
+        'Sessão do administrador perdida durante o cadastro. A conta foi criada ' +
+        'sem cargo nem empresa — entre de novo e conclua o cadastro na tela de Usuários.'
+      );
     }
+
+    // Passo 2: cargo e empresa, agora com quem está pedindo identificado.
+    const { error: provisionErr } = await supabase.rpc('provisionar_usuario', {
+      p_user_id: data.user.id,
+      p_role: role,
+      p_loja: loja ?? null,
+      p_parent_id: parentId ?? null,
+    });
+    if (provisionErr) throw provisionErr;
 
     return {
       id: data.user.id,
