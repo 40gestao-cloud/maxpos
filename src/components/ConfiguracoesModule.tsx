@@ -9,8 +9,15 @@ import { User, AuditLogEntry } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
 import { resizeImageToDataUrl } from '../lib/imageResize';
 
+// Chaves de localStorage que o RESET apaga. As de modulos ja removidos ficam
+// de proposito: o navegador de quem usou a versao antiga ainda guarda esses
+// valores, e e exatamente esse tipo de sobra que o reset existe pra varrer.
+// Tirar a chave da lista nao apaga nada — so garante que a sobra fique la
+// para sempre. (Removi 'relatorios_dismissed_top' daqui por engano no commit
+// anterior, tratando-a como codigo morto; ela voltou.)
 const DATA_CACHE_KEYS = [
-  'fiscal_emitted_nfce',
+  'fiscal_emitted_nfce',        // FiscalModule, removido em 2026-09-04
+  'relatorios_dismissed_top',   // RelatoriosModule, removido em 2026-09-04
   'estoque_dismissed_moves',
   'financeiro_dismissed_flow',
 ];
