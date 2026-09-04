@@ -27,10 +27,10 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
     'Boa noite';
 
   return (
-    <div className="min-h-full flex items-center justify-center px-6 py-10" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+    <div className="min-h-full flex items-center justify-center px-6 py-8" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
       <div className="w-full max-w-5xl">
         {/* Saudação ao operador */}
-        <div className="text-center mb-10">
+        <div className="text-center mb-8">
           <div
             className="inline-block px-4 py-1 rounded-full text-[11px] font-black uppercase tracking-[0.35em] border-2"
             style={{ background: YELLOW, color: NAVY_DARK, borderColor: YELLOW_DARK }}
@@ -50,9 +50,12 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
             loja na propria tela de entrada. */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* MaxPOS — o sistema */}
-          <div
-            className="bg-white border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm"
-            style={{ borderColor: NAVY_DARK }}
+          {/* border-4 -> borda fina + elevacao. Os 4px de contorno vinham de
+              quando o sistema inteiro era plano e a borda era o unico recurso
+              pra separar superficies; agora que os cards tem sombra, aquele
+              traco grosso era o que mais lembrava wireframe na tela de entrada. */}
+          <div className="neumorphic p-8 flex flex-col items-center text-center border-t-4"
+            style={{ borderTopColor: NAVY_DARK }}
           >
             <div
               className="w-32 h-32 bg-white rounded-xl p-3 border-2 flex items-center justify-center mb-4"
@@ -73,18 +76,20 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
               ERP · PDV · GESTÃO
             </p>
             <p className="mt-4 text-sm text-gray-600 leading-relaxed">
-              Sistema de gestão integrado com PDV, controle de estoque,
-              financeiro e relatórios.
+              {/* Dizia "...financeiro e relatórios". O módulo Relatórios saiu do
+                  sistema em 2026-09-04 e o texto virou promessa de uma tela que
+                  não existe mais. */}
+              Sistema de gestão integrado: PDV, cadastros, estoque,
+              financeiro e folha de pagamento.
             </p>
           </div>
 
           {/* Empresa ativa */}
-          <div
-            className="border-4 rounded-xl p-8 flex flex-col items-center text-center shadow-sm bg-white"
-            // Borda no acento do tema, nao em `empresa.dark`: no SuperMax o
-            // dark e o azul da logo e o card saia azul, destoando do amarelo
-            // que identifica o sistema.
-            style={{ borderColor: YELLOW }}
+          {/* Faixa no acento do tema, nao em `empresa.dark`: no SuperMax o dark
+              e o azul da logo e o card saia azul, destoando do amarelo que
+              identifica o sistema. */}
+          <div className="neumorphic p-8 flex flex-col items-center text-center border-t-4"
+            style={{ borderTopColor: YELLOW }}
           >
             {/* A placa acompanha o fundo embutido no PNG de cada logo, e a
                 moldura fina fica na cor da EMPRESA (azul no SuperMax) — é ela
@@ -127,12 +132,16 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
             : isNew
               ? 'Fazer 1º Treinamento'
               : `Continuar Treinamento (${completed.size}/${ALL_SCENARIOS.length})`;
+          // Unica acao da tela inteira, e estava desenhada como botao
+          // secundario — contorno fino sobre fundo branco, no meio de dois
+          // cards grandes que nao fazem nada. Agora e o que parece ser: a
+          // porta de entrada do treino.
           return (
-            <div className="mt-8 flex justify-center">
+            <div className="mt-8 flex flex-col items-center gap-2">
               <button
                 onClick={onStartTraining}
-                className="px-5 py-3 rounded-lg border-2 flex items-center gap-2 text-sm font-black uppercase tracking-wider hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-yellow-400"
-                style={{ borderColor: YELLOW_DARK, color: NAVY_DARK, background: 'white' }}
+                className="px-7 py-3.5 rounded-lg border-2 flex items-center gap-2.5 text-sm font-black uppercase tracking-wider transition hover:brightness-105 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-yellow-400"
+                style={{ borderColor: YELLOW_DARK, color: 'var(--accent-fg)', background: YELLOW, boxShadow: 'var(--shadow-raised)' }}
                 title="Abrir o PDV em modo de treinamento — nada é salvo no banco"
               >
                 <span className="text-lg">🎓</span>
@@ -158,15 +167,13 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
           );
         })()}
 
-        {/* Operador */}
-        <div className="mt-10 flex items-center justify-center gap-3 text-sm text-gray-600">
-          <span className="px-3 py-1.5 rounded-md font-bold border-2" style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}>
-            OPERADOR: {currentUser.name.toUpperCase()}
-          </span>
-          <span className="px-3 py-1.5 rounded-md font-bold tabular-nums border-2" style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}>
-            {now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        </div>
+        {/* Os dois chips do rodape sairam.
+            "OPERADOR: FULANO" repetia, em caixa alta e com moldura, o nome que
+            o cabecalho ja mostra a dois palmos dali.
+            O relogio era pior: `now` e calculado UMA vez, na renderizacao, e
+            nunca mais. Ficava parado na hora em que a tela abriu — marcava
+            16:34 quando ja eram 16:36. Relogio que mente e pior do que a
+            ausencia de relogio, e a data do dia ja esta no topo da tela. */}
       </div>
     </div>
   );
