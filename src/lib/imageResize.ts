@@ -82,31 +82,41 @@ export interface ComprimirOpts {
   maxBytes?: number;
 }
 
-function carregarImagem(file: File): Promise<HTMLImageElement> {
+function carregarImagem(file: File): Promise<{ img: HTMLImageElement; dataUrl: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
     reader.onload = () => {
+      const dataUrl = reader.result as string;
       const img = new Image();
       img.onerror = () => reject(new Error('Arquivo não é uma imagem válida ou está corrompido.'));
-      img.onload = () => resolve(img);
-      img.src = reader.result as string;
+      img.onload = () => resolve({ img, dataUrl });
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
   });
 }
 
-function desenhar(img: HTMLImageElement, largura: number, altura: number): HTMLCanvasElement {
+function desenhar(
+  img: HTMLImageElement,
+  largura: number,
+  altura: number,
+  opaco: boolean,
+): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = largura;
   canvas.height = altura;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas indisponível neste navegador.');
   ctx.imageSmoothingQuality = 'high';
-  // Fundo branco pelo mesmo motivo do resize do avatar: PNG transparente
-  // exportado em JPEG vira preto sem isto.
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, largura, altura);
+  // Só o JPEG precisa do fundo: ele não tem canal alfa, e PNG transparente
+  // exportado sem isto vira preto. WebP guarda alfa, então preencher aqui
+  // trocaria o fundo transparente de um PNG de catálogo por um quadrado
+  // branco — visível em cima do cinza do card.
+  if (opaco) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, largura, altura);
+  }
   ctx.drawImage(img, 0, 0, largura, altura);
   return canvas;
 }
@@ -130,7 +140,14 @@ export async function comprimirImagemParaTeto(
     throw new Error(`Imagem com ${mb} MB — máximo ${IMAGEM_MAX_ENTRADA_LABEL}. Reduza antes de enviar.`);
   }
 
-  const img = await carregarImagem(file);
+  const { img, dataUrl: original } = await carregarImagem(file);
+
+  // Atalho: já cabe no teto E já está dentro do box. Re-encodar aqui só somaria
+  // uma segunda perda lossy em cima de uma imagem que já estava pronta.
+  if (file.size <= maxBytes && Math.max(img.width, img.height) <= maxLado) {
+    return original;
+  }
+
   // WebP rende ~30% a menos que JPEG na mesma qualidade; se o navegador não
   // souber exportar, `toDataURL` devolve PNG e a gente cai pra JPEG.
   const suportaWebp = document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp');
@@ -141,7 +158,7 @@ export async function comprimirImagemParaTeto(
     const base = Math.min(1, maxLado / Math.max(img.width, img.height)) * escala;
     const w = Math.max(1, Math.round(img.width * base));
     const h = Math.max(1, Math.round(img.height * base));
-    const canvas = desenhar(img, w, h);
+    const canvas = desenhar(img, w, h, mime === 'image/jpeg');
     for (const q of QUALIDADES) {
       const dataUrl = canvas.toDataURL(mime, q);
       const bytes = tamanhoDataUrl(dataUrl);

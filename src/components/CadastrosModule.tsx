@@ -21,6 +21,11 @@ import { LIMITE_VITRINE } from './VitrineModule';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
+// Teto do que fica GRAVADO na coluna `image` (base64 lido junto com o catálogo
+// inteiro no PDV e na Vitrine). O arquivo que o usuário escolhe pode ser muito
+// maior: o navegador reduz até caber aqui.
+const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
+
 interface CadastrosModuleProps {
   currentUser: User;
   /** Qual cadastro exibir. Vem da ROTA (submenu da sidebar), não de aba
@@ -97,10 +102,6 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [eanInput, setEanInput] = useState('');
   const [savingEan, setSavingEan] = useState(false);
 
-  // Teto do que fica GRAVADO na coluna `image` (base64 lido junto com o
-  // catálogo inteiro no PDV e na Vitrine). O arquivo que o usuário escolhe
-  // pode ser muito maior: o navegador reduz até caber aqui.
-  const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
   const [processandoImagem, setProcessandoImagem] = useState(false);
 
   const handleProductImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
