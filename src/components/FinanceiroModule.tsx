@@ -16,6 +16,7 @@ import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
 import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -167,7 +168,7 @@ export default function FinanceiroModule() {
       }
       setInstallmentsMap(prev => ({ ...prev, [sale.id]: list }));
     } catch (err: any) {
-      showAlert('Erro ao carregar parcelas: ' + err.message);
+      showAlert(explicarErro(err, 'carregar as parcelas'));
     } finally {
       setLoadingInst(prev => ({ ...prev, [sale.id]: false }));
     }
@@ -185,7 +186,7 @@ export default function FinanceiroModule() {
         ),
       }));
     } catch (err: any) {
-      showAlert('Erro ao dar baixa na parcela: ' + err.message);
+      showAlert(explicarErro(err, 'dar baixa na parcela'));
     }
   };
 
@@ -261,7 +262,7 @@ export default function FinanceiroModule() {
       setShowAddModal(false);
       setFormData({ description: '', amount: '', dueDate: new Date().toISOString().split('T')[0], status: 'pending' });
     } catch (err: any) {
-      showAlert('Erro ao salvar conta: ' + err.message);
+      showAlert(explicarErro(err, 'salvar a conta'));
     }
   };
 
@@ -286,7 +287,7 @@ export default function FinanceiroModule() {
       await Storage.upsertAccount(updated);
       setAccounts(prev => prev.map(a => a.id === id ? updated : a));
     } catch (err: any) {
-      showAlert('Erro ao atualizar status: ' + err.message);
+      showAlert(explicarErro(err, 'atualizar o status da conta'));
     }
   };
 
@@ -301,7 +302,7 @@ export default function FinanceiroModule() {
           await Storage.deleteAccount(id);
           setAccounts(prev => prev.filter(a => a.id !== id));
         } catch (err: any) {
-          showAlert('Erro ao excluir conta: ' + err.message);
+          showAlert(explicarErro(err, 'excluir a conta'));
         }
       },
     });

@@ -11,6 +11,7 @@ import { Storage } from '../lib/storage';
 import { User, FolhaPagamento } from '../types';
 import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 
 function currentMesRef(): string {
   const d = new Date();
@@ -57,7 +58,7 @@ export default function FolhaPagamentoModule() {
       setColaboradores(users);
       setFolhas(list);
     } catch (err: any) {
-      showAlert('Erro ao carregar folha de pagamento: ' + err.message);
+      showAlert(explicarErro(err, 'carregar a folha de pagamento'));
     } finally {
       setLoading(false);
     }
@@ -101,7 +102,7 @@ export default function FolhaPagamentoModule() {
       resetForm();
       await load();
     } catch (err: any) {
-      showAlert('Erro ao lançar folha: ' + err.message);
+      showAlert(explicarErro(err, 'lançar a folha'));
     }
   };
 
@@ -110,7 +111,7 @@ export default function FolhaPagamentoModule() {
       await Storage.upsertFolha({ ...folha, status: 'Processada' });
       await load();
     } catch (err: any) {
-      showAlert('Erro ao processar folha: ' + err.message);
+      showAlert(explicarErro(err, 'processar a folha'));
     }
   };
 
@@ -126,7 +127,7 @@ export default function FolhaPagamentoModule() {
           await Storage.pagarFolha(folha.id);
           await load();
         } catch (err: any) {
-          showAlert('Erro ao pagar folha: ' + (err?.message ?? String(err)));
+          showAlert(explicarErro(err, 'pagar a folha'));
         } finally {
           setPaying(null);
         }
@@ -145,7 +146,7 @@ export default function FolhaPagamentoModule() {
           await Storage.deleteFolha(id);
           await load();
         } catch (err: any) {
-          showAlert('Erro ao excluir folha: ' + err.message);
+          showAlert(explicarErro(err, 'excluir a folha'));
         }
       },
     });

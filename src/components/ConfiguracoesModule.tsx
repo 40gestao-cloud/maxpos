@@ -7,6 +7,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { User, AuditLogEntry } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 import { useToast } from './Toast';
 import { resizeImageToDataUrl } from '../lib/imageResize';
 
@@ -154,7 +155,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     try {
       setAvatarPreview(await resizeImageToDataUrl(file, { maxLado: 256 }));
     } catch (err: any) {
-      showAlert('Erro ao ler a imagem: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'ler a imagem'));
     } finally {
       // Sem isto, escolher o MESMO arquivo de novo não dispara o change.
       e.target.value = '';
@@ -179,7 +180,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
           : `${updatedUser.name}, o topo volta a mostrar a inicial do seu nome.`,
       });
     } catch (err: any) {
-      showAlert('Erro ao salvar: ' + err.message);
+      showAlert(explicarErro(err, 'salvar a foto de perfil'));
     } finally {
       setSaving(false);
     }
@@ -195,7 +196,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       showAlert('Reset concluído. Todos os dados operacionais foram apagados. A página será recarregada.');
       window.location.reload();
     } catch (err: any) {
-      showAlert('Erro ao executar reset: ' + (err?.message || err));
+      showAlert(explicarErro(err, 'executar o reset'));
       setResetting(false);
     }
   };

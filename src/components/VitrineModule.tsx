@@ -9,6 +9,7 @@ import { Storage } from '../lib/storage';
 import { Product } from '../types';
 import { formatBRL } from '../lib/masks';
 import { useAlertDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { buscarProdutos } from '../lib/produtoBusca';
 
@@ -65,7 +66,7 @@ export default function VitrineModule() {
       await Storage.setVitrine(p.id, entrando);
       setProducts(prev => prev.map(x => x.id === p.id ? { ...x, vitrine: entrando } : x));
     } catch (err: any) {
-      showAlert('Erro ao atualizar a vitrine: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'atualizar a vitrine'));
     } finally {
       setSalvando(null);
     }

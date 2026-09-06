@@ -13,6 +13,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
@@ -248,7 +249,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         mensagem: `${eanInput} — já pode imprimir a etiqueta e bipar no PDV.`,
       });
     } catch (err: any) {
-      showAlert('Erro ao salvar EAN: ' + (err?.message || err));
+      showAlert(explicarErro(err, 'gravar o código de barras'));
     } finally {
       setSavingEan(false);
     }
@@ -473,7 +474,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         setUsers(updatedUsers.filter(u => (u.lojas ?? []).includes(nichoFilter)));
         toast.sucesso({ titulo: `${newUser.name} atualizado` });
       } catch (err: any) {
-        showAlert('Erro ao atualizar membro: ' + err.message);
+        showAlert(explicarErro(err, 'atualizar o membro da equipe'));
       }
     } else {
       if (!newUser.password) return showAlert('Defina uma senha temporária');
@@ -831,7 +832,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         });
       }
     } catch (err: any) {
-      showAlert('Erro ao excluir: ' + err.message);
+      // O catch cobre os cinco tipos; sem o nome, "Erro ao excluir" não dizia
+      // sequer o que tinha falhado quando o operador apagava em série.
+      showAlert(explicarErro(err, `excluir "${deleteConfirm.name}"`));
     }
 
     setDeleteConfirm(null);
@@ -868,7 +871,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     try {
       await Storage.upsertProduct(updatedProduct);
     } catch (err: any) {
-      showAlert('Erro ao ajustar estoque: ' + err.message);
+      showAlert(explicarErro(err, 'ajustar o estoque'));
       return;
     }
 
@@ -1142,7 +1145,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             setEditingItem(null);
             setFormData({});
           } catch (err: any) {
-            showAlert('Erro ao salvar: ' + err.message);
+            showAlert(explicarErro(err, `salvar o produto "${nome}"`));
           }
         };
 
@@ -1212,7 +1215,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         setShowAddSupplier(false);
       }
     } catch (err: any) {
-      showAlert('Erro ao salvar: ' + err.message);
+      // `type` diz qual formulário estava aberto — este catch é comum a
+      // cliente, serviço e fornecedor.
+      showAlert(explicarErro(err, `salvar o ${type}${formData.name ? ` "${String(formData.name).trim()}"` : ''}`));
     }
     setEditingItem(null);
     setFormData({});
@@ -1283,7 +1288,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         });
       }
     } catch (err: any) {
-      showAlert('Erro ao salvar categoria: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'salvar a categoria'));
     } finally {
       setCatSaving(false);
     }
@@ -1303,7 +1308,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       setCategories(await Storage.getCategories(nichoFilter));
       toast.sucesso({ titulo: `Categoria "${c.name}" excluída`, mensagem: 'Nenhum item usava ela.' });
     } catch (err: any) {
-      showAlert('Erro ao excluir: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, `excluir a categoria "${c.name}"`));
     }
   };
 
@@ -3493,7 +3498,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       setUsers(prev => prev.filter(u => u.id !== alvo.id));
                       toast.sucesso({ titulo: `Conta de ${alvo.name} excluída` });
                     } catch (err: any) {
-                      showAlert('Erro ao excluir: ' + err.message);
+                      showAlert(explicarErro(err, `excluir a conta de ${alvo.name}`));
                     }
                   }}
                   className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"

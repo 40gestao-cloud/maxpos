@@ -9,6 +9,7 @@ import { Storage } from '../lib/storage';
 import { Product, Promocao, User } from '../types';
 import { formatBRL, maskCurrency, parseCurrencyToNumber } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
+import { explicarErro } from '../lib/erros';
 import { useToast } from './Toast';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { buscarProdutos } from '../lib/produtoBusca';
@@ -80,7 +81,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
       setPromos(ps);
       setProducts(prods);
     } catch (err: any) {
-      showAlert('Erro ao carregar promoções: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'carregar as ofertas'));
     } finally {
       setLoading(false);
     }
@@ -135,7 +136,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
       setForm(null);
       await carregar();
     } catch (err: any) {
-      showAlert('Erro ao propor a oferta: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'propor a oferta'));
     } finally {
       setSalvando(false);
     }
@@ -157,7 +158,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
           toast.sucesso({ titulo: 'Oferta liberada', mensagem: `${p.productName} agora sai por ${formatBRL(p.promoPrice)}.` });
           await carregar();
         } catch (err: any) {
-          showAlert('Erro ao aprovar: ' + (err?.message ?? err));
+          showAlert(explicarErro(err, 'aprovar a oferta'));
         }
       },
     });
@@ -176,7 +177,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
       setAnalisando(null);
       await carregar();
     } catch (err: any) {
-      showAlert('Erro ao registrar o parecer: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'registrar o parecer'));
     }
   };
 
@@ -188,7 +189,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
       setReprovando(null);
       await carregar();
     } catch (err: any) {
-      showAlert('Erro ao reprovar: ' + (err?.message ?? err));
+      showAlert(explicarErro(err, 'reprovar a oferta'));
     }
   };
 
@@ -207,7 +208,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
           toast.sucesso({ titulo: 'Oferta excluída' });
           await carregar();
         } catch (err: any) {
-          showAlert('Erro ao excluir: ' + (err?.message ?? err));
+          showAlert(explicarErro(err, 'excluir a oferta'));
         }
       },
     });

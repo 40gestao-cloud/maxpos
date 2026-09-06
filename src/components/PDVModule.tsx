@@ -13,6 +13,7 @@ import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber,
 import { PDFReport } from '../lib/pdfReport';
 import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
 import { buscarProdutos, separarQtdETermo, chaveCategoria } from '../lib/produtoBusca';
+import { explicarErro } from '../lib/erros';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
 import { ProdutoDetalheModal } from './ProdutoDetalheModal';
 
@@ -1474,7 +1475,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       }
       setSwapOperatorModal(true);
     } catch (err: any) {
-      showAlert({ title: 'Erro ao carregar usuários', message: err?.message ?? String(err), variant: 'error' });
+      showAlert(explicarErro(err, 'carregar os usuários'));
     }
   };
 
@@ -1541,7 +1542,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           // Já pré-seleciona esse cliente no picker que continua aberto.
           setClientSearch(novo.name);
         } catch (err: any) {
-          showAlert({ title: 'Erro ao cadastrar', message: err?.message ?? String(err), variant: 'error' });
+          showAlert(explicarErro(err, 'cadastrar'));
         }
       },
     );
@@ -1772,7 +1773,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       })
       .catch(err => {
         if (!active) return;
-        showAlert({ title: 'Erro ao carregar caixa', message: err?.message ?? String(err), variant: 'error' });
+        showAlert(explicarErro(err, 'carregar o caixa'));
       })
       .finally(() => { if (active) setCashSessionLoaded(true); });
     return () => { active = false; };
@@ -2586,7 +2587,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       if (list.length === 1) { setReprintSale(list[0]); return; }
       setReprintList(list);
     } catch (err: any) {
-      showAlert({ title: 'Erro ao carregar vendas', message: err?.message ?? String(err), variant: 'error' });
+      showAlert(explicarErro(err, 'carregar as vendas'));
     }
   };
 
