@@ -239,6 +239,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       const updated = { ...barcodeModal.product, ean13: eanInput };
       await Storage.upsertProduct(updated);
       setBarcodeModal({ isOpen: true, product: updated });
+      // Sem isto o banco tinha o EAN novo e a tabela continuava mostrando o
+      // produto sem código até o F5 — o operador salvava e parecia não ter
+      // salvado.
+      setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+      toast.sucesso({
+        titulo: `EAN gravado em ${updated.name}`,
+        mensagem: `${eanInput} — já pode imprimir a etiqueta e bipar no PDV.`,
+      });
     } catch (err: any) {
       showAlert('Erro ao salvar EAN: ' + (err?.message || err));
     } finally {
@@ -869,7 +877,26 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       setFormData((prev: any) => ({ ...prev, stock: newStock }));
     }
     setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
-    showAlert('Estoque atualizado com sucesso!');
+
+    // "Estoque atualizado com sucesso" não dizia nem QUAL produto nem PARA
+    // QUANTO — e ajuste de estoque é exatamente onde o operador precisa
+    // conferir o número que ficou. O saldo novo, o anterior e a operação vão
+    // no aviso; se o mínimo foi furado, isso vem junto, porque é a hora de
+    // repor, não depois.
+    const un = updatedProduct.unit || 'UN';
+    const operacao = stockModal.action === 'sum'
+      ? `Entrada de ${amount} ${un}`
+      : stockModal.action === 'subtract'
+        ? `Baixa de ${amount} ${un}`
+        : 'Saldo corrigido';
+    const minimo = updatedProduct.minStock || 0;
+    const abaixoDoMinimo = updatedProduct.controlStock !== false && newStock <= minimo;
+    toast.sucesso({
+      titulo: `${updatedProduct.name}: ${atual} → ${newStock} ${un}`,
+      mensagem: abaixoDoMinimo
+        ? `${operacao}. Atenção: no mínimo de ${minimo} ${un} ou abaixo — hora de repor.`
+        : `${operacao}.`,
+    });
   };
 
   const handleEdit = (item: any, type: string) => {
@@ -945,6 +972,28 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     });
   };
 
+  // Linha de identificação da pessoa para o toast: "Pessoa Jurídica ·
+  // 12.345.678/0001-90". Sem documento não inventa texto — diz o que falta,
+  // que é justamente o que trava a emissão depois.
+  // Serviço não tem estoque: o que importa no aviso é preço, categoria e a
+  // margem — que é o número que costuma sair errado quando se digita o custo.
+  const resumoServico = (s: any): string => {
+    const preco = Number(s?.price ?? 0);
+    const custo = Number(s?.costPrice ?? 0);
+    const margem = preco && custo ? ((preco - custo) / preco) * 100 : 0;
+    return [
+      formatBRL(preco),
+      custo > 0 ? `margem ${margem.toFixed(1)}%` : 'sem custo informado',
+      s?.category || 'sem categoria',
+    ].join(' · ');
+  };
+
+  const resumoPessoa = (p: any): string => {
+    const tipo = p?.type === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física';
+    const doc = String(p?.document ?? '').trim();
+    return doc ? `${tipo} · ${doc}` : `${tipo} · sem documento informado`;
+  };
+
   const handleSave = async (type: string) => {
     try {
       if (type === 'cliente') {
@@ -955,7 +1004,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           const updated = { ...editingItem, ...formData };
           await Storage.upsertClient(updated);
           setClients(prev => prev.map(c => c.id === editingItem.id ? updated : c));
-          showAlert('Cliente atualizado com sucesso!');
+          toast.sucesso({ titulo: `${updated.name} atualizado`, mensagem: resumoPessoa(updated) });
         } else {
           const newClient: Client = {
             type: 'PF', status: 'active', creditLimit: 0, balance: 0,
@@ -966,7 +1015,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           } as Client;
           await Storage.upsertClient(newClient);
           setClients(prev => [...prev, newClient]);
-          showAlert('Cliente cadastrado com sucesso!');
+          toast.sucesso({
+            titulo: `${newClient.name} cadastrado`,
+            // `clients` já vem filtrado pela empresa da sessão, então a
+            // contagem é a da loja que o toast está identificando na faixa.
+            mensagem: `${resumoPessoa(newClient)} · ${clients.length + 1}º cliente da loja`,
+          });
         }
         setShowAddClient(false);
       } else if (type === 'produto') {
@@ -1053,12 +1107,24 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           // Nao existia campo no formulario, entao todo produto novo nascia sem
           // ele e nao dava pra chamar pelo codigo no caixa.
           productFields.ref = ref;
+          // O que o operador confere depois de salvar é preço e saldo — é o
+          // que erra e o que o PDV vai cobrar. Vai no aviso, junto com a
+          // margem, que ele acabou de calcular no formulário.
+          const custoProd = Number(productFields.costPrice ?? 0);
+          const margemProd = preco && custoProd ? ((preco - custoProd) / preco) * 100 : 0;
+          const resumoProduto = [
+            formatBRL(preco),
+            custoProd > 0 ? `margem ${margemProd.toFixed(1)}%` : 'sem custo informado',
+            productFields.controlStock === false
+              ? 'sem controle de estoque'
+              : `${finalStock} ${productFields.unit || 'UN'} em estoque`,
+          ].join(' · ');
           try {
             if (editingItem) {
               const updated = { ...editingItem, ...productFields, stock: finalStock };
               await Storage.upsertProduct(updated);
               setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
-              showAlert('Produto atualizado com sucesso!');
+              toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto });
             } else {
               const newProduct = {
                 unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,
@@ -1067,7 +1133,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               };
               await Storage.upsertProduct(newProduct);
               setProducts(prev => [...prev, newProduct]);
-              showAlert('Produto cadastrado com sucesso!');
+              toast.sucesso({
+                titulo: `${nome} cadastrado`,
+                mensagem: `${resumoProduto}${ref ? ` · REF ${ref}` : ''}`,
+              });
             }
             setShowAddProduct(false);
             setEditingItem(null);
@@ -1105,7 +1174,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           const updated = { ...editingItem, ...formData };
           await Storage.upsertService(updated);
           setServices(prev => prev.map(s => s.id === editingItem.id ? updated : s));
-          showAlert('Serviço atualizado com sucesso!');
+          toast.sucesso({ titulo: `${nomeSrv} atualizado`, mensagem: resumoServico(updated) });
         } else {
           const newService = {
             costPrice: 0, price: 0,
@@ -1114,7 +1183,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           };
           await Storage.upsertService(newService);
           setServices(prev => [...prev, newService]);
-          showAlert('Serviço cadastrado com sucesso!');
+          toast.sucesso({ titulo: `${nomeSrv} cadastrado`, mensagem: resumoServico(newService) });
         }
         setShowAddService(false);
       } else if (type === 'fornecedor') {
@@ -1125,7 +1194,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           const updated = { ...editingItem, ...formData };
           await Storage.upsertSupplier(updated);
           setSuppliers(prev => prev.map(s => s.id === editingItem.id ? updated : s));
-          showAlert('Fornecedor atualizado com sucesso!');
+          toast.sucesso({ titulo: `${updated.name} atualizado`, mensagem: resumoPessoa(updated) });
         } else {
           const newSupplier = {
             type: 'PF',
@@ -1135,7 +1204,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           };
           await Storage.upsertSupplier(newSupplier);
           setSuppliers(prev => [...prev, newSupplier]);
-          showAlert('Fornecedor cadastrado com sucesso!');
+          toast.sucesso({
+            titulo: `${newSupplier.name} cadastrado`,
+            mensagem: `${resumoPessoa(newSupplier)} · ${suppliers.length + 1}º fornecedor da loja`,
+          });
         }
         setShowAddSupplier(false);
       }
@@ -1170,7 +1242,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setCatSaving(true);
     try {
       const original = categories.find(c => c.id === catForm.id);
-      if (original && original.name !== nome) {
+      const renomeando = !!original && original.name !== nome;
+      // Contado ANTES do rename, senão o nome antigo já não existe pra contar.
+      // Renomear mexe em todos os itens que usam a categoria, e o operador
+      // merece saber quantos foram — é o efeito colateral da operação.
+      const afetados = renomeando
+        ? await Storage.countCategoryUsage(original!.name, (catForm.pdvMode ?? nichoFilter) as any)
+        : 0;
+      if (renomeando) {
         // Renomear arrasta os produtos junto — ver Storage.renameCategory.
         // O pdvMode é obrigatório aqui: sem ele o rename atravessava as
         // empresas, porque o mesmo nome de categoria existe nas três.
@@ -1186,6 +1265,23 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       setProducts(await Storage.getProducts(nichoFilter));
       setServices(await Storage.getServices(nichoFilter));
       setCatForm(null);
+      // Salvar categoria não dava sinal nenhum — e renomear, que reescreve a
+      // categoria de todos os itens, era a operação mais silenciosa da tela.
+      if (renomeando) {
+        toast.sucesso({
+          titulo: `"${original!.name}" agora é "${nome}"`,
+          mensagem: afetados > 0
+            ? `${afetados} ${afetados === 1 ? 'item acompanhou' : 'itens acompanharam'} a mudança.`
+            : 'Nenhum item usava esta categoria ainda.',
+        });
+      } else if (original) {
+        toast.sucesso({ titulo: `Categoria "${nome}" atualizada` });
+      } else {
+        toast.sucesso({
+          titulo: `Categoria "${nome}" criada`,
+          mensagem: 'Já aparece na lista de categorias do formulário de produtos e serviços.',
+        });
+      }
     } catch (err: any) {
       showAlert('Erro ao salvar categoria: ' + (err?.message ?? err));
     } finally {
@@ -1205,6 +1301,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     try {
       await Storage.deleteCategory(c.id);
       setCategories(await Storage.getCategories(nichoFilter));
+      toast.sucesso({ titulo: `Categoria "${c.name}" excluída`, mensagem: 'Nenhum item usava ela.' });
     } catch (err: any) {
       showAlert('Erro ao excluir: ' + (err?.message ?? err));
     }

@@ -7,6 +7,7 @@ import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { User, AuditLogEntry } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
+import { useToast } from './Toast';
 import { resizeImageToDataUrl } from '../lib/imageResize';
 
 // Chaves de localStorage que o RESET apaga. As de modulos ja removidos ficam
@@ -52,6 +53,7 @@ type SubTab = 'perfil' | 'auditoria';
 
 export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate }) => {
   const { showAlert, host: alertHost } = useAlertDialog();
+  const toast = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -167,7 +169,15 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       await Storage.setCurrentUser(updatedUser);
       setUser(updatedUser);
       onUserUpdate(updatedUser);
-      showAlert('Configurações salvas com sucesso!');
+      // "Configurações salvas" prometia mais do que esta tela faz: o que ela
+      // grava é a foto do operador. O aviso agora diz o que mudou e onde a
+      // pessoa vê o resultado — o avatar no topo, que é a porta do perfil.
+      toast.sucesso({
+        titulo: avatarPreview ? 'Foto de perfil atualizada' : 'Foto de perfil removida',
+        mensagem: avatarPreview
+          ? `${updatedUser.name}, sua foto já aparece no canto superior direito.`
+          : `${updatedUser.name}, o topo volta a mostrar a inicial do seu nome.`,
+      });
     } catch (err: any) {
       showAlert('Erro ao salvar: ' + err.message);
     } finally {
