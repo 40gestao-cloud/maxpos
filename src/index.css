@@ -362,7 +362,11 @@ body {
     background: var(--bg-card);
     box-shadow: -10px 0 12px -8px rgb(var(--brand-rgb) / 0.22);
   }
-  tr:hover > .col-acoes-fixa { background: #f9fafb; }
+  /* So a LINHA DE DADOS acende no hover. Sem o `tbody`, o seletor tambem
+     pegava a linha do <thead> — e como ele e mais especifico que a regra do
+     cabecalho abaixo, passar o mouse sobre o cabecalho pintava "Acoes" de
+     cinza-claro por cima do amarelo. */
+  tbody tr:hover > .col-acoes-fixa { background: #f9fafb; }
   thead .col-acoes-fixa { background: var(--accent); box-shadow: none; }
 
   /* Shimmer — gradiente diagonal varrendo o elemento */

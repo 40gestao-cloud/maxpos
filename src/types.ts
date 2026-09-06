@@ -89,7 +89,7 @@ export interface Product {
   unit: string;
   ean13?: string;
   controlStock?: boolean;
-  image?: string; // base64 data URL, máximo 120 KB
+  image?: string; // base64 data URL, máximo 120 KB (o upload aceita até 10 MB e comprime até caber)
   // Marca do produto — importante em MaxLook (grife) e TechMax (fabricante).
   // Opcional; renderiza como badge de destaque nos cards fashion/tech.
   marca?: string;

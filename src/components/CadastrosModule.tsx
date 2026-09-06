@@ -16,6 +16,7 @@ import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
+import { comprimirImagemParaTeto, tamanhoDataUrl, IMAGEM_MAX_ENTRADA_BYTES, IMAGEM_MAX_ENTRADA_LABEL } from '../lib/imageResize';
 import { LIMITE_VITRINE } from './VitrineModule';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
@@ -96,7 +97,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [eanInput, setEanInput] = useState('');
   const [savingEan, setSavingEan] = useState(false);
 
-  const handleProductImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Teto do que fica GRAVADO na coluna `image` (base64 lido junto com o
+  // catálogo inteiro no PDV e na Vitrine). O arquivo que o usuário escolhe
+  // pode ser muito maior: o navegador reduz até caber aqui.
+  const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
+  const [processandoImagem, setProcessandoImagem] = useState(false);
+
+  const handleProductImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // permite re-upload do mesmo arquivo
     if (!file) return;
@@ -107,19 +114,31 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       return;
     }
 
-    const MAX_BYTES = 120 * 1024;
-    if (file.size > MAX_BYTES) {
-      showAlert(`Imagem muito grande (${Math.round(file.size / 1024)} KB). Máximo permitido: 120 KB.`);
+    if (file.size > IMAGEM_MAX_ENTRADA_BYTES) {
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      showAlert(`Imagem com ${mb} MB — máximo ${IMAGEM_MAX_ENTRADA_LABEL}.`);
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
+    setProcessandoImagem(true);
+    try {
+      const dataUrl = await comprimirImagemParaTeto(file, {
+        // 900 px cobre o card da Vitrine com folga; acima disso é peso que
+        // ninguém enxerga numa miniatura de 48 px na tabela.
+        maxLado: 900,
+        maxBytes: IMAGEM_PRODUTO_MAX_BYTES,
+      });
       setFormData((prev: any) => ({ ...prev, image: dataUrl }));
-    };
-    reader.onerror = () => showAlert('Erro ao ler a imagem.');
-    reader.readAsDataURL(file);
+      const kbOrigem = Math.round(file.size / 1024);
+      const kbFinal = Math.round(tamanhoDataUrl(dataUrl) / 1024);
+      if (kbFinal < kbOrigem) {
+        toast.sucesso({ titulo: `Imagem otimizada: ${kbOrigem} KB → ${kbFinal} KB` });
+      }
+    } catch (err: any) {
+      showAlert(err?.message || 'Erro ao processar a imagem.');
+    } finally {
+      setProcessandoImagem(false);
+    }
   };
 
   // ---------- EAN-13 helpers ----------
@@ -1288,18 +1307,21 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </table>
         );
       case 'produtos':
+        // min-w 880 e o que a tabela precisa SEM a coluna Margem (que some em
+        // container estreito). Estava em 1000 e forcava rolagem horizontal numa
+        // tela de 1280 so pra sobrar espaco vazio.
         return (
-          <table className="w-full text-left min-w-[1000px]">
+          <table className="w-full text-left min-w-[880px]">
             <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-3">Produto</th>
                 <th className="px-5 py-3">Categoria</th>
                 <th className="px-5 py-3 text-right">Custo</th>
                 <th className="px-5 py-3 text-right">Venda</th>
-                {/* Margem some abaixo de xl: e o unico valor DERIVADO da tabela (sai
-                    de Custo x Venda), entao e o primeiro que pode ceder quando
-                    a largura aperta. */}
-                <th className="px-5 py-3 text-right hidden xl:table-cell">Margem</th>
+                {/* Margem some quando a tabela tem menos de 1100px: e o unico
+                    valor DERIVADO (sai de Custo x Venda), entao e o primeiro
+                    que pode ceder quando a largura aperta. */}
+                <th className="px-5 py-3 text-right hidden @[1100px]:table-cell">Margem</th>
                 <th className="px-5 py-3 text-right">Estoque</th>
                 {/* A coluna "Cód. Barras" saiu: a coluna Produto ja mostra
                     "EAN 7896187755481" embaixo do nome, e esta repetia o mesmo
@@ -1323,7 +1345,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                           <Package size={22} className="text-gray-400" />
                         )}
                       </div>
-                      <div className="min-w-0">
+                      {/* max-w e o que faz o `truncate` valer alguma coisa aqui:
+                          `whitespace-nowrap` empurra a largura MINIMA da coluna
+                          ate o nome inteiro caber ("Detergente Liquido Ype
+                          Clear 500ml" = ~500px), a tabela estourava o container
+                          e a coluna Estoque acabava escondida embaixo de Acoes,
+                          que e sticky. Com o teto, o nome corta e a tabela cabe. */}
+                      <div className="min-w-0 max-w-[220px] @[1400px]:max-w-[320px]">
                         <div className="font-bold text-gray-900 text-base truncate">{p.name}</div>
                         {/* Identificação útil pra quem opera: REF e código de
                             barras. O UUID interno não é digitável, não é
@@ -1350,7 +1378,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   <td className="px-5 py-4 text-right tabular-nums text-base font-bold whitespace-nowrap" style={{ color: 'var(--navy)' }}>
                     {formatBRL(p.price)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums hidden xl:table-cell">
+                  <td className="px-5 py-4 text-right tabular-nums hidden @[1100px]:table-cell">
                     <div className="font-bold text-base" style={{ color: 'var(--navy)' }}>{margem.toFixed(1)}%</div>
                   </td>
                   <td className="px-5 py-4 text-right">
@@ -2494,9 +2522,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <button
                       type="button"
                       onClick={() => imageInputRef.current?.click()}
-                      className="smart-btn-secondary"
+                      disabled={processandoImagem}
+                      className="smart-btn-secondary disabled:opacity-60 disabled:cursor-wait"
                     >
-                      <Upload size={16} /> {formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
+                      <Upload size={16} />
+                      {processandoImagem ? 'OTIMIZANDO…' : formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
                     </button>
                     {formData.image && (
                       <button
@@ -2508,7 +2538,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </button>
                     )}
                   </div>
-                  <p className="text-xs text-gray-600">JPG, PNG ou WEBP — máximo <b>120 KB</b>. Sem imagem, o produto exibe um ícone padrão.</p>
+                  <p className="text-xs text-gray-600">
+                    JPG, PNG ou WEBP de até <b>{IMAGEM_MAX_ENTRADA_LABEL}</b> — pode mandar a foto em boa qualidade,
+                    o sistema reduz sozinho antes de salvar. Sem imagem, o produto exibe um ícone padrão.
+                  </p>
                 </div>
               </div>
               {(() => {
@@ -2970,7 +3003,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       )}
 
       <div className="neumorphic flex flex-col min-h-[480px] relative">
-        <div className="overflow-x-auto flex-1 custom-scrollbar scroll-smooth">
+        {/* @container: as colunas opcionais precisam responder a largura DESTE
+            box, nao a da janela. Com breakpoint de viewport, uma tela de 1280
+            (onde `xl:` ja vale) dava so ~966px de tabela depois da sidebar — a
+            Margem aparecia, a tabela estourava e a coluna Estoque ficava
+            escondida embaixo de Acoes, que e sticky. */}
+        <div className="@container overflow-x-auto flex-1 custom-scrollbar scroll-smooth">
           {/* Enquanto carrega, linhas fantasma no lugar da tabela vazia. Esta
               tela era a unica sem NENHUM indicador: o operador via um retangulo
               branco e nao sabia se estava carregando ou se o cadastro estava
