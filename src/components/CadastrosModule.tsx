@@ -86,6 +86,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // Precisa de buffer próprio: se o valor exibido viesse direto do cálculo,
   // cada tecla recalcularia o preço e o cursor pularia no meio da digitação.
   const [marginDraft, setMarginDraft] = useState<string | null>(null);
+  // Markup tem o mesmo problema de digitação da margem, então ganha o mesmo
+  // buffer. Os dois campos leem do MESMO par custo/preço: mexer em um reflete
+  // no outro assim que o preço muda.
+  const [markupDraft, setMarkupDraft] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean, id: string, type: string, name: string } | null>(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: '' as UserRole });
   const [senhaVisivel, setSenhaVisivel] = useState(false);
@@ -511,6 +515,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // de sucesso e so descobriria no F5 que o produto continua la.
   const podeExcluirCadastro = (NIVEL[currentUser?.role as UserRole] ?? 0) >= 80;
 
+  // Escrever o saldo direto no formulário, sem passar por soma/subtrai/corrige.
+  // Só o Admin Master: o CEO continua ajustando pela operação, que deixa claro
+  // o que foi somado ou corrigido. Diferente de excluir, aqui a trava é SÓ de
+  // tela — a policy de UPDATE em `products` é `auth_all` (qualquer usuário da
+  // loja), então isto organiza o fluxo e não é barreira de segurança.
+  const podeEditarEstoqueDireto = currentUser?.role === 'admin_master';
+
   const ROLE_LABELS: Record<UserRole, string> = {
     admin_master: 'Admin Master',
     ceo: 'CEO',
@@ -685,10 +696,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       if (/[";\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
-    const header = ['#', 'Nome', 'Categoria', 'EAN-13', 'Referência', 'Custo (R$)', 'Venda (R$)', 'Margem (%)', 'Estoque', 'Unidade', 'Controla Estoque'];
+    // Markup entra no CSV (que tem largura de sobra) mas não no PDF nem na
+    // tabela: lá a briga é por espaço, e quem precisa dos dois lado a lado
+    // está fazendo precificação numa planilha, não olhando a lista.
+    const header = ['#', 'Nome', 'Categoria', 'EAN-13', 'Referência', 'Custo (R$)', 'Venda (R$)', 'Margem (%)', 'Markup (%)', 'Estoque', 'Unidade', 'Controla Estoque'];
     const lines = [header.map(esc).join(sep)];
     filteredProducts.forEach((p, i) => {
       const margem = p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100) : 0;
+      const markup = p.price && p.costPrice ? (((p.price - p.costPrice) / p.costPrice) * 100) : 0;
       const row = [
         String(i + 1).padStart(3, '0'),
         p.name || '',
@@ -698,6 +713,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         (p.costPrice || 0).toFixed(2).replace('.', ','),
         (p.price || 0).toFixed(2).replace('.', ','),
         margem.toFixed(1).replace('.', ','),
+        markup.toFixed(1).replace('.', ','),
         p.controlStock === false ? '' : (p.stock || 0),
         p.unit || 'un',
         p.controlStock === false ? 'Não' : 'Sim',
@@ -828,7 +844,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setEditingItem(item);
     setFormData({ ...item });
     if (type === 'cliente') setShowAddClient(true);
-    if (type === 'produto') { setFichaOutro(new Set()); setMarginDraft(null); setShowAddProduct(true); }
+    if (type === 'produto') { setFichaOutro(new Set()); setMarginDraft(null); setMarkupDraft(null); setShowAddProduct(true); }
     if (type === 'servico') setShowAddService(true);
     if (type === 'fornecedor') setShowAddSupplier(true);
     if (type === 'equipe') {
@@ -2305,7 +2321,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
             )}
 
-            <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-gray-200 mt-2">
+            <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 pt-4 border-t border-gray-200 mt-2">
               <div className="space-y-2">
                 <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
                 <input
@@ -2357,7 +2373,48 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     />
                   );
                 })()}
-                <p className="text-[11px] text-gray-500 leading-relaxed">Editável — digitar a margem recalcula o Preço de Venda a partir do custo.</p>
+                <p className="text-[11px] text-gray-500 leading-relaxed">
+                  Quanto da VENDA é lucro. Editável — digitar recalcula o Preço de Venda.
+                </p>
+              </div>
+
+              {/* Markup andava faltando: margem e markup respondem perguntas
+                  diferentes e o pessoal de compra raciocina em markup ("multiplico
+                  o custo por quanto?"), não em margem. Custo 10 / venda 20 é 50%
+                  de margem E 100% de markup — sem os dois lado a lado, era fácil
+                  digitar um no campo do outro e errar o preço pra baixo. */}
+              <div className="space-y-2">
+                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Markup (%)</label>
+                {(() => {
+                  const custo = Number(formData.costPrice || 0);
+                  const preco = Number(formData.price || 0);
+                  const calculado = preco && custo ? (((preco - custo) / custo) * 100).toFixed(2) : '';
+                  return (
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      disabled={!custo}
+                      value={markupDraft ?? calculado}
+                      onFocus={() => setMarkupDraft(calculado)}
+                      onChange={e => setMarkupDraft(e.target.value)}
+                      onBlur={() => {
+                        const markup = parseFloat((markupDraft ?? '').replace(',', '.'));
+                        // Markup <= -100 daria preço zero ou negativo — ignora e
+                        // volta pro valor calculado a partir do preço atual.
+                        if (Number.isFinite(markup) && custo > 0 && markup > -100) {
+                          const novoPreco = Math.round(custo * (1 + markup / 100) * 100) / 100;
+                          setFormData({ ...formData, price: novoPreco });
+                        }
+                        setMarkupDraft(null);
+                      }}
+                      placeholder={custo ? '0.00' : 'Informe o custo'}
+                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  );
+                })()}
+                <p className="text-[11px] text-gray-500 leading-relaxed">
+                  Quanto se soma ao CUSTO. Editável — digitar recalcula o Preço de Venda.
+                </p>
               </div>
             </div>
 
@@ -2367,23 +2424,43 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
+              {/* items-start, não items-end: a dica embaixo do "Estoque atual"
+                  deixa aquela célula mais alta, e alinhando pelo fim os campos
+                  vizinhos desciam junto — os três inputs paravam em alturas
+                  diferentes. Alinhados pelo topo, o texto cresce pra baixo sem
+                  arrastar ninguém. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start">
                 {/* Uma entrada só pra estoque: cadastro novo digita o saldo
-                    inicial; produto existente mostra o saldo (só leitura) e
-                    qualquer ajuste passa por "Editar estoque", que já registra
-                    a operação (soma/subtrai/corrige) em vez de escrever em
-                    cima do número. Antes eram DOIS campos que somavam entre
-                    si ("Estoque atual" + "Quantidade Comprada") sem nenhuma
-                    das duas telas dizer qual das duas o operador devia usar. */}
+                    inicial; produto existente mostra o saldo — editável só pelo
+                    Admin Master, que corrige o número direto; para os demais
+                    qualquer ajuste passa por "Editar estoque" (soma/subtrai/
+                    corrige) em vez de escrever em cima do saldo. Antes eram DOIS
+                    campos que somavam entre si ("Estoque atual" + "Quantidade
+                    Comprada") sem nenhuma das duas telas dizer qual usar. */}
                 {editingItem ? (
                   <div className="space-y-2">
                     <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque atual</label>
                     <input
                       type="number"
-                      disabled
-                      value={formData.stock || 0}
-                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold opacity-50 cursor-not-allowed"
+                      min={0}
+                      disabled={!podeEditarEstoqueDireto}
+                      value={formData.stock ?? 0}
+                      onChange={e => {
+                        if (!podeEditarEstoqueDireto) return;
+                        // Saldo negativo trava a venda no PDV e na
+                        // finalize_sale_atomic — mesmo piso do modal de ajuste.
+                        const n = parseInt(e.target.value, 10);
+                        setFormData({ ...formData, stock: Number.isFinite(n) ? Math.max(0, n) : 0 });
+                      }}
+                      className={`w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold ${
+                        podeEditarEstoqueDireto ? '' : 'opacity-50 cursor-not-allowed'
+                      }`}
                     />
+                    <p className="text-[11px] text-gray-500 leading-relaxed">
+                      {podeEditarEstoqueDireto
+                        ? 'Corrige o saldo direto. Para entrada de mercadoria, prefira "Editar estoque" — ele soma ao que já existe.'
+                        : 'Somente leitura. Use "Editar estoque" para somar, subtrair ou corrigir.'}
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2412,7 +2489,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   </div>
                 </div>
 
-                <div className="pb-3 flex justify-between items-center">
+                {/* pt-9 põe o link na altura dos inputs, agora que a linha
+                    alinha pelo topo (label 20px + gap 8px + meio do input). */}
+                <div className="pt-9 flex justify-between items-center">
                   {editingItem && (
                     <button
                       type="button"
