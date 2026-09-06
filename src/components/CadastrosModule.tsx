@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -25,6 +25,38 @@ type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornec
 // inteiro no PDV e na Vitrine). O arquivo que o usuário escolhe pode ser muito
 // maior: o navegador reduz até caber aqui.
 const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
+
+// MaxID — app irmão que gera CPF, CNPJ e celular de treino com dígito
+// verificador válido. O aluno precisa de documento para cadastrar cliente e
+// fornecedor, e inventar número na mão produz cadastro que a validação recusa
+// (e ensina que documento é enfeite). Mesmo botão do LogMax, para que quem
+// treina nos dois sistemas encontre a ferramenta no mesmo lugar.
+const MAXID_URL = 'https://max-id.vercel.app';
+
+/** Botão do MaxID no alto do formulário — vale para as três empresas, já que
+ *  documento e celular não mudam de regra entre SuperMax, MaxLook e TechMax. */
+function BotaoMaxID({ pj }: { pj: boolean }) {
+  return (
+    <div className="flex flex-col items-end gap-1.5 shrink-0">
+      <button
+        type="button"
+        onClick={() => window.open(MAXID_URL, '_blank', 'noopener,noreferrer')}
+        className="smart-btn-secondary !py-1.5 !px-3 uppercase text-xs tracking-widest"
+      >
+        {/* O PNG tem fundo preto próprio, daí o canto arredondado em vez de
+            tentar dissolvê-lo no fundo claro do tema. */}
+        <img src="/icon-maxid.png" alt="" className="h-8 w-auto rounded-md" />
+        Gerar no MaxID <ExternalLink size={13} />
+      </button>
+      {/* Dizer o que o botão faz vale mais que o tooltip: em tablet não há
+          hover, e é justamente ali que a turma preenche. */}
+      <p className="text-[10px] text-gray-500 leading-relaxed text-right max-w-[15rem] normal-case">
+        Precisa de {pj ? 'CNPJ' : 'CPF'} e celular para preencher? Gere no MaxID e volte para colar
+        aqui — abre em outra aba, o que você já digitou continua nesta.
+      </p>
+    </div>
+  );
+}
 
 interface CadastrosModuleProps {
   currentUser: User;
@@ -1889,11 +1921,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       {showAddClient && subTab === 'clientes' && (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex justify-between items-start gap-4 mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
             </h3>
-            <button onClick={() => { setShowAddClient(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <div className="flex items-start gap-4">
+              <BotaoMaxID pj={formData.type === 'PJ'} />
+              <button onClick={() => { setShowAddClient(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest pt-2">FECHAR</button>
+            </div>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
@@ -2782,11 +2817,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       {showAddSupplier && subTab === 'fornecedores' && (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
           <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex justify-between items-start gap-4 mb-6">
             <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
               <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
             </h3>
-            <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
+            <div className="flex items-start gap-4">
+              <BotaoMaxID pj={formData.type === 'PJ'} />
+              <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest pt-2">FECHAR</button>
+            </div>
           </div>
 
           <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
