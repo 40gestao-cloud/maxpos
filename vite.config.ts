@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['pwa-500x500.png'],
+        includeAssets: ['icon-maxpos.png', 'icon-maxpos-192.png', 'icon-maxpos-maskable.png'],
         manifest: {
           name: 'MaxPOS ERP/PDV',
           short_name: 'MaxPOS',
@@ -22,19 +22,23 @@ export default defineConfig(() => {
           orientation: 'portrait',
           icons: [
             {
-              src: 'pwa-500x500.png',
-              sizes: '500x500',
-              type: 'image/png'
-            },
-            {
-              src: 'pwa-500x500.png',
-              sizes: '500x500',
+              src: 'icon-maxpos-192.png',
+              sizes: '192x192',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: 'pwa-500x500.png',
-              sizes: '500x500',
+              src: 'icon-maxpos.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              // Variante com safe zone: o logo ocupa 60% do quadro, deixando
+              // ~20% de margem de cada lado. O icone normal so tinha 3,7% e o
+              // Android recortava dentro do wordmark ao aplicar a mascara.
+              src: 'icon-maxpos-maskable.png',
+              sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable'
             }
