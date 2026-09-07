@@ -152,7 +152,22 @@ export function explicarErro(err: unknown, acao: string): ErroExplicado {
     };
   }
 
-  // 8. Desconhecido: mantém o texto original, identificado como tal. Traduzir
+  // 8. Senha recusada pelo `senhaSegura`, antes de o Auth ser chamado. Não é
+  //    erro de banco, então não pode cair no caso 9 e aparecer como "o banco
+  //    recusou" — o admin ia procurar defeito no sistema em vez de trocar a
+  //    senha. Aqui a mensagem já vem pronta e diz o que fazer.
+  if (codigo === 'SENHA_CURTA' || codigo === 'SENHA_VAZADA') {
+    const vazada = codigo === 'SENHA_VAZADA';
+    return {
+      title: vazada ? 'Escolha outra senha' : 'Senha muito curta',
+      message: vazada
+        ? `${msg} Ela é conhecida por quem tenta invadir contas, mesmo que pareça segura. Escolha uma senha que você nunca usou em outro site.`
+        : `${msg} Combine letras, números e símbolos — e evite datas e nomes.`,
+      variant: 'warning',
+    };
+  }
+
+  // 9. Desconhecido: mantém o texto original, identificado como tal. Traduzir
   //    no chute esconderia justamente o caso que ninguém previu.
   return {
     title: titulo,

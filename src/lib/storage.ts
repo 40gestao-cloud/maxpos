@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { exigirSenhaSegura } from './senhaSegura';
 import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao, Promocao, OfertaVigente } from '../types';
 
 /**
@@ -464,6 +465,12 @@ export const Storage = {
     parentId?: string,
     loja?: string | null,
   ): Promise<User> => {
+    // Antes de qualquer coisa: senha curta ou vazada nem chega no Auth. Vem
+    // primeiro de propósito — recusar aqui não deixa usuário meio-criado,
+    // porque o signUp ainda não rodou. (Ver `senhaSegura`: o Supabase só
+    // oferece essa trava no plano Pro.)
+    await exigirSenhaSegura(password);
+
     // Preserva a sessão do admin antes do signUp
     const { data: { session: adminSession } } = await supabase.auth.getSession();
 
