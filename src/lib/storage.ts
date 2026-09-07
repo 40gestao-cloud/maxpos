@@ -846,6 +846,12 @@ export const Storage = {
   },
 
   // ─── Auditoria ───────────────────────────────────────────
+  // `pdvMode` e obrigatorio na pratica: sem ele a tela de Auditoria mostrava o
+  // rastro das TRES empresas numa lista so. A RLS nao ajuda aqui — audit_log
+  // so tem policy de nivel (>= 80), e todo usuario de hoje e gestao.
+  // Registros anteriores ao patch 2026-09-06b que perderam a origem (o
+  // registro auditado foi excluido antes de `pdv_mode` existir) ficam de fora:
+  // sao 6, todos de exclusoes de 2026-07/08.
   getAuditLog: async (filters?: {
     entityType?: string;
     userId?: string;
@@ -853,12 +859,14 @@ export const Storage = {
     from?: string;
     to?: string;
     limit?: number;
+    pdvMode?: string | null;
   }): Promise<AuditLogEntry[]> => {
     let q = supabase
       .from('audit_log')
       .select('*')
       .order('changed_at', { ascending: false })
       .limit(filters?.limit ?? 200);
+    if (filters?.pdvMode)    q = q.eq('pdv_mode', filters.pdvMode);
     if (filters?.entityType) q = q.eq('entity_type', filters.entityType);
     if (filters?.userId)     q = q.eq('user_id', filters.userId);
     if (filters?.action)     q = q.eq('action', filters.action);

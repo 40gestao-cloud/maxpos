@@ -1470,7 +1470,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
           { id: 'trainer-op-2', email: 'marcos@treino.local', name: 'Marcos (turno noite)', role: 'operador_caixa' } as User,
         ]);
       } else {
-        const users = await Storage.getUsers();
+        // Filtrado pela empresa do caixa: sem isto, operar a MaxLook oferecia
+        // os operadores da SuperMax e da TechMax no seletor. A RLS nao corta
+        // (todo usuario de hoje e gestao, e `pode_loja` libera as tres).
+        const users = await Storage.getUsers(pdvMode);
         setSwapOperatorList(users);
       }
       setSwapOperatorModal(true);

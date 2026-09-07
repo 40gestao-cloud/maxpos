@@ -9,6 +9,7 @@ import { User, AuditLogEntry } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
 import { useToast } from './Toast';
+import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { resizeImageToDataUrl } from '../lib/imageResize';
 
 // Chaves de localStorage que o RESET apaga. As de modulos ja removidos ficam
@@ -55,6 +56,9 @@ type SubTab = 'perfil' | 'auditoria';
 export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate }) => {
   const { showAlert, host: alertHost } = useAlertDialog();
   const toast = useToast();
+  // A auditoria e POR EMPRESA: sem isto a tela mostrava o rastro das tres
+  // numa lista so, e nao havia nem como distinguir de qual loja era a linha.
+  const { filialAtiva } = useFilial();
   const [user, setUser] = useState<User | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -100,6 +104,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
         action:     (filterAction as any) || undefined,
         from:       filterFrom ? new Date(filterFrom).toISOString() : undefined,
         to:         filterTo   ? new Date(filterTo + 'T23:59:59').toISOString() : undefined,
+        pdvMode:    filialAtiva ?? 'supermax',
         limit: 300,
       });
       setAuditEntries(rows);
@@ -116,12 +121,12 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
       // Lista de operadores vem da equipe inteira, nao so de quem aparece no
       // log corrente — assim e possivel filtrar por alguem que nao operou no
       // recorte atual.
-      Storage.getUsers()
+      Storage.getUsers(filialAtiva ?? 'supermax')
         .then(us => setAuditUsers(us.map(u => ({ id: u.id, name: u.name, role: u.role }))))
         .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subTab, canAudit]);
+  }, [subTab, canAudit, filialAtiva]);
 
   // Une operadores conhecidos (equipe atual) com quem aparece no log mas
   // foi excluido depois — para nao perder filtragem historica.
