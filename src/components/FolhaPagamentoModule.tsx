@@ -360,7 +360,7 @@ export default function FolhaPagamentoModule() {
                     </button>
                   )}
                   {f.status !== 'Paga' && (
-                    <button onClick={() => handleDelete(f.id)} className="row-ghost-btn is-danger" title="Excluir lançamento">
+                    <button onClick={() => handleDelete(f.id)} className="row-action-btn is-excluir" title="Excluir lançamento">
                       <Trash2 size={16} />
                     </button>
                   )}

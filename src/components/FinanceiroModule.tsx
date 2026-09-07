@@ -600,12 +600,12 @@ export default function FinanceiroModule() {
                       {a.type === 'payable' ? '-' : '+'} R$ {a.amount.toFixed(2)}
                     </span>
                     <div className="flex gap-1">
-                      <button onClick={() => handleToggleAccountStatus(a.id)} className={`row-ghost-btn ${a.status === 'paid' ? 'text-emerald-600 bg-emerald-500/10' : 'hover:!text-emerald-600'}`} title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
+                      <button onClick={() => handleToggleAccountStatus(a.id)} className="row-action-btn is-pago" title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
                         <CheckCircle2 size={16} />
                       </button>
                       {/* Este SIM apaga o lançamento — por isso é a variante
                           destrutiva. Fica cinza até o ponteiro chegar. */}
-                      <button onClick={() => handleDeleteAccount(a.id)} className="row-ghost-btn is-danger" title="Excluir lançamento">
+                      <button onClick={() => handleDeleteAccount(a.id)} className="row-action-btn is-excluir" title="Excluir lançamento">
                         <Trash2 size={16} />
                       </button>
                     </div>
@@ -650,7 +650,7 @@ export default function FinanceiroModule() {
                       {credit && (
                         <button
                           onClick={() => handleExpandSale(s)}
-                          className={`row-ghost-btn ${isExpanded ? 'bg-violet-500/15 text-violet-600' : 'hover:!text-violet-600'}`}
+                          className="row-action-btn is-detalhes"
                           title={isExpanded ? 'Ocultar Parcelas' : 'Ver Parcelas'}
                         >
                           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -658,7 +658,7 @@ export default function FinanceiroModule() {
                       )}
                       <button
                         onClick={() => dismissFlow(`sale-${s.id}`)}
-                        className="row-ghost-btn"
+                        className="row-action-btn is-ocultar"
                         title="Ocultar da lista (reversível em 'Mostrar todas')"
                       >
                         {/* Era uma lixeira vermelha com shimmer — o botão mais

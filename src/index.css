@@ -324,31 +324,39 @@ body {
     border-color: #4c0a0a;
   }
 
-  /* ── Botão-fantasma de linha de lista ──
-     Ação que se repete em TODA linha (apagar, ocultar) não pode ter o peso
-     de um botão sólido: vinte lixeiras vermelhas com shimmer faziam da ação
-     mais perigosa da tela o elemento mais chamativo dela. Em repouso é um
-     ícone cinza discreto; a cor só aparece quando o ponteiro chega nele, que
-     é quando a intenção existe. */
-  .row-ghost-btn {
+  /* ── Botão de ação de linha/card, COM cor própria ──
+     Substitui o fantasma cinza nas listas de Cadastros. O fantasma resolvia
+     um problema real (vinte lixeiras vermelhas sólidas faziam da ação mais
+     perigosa a mais chamativa da tela) mas criou outro: quatro ícones cinzas
+     idênticos, em que só o desenho de 16px distinguia "gerar etiqueta" de
+     "excluir" — e a diferença entre eles é grande demais para caber num
+     detalhe de 16px.
+     Agora cada ação tem cor de fundo própria, em tom suave: dá para achar a
+     lixeira sem ler o ícone, e o vermelho claro não grita como o vermelho
+     sólido gritava. Nada depende de hover: no tablet, que é onde a turma
+     opera, não existe ponteiro. */
+  .row-action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0.4rem;
     border-radius: 0.5rem;
-    color: #9ca3af;
-    background: transparent;
-    transition: color 130ms ease, background-color 130ms ease;
+    border: 1px solid transparent;
+    transition: filter 130ms ease, transform 130ms ease;
   }
-  .row-ghost-btn:hover {
-    background: var(--bg-soft);
-    color: var(--text-muted);
-  }
-  /* Variante destrutiva: só ela vira vermelha, e só no hover. */
-  .row-ghost-btn.is-danger:hover {
-    background: #fee2e2;
-    color: var(--danger);
-  }
+  .row-action-btn:hover { filter: brightness(0.94); }
+  .row-action-btn:active { transform: scale(0.92); }
+
+  /* A cor é o único código: sem brilho, sem animação. Em lista de cinquenta
+     linhas são duzentos botões na tela ao mesmo tempo, e qualquer movimento
+     repetido nesse volume vira letreiro — a lista passa a piscar em vez de
+     ser lida. Estático, o tom já basta para achar a lixeira sem ler o ícone. */
+  .row-action-btn.is-etiqueta { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+  .row-action-btn.is-editar   { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+  .row-action-btn.is-excluir  { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+  .row-action-btn.is-detalhes { background: #ede9fe; border-color: #c4b5fd; color: #6d28d9; }
+  .row-action-btn.is-pago     { background: #d1fae5; border-color: #6ee7b7; color: #047857; }
+  .row-action-btn.is-ocultar  { background: #f1f5f9; border-color: #cbd5e1; color: #475569; }
 
   /* ── Coluna de acoes presa a direita ──
      Tabela larga (Produtos tem 8 colunas e ~1.2k de largura) num container

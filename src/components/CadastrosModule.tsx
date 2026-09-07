@@ -232,16 +232,19 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
         </div>
         {/* No toque não existe hover: escondidas só a partir de md, senão as
             ações ficariam inalcançáveis no tablet, que é onde a turma usa. */}
-        <div className="flex gap-0.5 shrink-0 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-          <button onClick={onEdit} className="row-ghost-btn hover:!text-[var(--navy)]" title="Editar">
+        {/* Sempre visiveis. Escondidas ate o hover, elas simplesmente NAO
+            EXISTIAM para quem usa tablet — e sumir e desaparecer sao a mesma
+            coisa para quem nunca passou o mouse ali. */}
+        <div className="flex gap-1 shrink-0">
+          <button onClick={onEdit} className="row-action-btn is-editar" title="Editar">
             <Edit2 size={16} />
           </button>
           {podeExcluir && (
-            <button onClick={onDelete} className="row-ghost-btn is-danger" title="Excluir">
+            <button onClick={onDelete} className="row-action-btn is-excluir" title="Excluir">
               <Trash2 size={16} />
             </button>
           )}
-          <button onClick={onView} className="row-ghost-btn hover:!text-[var(--navy)]" title="Detalhes">
+          <button onClick={onView} className="row-action-btn is-detalhes" title="Detalhes">
             <ChevronRight size={16} />
           </button>
         </div>
@@ -1714,7 +1717,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => handleEdit(u, 'equipe')}
-                          className="row-ghost-btn hover:!text-[var(--navy)]"
+                          className="row-action-btn is-editar"
                           title="Editar"
                         >
                           <Edit2 size={16} className="relative z-[2]" />
@@ -1726,7 +1729,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         {podeExcluirCadastro && u.id !== currentUser?.id && (
                           <button
                             onClick={() => handleDelete(u.id, 'equipe', u.name)}
-                            className="row-ghost-btn is-danger"
+                            className="row-action-btn is-excluir"
                             title="Excluir"
                           >
                             <Trash2 size={16} className="relative z-[2]" />
@@ -1836,14 +1839,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="flex gap-0.5 justify-center">
                       <button
                         onClick={() => setBarcodeModal({ isOpen: true, product: p })}
-                        className="row-ghost-btn hover:!text-[var(--accent-text)]"
+                        className="row-action-btn is-etiqueta"
                         title="Gerar etiqueta"
                       >
                         <Barcode size={16} />
                       </button>
                       <button
                         onClick={() => handleEdit(p, 'produto')}
-                        className="row-ghost-btn hover:!text-[var(--navy)]"
+                        className="row-action-btn is-editar"
                         title="Editar"
                       >
                         <Edit2 size={16} />
@@ -1851,7 +1854,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(p.id, 'produto', p.name)}
-                          className="row-ghost-btn is-danger"
+                          className="row-action-btn is-excluir"
                           title="Excluir"
                         >
                           <Trash2 size={16} />
@@ -1859,7 +1862,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       )}
                       <button
                         onClick={() => handleView(p)}
-                        className="row-ghost-btn hover:!text-[var(--navy)]"
+                        className="row-action-btn is-detalhes"
                         title="Detalhes"
                       >
                         <ChevronRight size={16} />
@@ -1910,7 +1913,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => handleEdit(s, 'servico')}
-                        className="row-ghost-btn hover:!text-[var(--navy)]"
+                        className="row-action-btn is-editar"
                         title="Editar"
                       >
                         <Edit2 size={16} className="relative z-[2]" />
@@ -1918,7 +1921,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       {podeExcluirCadastro && (
                         <button
                           onClick={() => handleDelete(s.id, 'servico', s.name)}
-                          className="row-ghost-btn is-danger"
+                          className="row-action-btn is-excluir"
                           title="Excluir"
                         >
                           <Trash2 size={16} className="relative z-[2]" />
@@ -1926,7 +1929,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       )}
                       <button
                         onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
+                        className="row-action-btn is-detalhes"
                         title="Detalhes"
                       >
                         <ChevronRight size={16} />
