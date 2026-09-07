@@ -208,7 +208,11 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
         <div className="flex items-start gap-3 min-w-0">
           <AvatarCadastro nome={item.name} image={item.image} />
           <div className="min-w-0">
-            <h3 className="font-black text-gray-900 leading-tight truncate">{item.name}</h3>
+            {/* Duas linhas em vez de truncar: "FISIA Comércio de Produtos
+                Esportivos" não cabe em 240px e virava "FISIA Comércio ...".
+                Numa linha de tabela cortar é o preço da densidade; num card
+                sobra altura, e razão social cortada não identifica ninguém. */}
+            <h3 className="font-black text-gray-900 leading-tight line-clamp-2 break-words">{item.name}</h3>
             {item.tradeName && (
               <div className="text-xs text-gray-500 font-bold uppercase tracking-wide truncate">{item.tradeName}</div>
             )}
@@ -284,9 +288,12 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
           <strong className="text-[var(--navy)] tabular-nums">{formatBRL(item.creditLimit || 0)}</strong>
         </div>
       ) : (
-        <div className="flex justify-between items-center text-xs mt-auto border-t border-gray-200 pt-3">
-          <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Contato</span>
-          <strong className="text-[var(--navy)] truncate ml-2">{item.contact || '—'}</strong>
+        // "Contato" aqui e "Contato" no cabeçalho do painel acima eram a mesma
+        // palavra para coisas diferentes no MESMO card — o painel é o meio de
+        // contato, isto é a PESSOA com quem se fala.
+        <div className="flex justify-between items-center text-xs mt-auto border-t border-gray-200 pt-3 gap-2">
+          <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px] shrink-0">Pessoa de contato</span>
+          <strong className="text-[var(--navy)] truncate">{item.contact || '—'}</strong>
         </div>
       )}
     </div>
