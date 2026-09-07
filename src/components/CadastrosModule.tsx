@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, MapPin, ClipboardPaste } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -17,6 +17,7 @@ import { explicarErro } from '../lib/erros';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
+import { formatarEnderecoLinha, formatarCEP, parseEnderecoColado, ROTULO_ENDERECO, type EnderecoCampos } from '../lib/endereco';
 import { comprimirImagemParaTeto, tamanhoDataUrl, IMAGEM_MAX_ENTRADA_BYTES, IMAGEM_MAX_ENTRADA_LABEL } from '../lib/imageResize';
 import { LIMITE_VITRINE } from './VitrineModule';
 
@@ -33,6 +34,285 @@ const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
 // (e ensina que documento é enfeite). Mesmo botão do LogMax, para que quem
 // treina nos dois sistemas encontre a ferramenta no mesmo lugar.
 const MAXID_URL = 'https://max-id.vercel.app';
+
+// Monograma: sem foto, o card mostra as iniciais sobre uma cor derivada do
+// nome. Cor fixa por nome (e não aleatória) porque o mesmo fornecedor precisa
+// ter sempre a mesma cor — é isso que faz o olho reencontrá-lo na lista.
+const CORES_MONOGRAMA = ['#1e3a8a', '#7c2d12', '#14532d', '#581c87', '#7f1d1d', '#134e4a', '#713f12', '#312e81'];
+
+function corDoNome(nome: string): string {
+  let h = 0;
+  for (let i = 0; i < nome.length; i++) h = (h * 31 + nome.charCodeAt(i)) >>> 0;
+  return CORES_MONOGRAMA[h % CORES_MONOGRAMA.length];
+}
+
+function iniciais(nome: string): string {
+  const partes = String(nome ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return '?';
+  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
+
+// Colar o endereço do MaxID em vez de redigitar.
+//
+// O MaxID entrega o endereço numa linha só ("Rua das Flores, 123 — Centro,
+// São Paulo/SP — CEP 01234-567") e o aluno tinha que quebrar isso à mão em
+// seis campos. Seis campos redigitados é onde o CEP some e a UF vem errada.
+// Aqui ele cola e os campos se preenchem; o que o parser não reconhecer
+// continua editável na mão, e a tela DIZ o que preencheu — preenchimento
+// silencioso é pior que nenhum, porque ninguém confere o que não viu.
+function ColarEnderecoMaxID({ onPreencher }: { onPreencher: (campos: EnderecoCampos) => void }) {
+  const [texto, setTexto] = useState('');
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  const aplicar = (valor: string) => {
+    const campos = parseEnderecoColado(valor);
+    const nomes = (Object.keys(campos) as (keyof EnderecoCampos)[]);
+    if (!nomes.length) {
+      setOk(null);
+      setAviso('Não reconheci nenhum campo aí. Cole a linha inteira que o MaxID gerou, no formato "Rua, 123 — Bairro, Cidade/UF — CEP 00000-000".');
+      return;
+    }
+    onPreencher(campos);
+    setTexto('');
+    setAviso(null);
+    setOk(`Preenchido: ${nomes.map(n => ROTULO_ENDERECO[n]).join(', ')}.`);
+  };
+
+  return (
+    <div className="mb-4 p-3 rounded-xl border border-dashed border-[var(--navy)]/25 bg-[var(--navy)]/[0.03]">
+      <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1.5">
+        <ClipboardPaste size={12} /> Colar endereço do MaxID
+      </label>
+      <div className="flex flex-wrap gap-2 mt-1.5">
+        <input
+          value={texto}
+          onChange={e => { setTexto(e.target.value); setAviso(null); setOk(null); }}
+          // Colar já preenche: obrigar a um segundo clique depois do Ctrl+V
+          // seria pedir uma etapa que o próprio gesto já deixou clara.
+          onPaste={e => {
+            const colado = e.clipboardData.getData('text');
+            if (colado.trim()) { e.preventDefault(); setTexto(colado); aplicar(colado); }
+          }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); aplicar(texto); } }}
+          className="flex-1 min-w-[16rem] neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs"
+          placeholder="Cole aqui: Rua das Flores, 123 — Centro, São Paulo/SP — CEP 01234-567"
+        />
+        <button type="button" onClick={() => aplicar(texto)} className="smart-btn-secondary !py-1.5 !px-3 text-xs uppercase tracking-widest">
+          Preencher
+        </button>
+      </div>
+      {ok && <p className="text-[11px] text-emerald-700 font-bold mt-1.5 ml-1">{ok}</p>}
+      {aviso && <p className="text-[11px] text-red-600 font-bold mt-1.5 ml-1">{aviso}</p>}
+      {!ok && !aviso && (
+        <p className="text-[10px] text-gray-500 mt-1.5 ml-1">
+          Os campos abaixo continuam editáveis — isto só evita redigitar.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Foto do cadastro. Mesmo tratamento do produto: entra foto grande, o
+// navegador reduz. O teto aqui é menor (400 px / 60 KB) porque a imagem
+// aparece em 48 px no card, e a lista inteira vem numa query só.
+function CampoFotoPessoa({
+  nome, image, onChange, onErro,
+}: {
+  nome: string;
+  image?: string;
+  onChange: (dataUrl: string | undefined) => void;
+  onErro: (msg: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [processando, setProcessando] = useState(false);
+
+  const escolher = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      onErro('Formato não suportado. Use JPG, PNG ou WEBP.');
+      return;
+    }
+    setProcessando(true);
+    try {
+      onChange(await comprimirImagemParaTeto(file, { maxLado: 400, maxBytes: 60 * 1024 }));
+    } catch (err: any) {
+      onErro(err?.message || 'Não foi possível processar a imagem.');
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-4">
+      <AvatarCadastro nome={nome || '?'} image={image} size={72} />
+      <div className="space-y-1.5">
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={escolher} className="hidden" />
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={processando}
+            className="smart-btn-secondary !py-1.5 !px-3 text-xs uppercase tracking-widest disabled:opacity-60 disabled:cursor-wait"
+          >
+            <Upload size={14} /> {processando ? 'Otimizando…' : image ? 'Trocar foto' : 'Escolher foto'}
+          </button>
+          {image && (
+            <button
+              type="button"
+              onClick={() => onChange(undefined)}
+              className="smart-btn-danger !py-1.5 !px-3 text-xs uppercase tracking-widest"
+            >
+              <CloseIcon size={14} /> Remover
+            </button>
+          )}
+        </div>
+        <p className="text-[10px] text-gray-500">
+          Opcional — sem foto, o card usa as iniciais. Aceita até {IMAGEM_MAX_ENTRADA_LABEL}; o sistema reduz sozinho.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+interface CardPessoaProps {
+  item: any;
+  /** Cliente mostra status e limite de crédito; fornecedor mostra o contato. */
+  kind: 'cliente' | 'fornecedor';
+  podeExcluir: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onView: () => void;
+}
+
+// Card de pessoa, no lugar da linha de tabela.
+//
+// A tabela dava cinco colunas a um cadastro que tem quinze campos: nome, tipo,
+// documento, telefone e status. Endereço, e-mail secundário, IE e limite de
+// crédito só apareciam abrindo o registro. E, como toda linha tem a mesma
+// altura, trinta clientes viravam trinta faixas idênticas — o mesmo problema
+// que o LogMax resolveu com card, e é o formato que este módulo agora espelha.
+function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardPessoaProps) {
+  const ehPJ = item.type === 'PJ';
+  const docLabel = ehPJ ? 'CNPJ' : 'CPF';
+  const endereco = formatarEnderecoLinha(item);
+  const fone = item.phone || item.cellphone;
+  const ativo = item.status !== 'inactive';
+
+  return (
+    <div className="neumorphic p-5 rounded-2xl flex flex-col gap-4 group">
+      <div className="flex justify-between items-start gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <AvatarCadastro nome={item.name} image={item.image} />
+          <div className="min-w-0">
+            <h3 className="font-black text-gray-900 leading-tight truncate">{item.name}</h3>
+            {item.tradeName && (
+              <div className="text-xs text-gray-500 font-bold uppercase tracking-wide truncate">{item.tradeName}</div>
+            )}
+            <div className="flex gap-1.5 items-center flex-wrap mt-1.5">
+              <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                {ehPJ ? 'Pessoa Jurídica' : 'Pessoa Física'}
+              </span>
+              {kind === 'cliente' && (
+                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                  ativo ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'
+                }`}>
+                  {ativo ? 'Ativo' : 'Inativo'}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        {/* No toque não existe hover: escondidas só a partir de md, senão as
+            ações ficariam inalcançáveis no tablet, que é onde a turma usa. */}
+        <div className="flex gap-0.5 shrink-0 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <button onClick={onEdit} className="row-ghost-btn hover:!text-[var(--navy)]" title="Editar">
+            <Edit2 size={16} />
+          </button>
+          {podeExcluir && (
+            <button onClick={onDelete} className="row-ghost-btn is-danger" title="Excluir">
+              <Trash2 size={16} />
+            </button>
+          )}
+          <button onClick={onView} className="row-ghost-btn hover:!text-[var(--navy)]" title="Detalhes">
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="neumorphic-inset rounded-xl p-3.5 flex flex-col gap-2 text-sm">
+        <span className="text-[10px] text-gray-500 uppercase tracking-widest font-black border-b border-gray-300/60 pb-1.5">
+          Contato
+        </span>
+        {item.document ? (
+          <div className="flex items-center gap-2 text-gray-700 min-w-0">
+            <CreditCard size={13} className="text-gray-400 shrink-0" />
+            <span className="font-mono text-xs truncate">{docLabel} {item.document}</span>
+          </div>
+        ) : null}
+        {fone ? (
+          <div className="flex items-center gap-2 text-gray-700 min-w-0">
+            <Phone size={13} className="text-gray-400 shrink-0" />
+            <span className="text-xs truncate">{fone}</span>
+          </div>
+        ) : null}
+        {item.email ? (
+          <div className="flex items-center gap-2 text-gray-700 min-w-0">
+            <Mail size={13} className="text-gray-400 shrink-0" />
+            <span className="text-xs truncate">{item.email}</span>
+          </div>
+        ) : null}
+        {endereco ? (
+          <div className="flex items-start gap-2 text-gray-600 min-w-0">
+            <MapPin size={13} className="text-gray-400 shrink-0 mt-0.5" />
+            <span className="text-xs leading-relaxed">{endereco}</span>
+          </div>
+        ) : null}
+        {!item.document && !fone && !item.email && !endereco && (
+          <span className="text-xs text-gray-400 italic">Sem informações de contato</span>
+        )}
+      </div>
+
+      {/* Rodapé: o dado que era exclusivo de cada tipo e que a tabela escondia
+          — limite de crédito do cliente, pessoa de contato do fornecedor. */}
+      {kind === 'cliente' ? (
+        <div className="flex justify-between items-center text-xs pt-1 mt-auto border-t border-gray-200 pt-3">
+          <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Limite de crédito</span>
+          <strong className="text-[var(--navy)] tabular-nums">{formatBRL(item.creditLimit || 0)}</strong>
+        </div>
+      ) : (
+        <div className="flex justify-between items-center text-xs mt-auto border-t border-gray-200 pt-3">
+          <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Contato</span>
+          <strong className="text-[var(--navy)] truncate ml-2">{item.contact || '—'}</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AvatarCadastro({ nome, image, size = 48 }: { nome: string; image?: string; size?: number }) {
+  if (image) {
+    return (
+      <img
+        src={image}
+        alt=""
+        className="rounded-xl object-cover shrink-0 border border-gray-300"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <div
+      className="rounded-xl shrink-0 flex items-center justify-center font-black text-white tracking-wider"
+      style={{ width: size, height: size, background: corDoNome(nome), fontSize: size * 0.34 }}
+    >
+      {iniciais(nome)}
+    </div>
+  );
+}
 
 /** Botão do MaxID no alto do formulário — vale para as três empresas, já que
  *  documento e celular não mudam de regra entre SuperMax, MaxLook e TechMax. */
@@ -1651,130 +1931,39 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </tbody>
           </table>
         );
+      // Fornecedor e cliente saíram da tabela para card, como no LogMax: são
+      // cadastros de QUINZE campos, e a linha só mostrava cinco. Ver CardPessoa.
       case 'fornecedores':
         return (
-          <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
-              <tr>
-                <th className="p-6">Fornecedor</th>
-                <th className="p-6">Tipo</th>
-                <th className="p-6">Documento</th>
-                <th className="p-6">Fone / E-mail</th>
-                <th className="p-6">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredSuppliers.map((s) => (
-                <tr key={s.id} className="hover:bg-gray-50 transition-colors group">
-                  <td className="p-6">
-                    <div className="font-bold text-gray-900">{s.name}</div>
-                    {s.tradeName && <div className="text-sm text-gray-600 uppercase font-black opacity-60">{s.tradeName}</div>}
-                  </td>
-                  <td className="p-6">
-                    <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{s.type || 'PF'}</span>
-                  </td>
-                  <td className="p-6 font-mono text-gray-600 text-sm">{s.document}</td>
-                  <td className="p-6">
-                    <div className="text-sm text-gray-600">{s.phone || s.cellphone || 'N/A'}</div>
-                    <div className="text-xs text-gray-600/60">{s.email || 'Sem e-mail'}</div>
-                  </td>
-                  <td className="p-6">
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => handleEdit(s, 'fornecedor')}
-                        className="row-ghost-btn hover:!text-[var(--navy)]"
-                        title="Editar"
-                      >
-                        <Edit2 size={16} className="relative z-[2]" />
-                      </button>
-                      {podeExcluirCadastro && (
-                        <button
-                          onClick={() => handleDelete(s.id, 'fornecedor', s.name)}
-                          className="row-ghost-btn is-danger"
-                          title="Excluir"
-                        >
-                          <Trash2 size={16} className="relative z-[2]" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleView(s)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
-                        title="Detalhes"
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="grid grid-cols-1 md:grid-cols-2 @[1100px]:grid-cols-3 gap-5 p-1">
+            {filteredSuppliers.map((s: any) => (
+              <CardPessoa
+                key={s.id}
+                item={s}
+                kind="fornecedor"
+                podeExcluir={podeExcluirCadastro}
+                onEdit={() => handleEdit(s, 'fornecedor')}
+                onDelete={() => handleDelete(s.id, 'fornecedor', s.name)}
+                onView={() => handleView(s)}
+              />
+            ))}
+          </div>
         );
       default: // clientes
         return (
-          <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
-              <tr>
-                <th className="p-6">Cliente</th>
-                <th className="p-6">Tipo</th>
-                <th className="p-6">Documento</th>
-                <th className="p-6">Telefone</th>
-                <th className="p-6">Status</th>
-                <th className="p-6">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {filteredClients.map((client) => (
-                <tr key={client.id} className="hover:bg-gray-50 transition-colors group">
-                  <td className="p-6">
-                    <div>
-                      <div className="font-bold text-gray-900">{client.name}</div>
-                      <div className="text-xs text-gray-600">{client.email || 'Sem e-mail'}</div>
-                    </div>
-                  </td>
-                  <td className="p-6">
-                    <span className="bg-gray-100 px-2 py-1 rounded text-sm font-black uppercase tracking-widest">{client.type || 'PF'}</span>
-                  </td>
-                  <td className="p-6 font-mono text-gray-600 text-sm">{client.document}</td>
-                  <td className="p-6 text-gray-600 text-sm">{client.phone}</td>
-                  <td className="p-6">
-                    <span className={`px-3 py-1 rounded-full text-sm font-black uppercase tracking-widest ${
-                      client.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                    }`}>
-                      {client.status === 'active' ? 'ATIVO' : 'INATIVO'}
-                    </span>
-                  </td>
-                  <td className="p-6">
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => handleEdit(client, 'cliente')}
-                        className="row-ghost-btn hover:!text-[var(--navy)]"
-                        title="Editar"
-                      >
-                        <Edit2 size={16} className="relative z-[2]" />
-                      </button>
-                      {podeExcluirCadastro && (
-                        <button
-                          onClick={() => handleDelete(client.id, 'cliente', client.name)}
-                          className="row-ghost-btn is-danger"
-                          title="Excluir"
-                        >
-                          <Trash2 size={16} className="relative z-[2]" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleView(client)}
-                        className="p-2 neumorphic-inset text-gray-600 hover:text-[var(--accent)] transition-all active:scale-90"
-                        title="Detalhes"
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="grid grid-cols-1 md:grid-cols-2 @[1100px]:grid-cols-3 gap-5 p-1">
+            {filteredClients.map((client: any) => (
+              <CardPessoa
+                key={client.id}
+                item={client}
+                kind="cliente"
+                podeExcluir={podeExcluirCadastro}
+                onEdit={() => handleEdit(client, 'cliente')}
+                onDelete={() => handleDelete(client.id, 'cliente', client.name)}
+                onView={() => handleView(client)}
+              />
+            ))}
+          </div>
         );
     }
   };
@@ -2048,6 +2237,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </button>
           </div>
 
+          {/* Foto antes dos campos: é a primeira coisa que identifica o
+              cadastro no card da lista, e leva dois cliques. */}
+          <div className="mb-8">
+            <CampoFotoPessoa
+              nome={formData.name || ''}
+              image={formData.image}
+              onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
+              onErro={msg => showAlert(msg)}
+            />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Common Fields or Type Specific Labels */}
             <div className="space-y-2">
@@ -2178,6 +2378,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             {/* Address Section */}
             <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
               <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+              <ColarEnderecoMaxID onPreencher={campos => setFormData((prev: any) => ({ ...prev, ...campos }))} />
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
@@ -2944,6 +3145,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </button>
           </div>
 
+          {/* Foto antes dos campos: é a primeira coisa que identifica o
+              cadastro no card da lista, e leva dois cliques. */}
+          <div className="mb-8">
+            <CampoFotoPessoa
+              nome={formData.name || ''}
+              image={formData.image}
+              onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
+              onErro={msg => showAlert(msg)}
+            />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
@@ -3049,6 +3261,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             {/* Address Section */}
             <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
               <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
+              <ColarEnderecoMaxID onPreencher={campos => setFormData((prev: any) => ({ ...prev, ...campos }))} />
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>

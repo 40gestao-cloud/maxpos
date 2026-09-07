@@ -164,6 +164,8 @@ export interface Client {
   complement?: string;
   state?: string;
   city?: string;
+  /** Foto do cliente: base64 data URL, reduzida no navegador (~60 KB). */
+  image?: string;
   /** Empresa dona do cliente. Ausente = 'supermax' (linha legada). */
   pdvMode?: PdvMode;
 }
@@ -238,6 +240,8 @@ export interface Supplier {
   complement?: string;
   state?: string;
   city?: string;
+  /** Logo/foto do fornecedor: base64 data URL, reduzida no navegador (~60 KB). */
+  image?: string;
   /** Empresa dona do fornecedor. Ausente = 'supermax' (linha legada). */
   pdvMode?: PdvMode;
 }
