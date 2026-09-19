@@ -14,6 +14,7 @@ import { PDFReport } from '../lib/pdfReport';
 import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
 import { buscarProdutos, separarQtdETermo, chaveCategoria } from '../lib/produtoBusca';
 import { explicarErro } from '../lib/erros';
+import { assinarTabelas } from '../lib/realtime';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
 import { ProdutoDetalheModal } from './ProdutoDetalheModal';
 
@@ -1804,26 +1805,31 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         .catch(() => {})
         .finally(() => { if (active) setLoading(false); });
 
-    load();
     // Os 3 PDVs usam o cadastro real de clientes. Os nichos usavam
     // TRAINING_CLIENTS, e com a venda passando a gravar isso lançaria fiado
     // no id de um cliente que não existe em `clients` — o débito de saldo
     // viraria no-op silencioso.
-    Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
+    const carregarClientes = () =>
+      Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {});
 
     // Ofertas valendo hoje. Patch 2026-09-02d: daqui sai o preço COBRADO, não
     // só o "de" — a liberação da promoção não mexe mais no cadastro. Falhar
     // erra para o lado seguro: o carrinho monta pelo preço de tabela, que é o
     // cheio. Nunca cobra a menos por engano.
-    Storage.getOfertasVigentes(pdvMode)
-      .then(list => {
-        if (!active) return;
-        const mapa = new Map<string, { de: number; por: number }>();
-        for (const o of list) mapa.set(o.productId, { de: o.precoDe, por: o.precoPor });
-        ofertasRef.current = mapa;
-        setOfertas(mapa);
-      })
-      .catch(() => {});
+    const carregarOfertas = () =>
+      Storage.getOfertasVigentes(pdvMode)
+        .then(list => {
+          if (!active) return;
+          const mapa = new Map<string, { de: number; por: number }>();
+          for (const o of list) mapa.set(o.productId, { de: o.precoDe, por: o.precoPor });
+          ofertasRef.current = mapa;
+          setOfertas(mapa);
+        })
+        .catch(() => {});
+
+    load();
+    carregarClientes();
+    carregarOfertas();
 
     // O PDV NAO assina `products` em tempo real. Explicando, porque a
     // tentacao de "religar isso" e grande:
@@ -1846,13 +1852,34 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // em outro terminal precisa aparecer, enquanto UPDATE era justamente o
     // saldo de fiado mudando a cada venda — mesmo fan-out de `products`, e o
     // limite de fiado tambem e validado no servidor.
-    const ch = supabase.channel(`pdv-clients-${pdvMode}`)
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'clients', filter: `pdv_mode=eq.${pdvMode}` },
-        () => { Storage.getClients(pdvMode).then(c => { if (active) setClients(c); }).catch(() => {}); })
-      .subscribe();
+    // Via `assinarTabelas`, e nao `supabase.channel` na mao, por dois motivos.
+    //
+    // O primeiro e um bug que estava aqui: `supabase.channel(nome)` devolve o
+    // canal EXISTENTE quando o nome se repete, e `pdv-clients-${pdvMode}` e
+    // fixo. Sair do PDV e voltar antes de o canal anterior terminar de fechar
+    // caia no canal velho — e `.subscribe()` so age em canal fechado, entao
+    // virava no-op silencioso: o caixa ficava sem receber cliente novo pelo
+    // resto do turno, sem nada indicando. O sufixo aleatorio de `assinarTabelas`
+    // ja existia justamente por isso; este canal e que tinha ficado de fora.
+    //
+    // O segundo: o PDV passa a ganhar o vigia e a ressincronizacao das telas de
+    // gestao. Num caixa isso vale MAIS que nelas — e o terminal que fica horas
+    // aberto, e o que dorme junto com a tampa do notebook.
+    const cancelar = assinarTabelas(`pdv-clients-${pdvMode}`, [
+      {
+        tabela: 'clients',
+        filtro: `pdv_mode=eq.${pdvMode}`,
+        eventos: ['INSERT'],
+        aoMudar: () => { carregarClientes(); },
+      },
+    ], {
+      // Depois de um corte, o catalogo local pode estar velho. Preco errado o
+      // servidor ja recusa (patch 2026-09-02f) e estoque tambem, mas deixar a
+      // tela mentindo ate a venda ser barrada e pior do que reler 84 linhas.
+      aoRessincronizar: () => { load(); carregarClientes(); carregarOfertas(); },
+    });
 
-    return () => { active = false; supabase.removeChannel(ch); };
+    return () => { active = false; cancelar(); };
   }, [isTraining, pdvMode]);
 
   const addToCart = (produtoCatalogo: Product, qty?: number) => {

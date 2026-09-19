@@ -132,7 +132,12 @@ export default function EstoqueModule() {
           setSaidas(contagem);
         },
       },
-    ]);
+    ], {
+      // Reconexão, aba que volta do fundo, rede que cai e volta: o que passou
+      // no intervalo não é reenviado pelo Realtime. Sem isto a tela ficava
+      // parada no estoque de antes do corte, sem nada indicando.
+      aoRessincronizar: load,
+    });
 
     return () => { active = false; cancelar(); };
   }, [filialAtiva]);

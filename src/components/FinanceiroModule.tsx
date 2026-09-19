@@ -217,7 +217,11 @@ export default function FinanceiroModule() {
           });
         },
       },
-    ]);
+    ], {
+      // Ver lib/realtime: o Realtime não reenvia o que passou enquanto o canal
+      // esteve fora. Dinheiro é o pior lugar para uma tela velha parecer atual.
+      aoRessincronizar: load,
+    });
 
     return () => { active = false; cancelar(); };
   }, [filialAtiva]);

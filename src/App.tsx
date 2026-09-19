@@ -22,6 +22,7 @@ import Login from './components/Login';
 import FilialSelector from './components/FilialSelector';
 import { ToastProvider } from './components/Toast';
 import { FilialProvider, useFilial, FILIAL_META } from './contexts/FilialContext';
+import { useRealtimeDegradado } from './lib/realtime';
 const PDVModule = lazy(() => import('./components/PDVModule'));
 const CadastrosModule = lazy(() => import('./components/CadastrosModule'));
 const EstoqueModule = lazy(() => import('./components/EstoqueModule'));
@@ -71,6 +72,35 @@ const SUBMENUS_CADASTRO: { id: SubCadastro; label: string }[] = [
 // operador via as tres o tempo todo, como se fossem tres secoes de uma mesma
 // empresa. Sao empresas separadas: entra-se em uma, e o sistema inteiro passa
 // a falar dela.
+
+/**
+ * Aviso de que o tempo real caiu. Componente separado de propósito: o estado
+ * muda sozinho, e tê-lo dentro do AppInterno faria a árvore inteira —
+ * incluindo o PDV — re-renderizar a cada oscilação de rede.
+ *
+ * O que ele resolve: sem nada na tela, uma assinatura caída deixava o operador
+ * olhando dados velhos com cara de dados certos. Errar por falta de informação
+ * é aceitável; errar achando que se está informado, não. As telas
+ * ressincronizam sozinhas ao voltar (ver lib/realtime) — isto é só o aviso da
+ * janela em que ainda não voltaram.
+ */
+function AvisoConexao() {
+  const degradado = useRealtimeDegradado();
+  if (!degradado) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-4 left-4 z-[200] flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg border-2 pointer-events-none"
+      style={{ background: '#78350f', borderColor: '#f59e0b', color: '#fef3c7' }}
+    >
+      <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: '#f59e0b' }} />
+      <span className="text-[11px] font-black uppercase tracking-wider">
+        Sem tempo real — reconectando
+      </span>
+    </div>
+  );
+}
 
 function AppInterno() {
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
@@ -612,6 +642,8 @@ function AppInterno() {
           </AnimatePresence>
         </div>
       </main>
+
+      <AvisoConexao />
     </div>
   );
 }

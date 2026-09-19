@@ -772,7 +772,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       // Realtime não filtra por "contém"). Fica sem filtro — a tabela quase
       // não muda e não participa de venda.
       { tabela: 'user_profiles', aoMudar: recarregarTabela(() => Storage.getUsers(nichoFilter), setUsers) },
-    ]);
+    ], {
+      // Ver lib/realtime: evento perdido durante um corte não volta. Aqui são
+      // seis listas, e uma delas parada é um produto que some do cadastro sem
+      // motivo aparente.
+      aoRessincronizar: load,
+    });
 
     return () => { active = false; cancelar(); };
   }, []);
