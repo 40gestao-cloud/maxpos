@@ -16,8 +16,8 @@ PDV/Caixa · Cadastros · Estoque · Financeiro · Fiscal (simulado) · Fichas/E
    ```bash
    npm install
    ```
-2. Crie um projeto no Supabase e rode `supabase/schema.sql` no SQL Editor.
-3. Crie os usuários iniciais no painel **Authentication → Users** e ajuste seus cargos (instruções no final do `schema.sql`).
+2. Crie um projeto no Supabase e rode `supabase/schema.sql` no SQL Editor. Ele é gerado a partir do banco de produção e já traz tudo — tabelas, funções, RLS, policies, triggers, Realtime e o bucket das fotos. Não é preciso rodar nada de `supabase/patches/`, que é o histórico das decisões, não a receita de instalação.
+3. Crie os usuários iniciais no painel **Authentication → Users** e eleja o Admin Master (instruções no final do `schema.sql`).
 4. Copie `.env.example` para `.env` e preencha:
    ```
    VITE_SUPABASE_URL=...
