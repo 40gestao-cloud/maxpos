@@ -50,9 +50,20 @@ export default defineConfig(() => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            'vendor-pdf': ['jspdf', 'jspdf-autotable'],
-            'vendor-scanner': ['html5-qrcode'],
+          // Função, não objeto: no formato objeto o Rollup puxava para dentro
+          // de `vendor-pdf` o helper de import dinâmico do Vite (e para
+          // `vendor-scanner` um helper de CommonJS). Com as telas em
+          // React.lazy, o bundle principal precisa desse helper — e passava a
+          // pré-carregar os 412 KB do jsPDF na abertura do app só por causa
+          // dele. Aqui só o código dos próprios pacotes vai para cada chunk.
+          //
+          // O helper de preload precisa de chunk próprio mesmo assim: o jsPDF
+          // também faz import() dinâmico, e sem destino explícito o Rollup
+          // continuava pondo o helper junto dele.
+          manualChunks(id) {
+            if (id.includes('vite/preload-helper')) return 'vite-preload';
+            if (/node_modules[\\/](jspdf|jspdf-autotable)[\\/]/.test(id)) return 'vendor-pdf';
+            if (/node_modules[\\/]html5-qrcode[\\/]/.test(id)) return 'vendor-scanner';
           },
         },
       },
