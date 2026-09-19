@@ -11,6 +11,7 @@ import { explicarErro } from '../lib/erros';
 import { useToast } from './Toast';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { resizeImageToDataUrl } from '../lib/imageResize';
+import { ColarImagem } from './ColarImagem';
 
 // Chaves de localStorage que o RESET apaga. As de modulos ja removidos ficam
 // de proposito: o navegador de quem usou a versao antiga ainda guarda esses
@@ -151,22 +152,24 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
   // getSession() lê a cada login e a cada refresh de token — o operador ficava
   // esperando esse download antes de a tela abrir. 256 px cobre os 44x44 do
   // header com folga de retina.
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    // Sem isto, escolher o MESMO arquivo de novo não dispara o change.
+    e.target.value = '';
+    if (file) processarAvatar(file);
+  };
+
+  // Upload e Ctrl+V caem aqui.
+  const processarAvatar = async (file: File) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
       showAlert('Formato não suportado. Use JPG, PNG ou WEBP.');
-      e.target.value = '';
       return;
     }
     try {
       setAvatarPreview(await resizeImageToDataUrl(file, { maxLado: 256 }));
     } catch (err: any) {
       showAlert(explicarErro(err, 'ler a imagem'));
-    } finally {
-      // Sem isto, escolher o MESMO arquivo de novo não dispara o change.
-      e.target.value = '';
     }
   };
 
@@ -298,6 +301,8 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
                     <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
                   </label>
                 </div>
+
+                <ColarImagem onImagem={processarAvatar} />
 
                 <div className="text-center">
                   <h4 className="text-xl font-black text-gray-900">{user?.name}</h4>

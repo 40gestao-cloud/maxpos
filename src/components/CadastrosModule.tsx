@@ -20,6 +20,7 @@ import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
 import { formatarEnderecoLinha, formatarCEP, parseEnderecoColado, ROTULO_ENDERECO, type EnderecoCampos } from '../lib/endereco';
 import { comprimirImagemParaTeto, tamanhoDataUrl, IMAGEM_MAX_ENTRADA_BYTES, IMAGEM_MAX_ENTRADA_LABEL } from '../lib/imageResize';
 import { LIMITE_VITRINE } from './VitrineModule';
+import { ColarImagem } from './ColarImagem';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
@@ -130,10 +131,7 @@ function CampoFoto({
   const inputRef = useRef<HTMLInputElement>(null);
   const [processando, setProcessando] = useState(false);
 
-  const escolher = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const processar = async (file: File) => {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       onErro('Formato não suportado. Use JPG, PNG ou WEBP.');
       return;
@@ -146,6 +144,12 @@ function CampoFoto({
     } finally {
       setProcessando(false);
     }
+  };
+
+  const escolher = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) processar(file);
   };
 
   return (
@@ -162,6 +166,7 @@ function CampoFoto({
           >
             <Upload size={14} /> {processando ? 'Otimizando…' : image ? 'Trocar foto' : 'Escolher foto'}
           </button>
+          <ColarImagem onImagem={processar} disabled={processando} />
           {image && (
             <button
               type="button"
@@ -448,11 +453,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
   const [processandoImagem, setProcessandoImagem] = useState(false);
 
-  const handleProductImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // permite re-upload do mesmo arquivo
-    if (!file) return;
+    if (file) processarImagemProduto(file);
+  };
 
+  // Upload e Ctrl+V caem aqui: a imagem colada passa pela mesma redução.
+  const processarImagemProduto = async (file: File) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
       showAlert('Formato não suportado. Use JPG, PNG ou WEBP.');
@@ -3055,6 +3063,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       <Upload size={16} />
                       {processandoImagem ? 'OTIMIZANDO…' : formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
                     </button>
+                    <ColarImagem onImagem={processarImagemProduto} disabled={processandoImagem} />
                     {formData.image && (
                       <button
                         type="button"
@@ -3067,7 +3076,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   </div>
                   <p className="text-xs text-gray-600">
                     JPG, PNG ou WEBP de até <b>{IMAGEM_MAX_ENTRADA_LABEL}</b> — pode mandar a foto em boa qualidade,
-                    o sistema reduz sozinho antes de salvar. Sem imagem, o produto exibe um ícone padrão.
+                    o sistema reduz sozinho antes de salvar. Também dá para colar: no Google, abra a imagem, botão direito → <b>Copiar imagem</b> e Ctrl+V aqui. Sem imagem, o produto exibe um ícone padrão.
                   </p>
                 </div>
               </div>
