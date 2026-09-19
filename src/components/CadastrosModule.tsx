@@ -10,7 +10,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Client, User, UserRole, Category } from '../types';
 import { Storage } from '../lib/storage';
-import { assinarTabelas, semRemovidos, type Mudancas } from '../lib/realtime';
+import { assinarTabelas, semRemovidos, mesclarAlterados, porNome, type Mudancas } from '../lib/realtime';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
@@ -751,18 +751,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           if (!alterados.size) return;
           const linhas = await Storage.getProductsByIds([...alterados], nichoFilter);
           if (!active) return;
-          const frescos = new Map(linhas.map(p => [String(p.id), p]));
-          setProducts(prev => {
-            const conhecidos = new Set(prev.map(p => String(p.id)));
-            // Alterado que não voltou saiu da empresa (ou foi excluído no meio).
-            const lista = prev
-              .filter(p => !alterados.has(String(p.id)) || frescos.has(String(p.id)))
-              .map(p => frescos.get(String(p.id)) ?? p);
-            const novos = linhas.filter(p => !conhecidos.has(String(p.id)));
-            if (novos.length === 0) return lista;
-            return [...lista, ...novos].sort((a, b) =>
-              String(a.name ?? '').localeCompare(String(b.name ?? ''), 'pt-BR'));
-          });
+          setProducts(prev => mesclarAlterados(prev, linhas, alterados, porNome));
         },
       },
       { tabela: 'clients',   filtro: escopo, aoMudar: recarregarTabela(() => Storage.getClients(nichoFilter), setClients) },
