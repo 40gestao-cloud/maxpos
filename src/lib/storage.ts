@@ -347,7 +347,12 @@ export const Storage = {
    * sessão de quem chama (precisa enxergar as três empresas: Admin/CEO), e
    * cada troca fica na Auditoria em nome dessa pessoa.
    *
-   * Original preservado em `products_image_backup` (patch 2026-09-18b).
+   * A migração TERMINOU (as 61 fotos estão no bucket, nenhuma linha em base64)
+   * e a cópia dos originais, `products_image_backup`, foi apagada em
+   * 2026-09-19 — não há mais para onde voltar. A função fica porque continua
+   * correta e idempotente: serve para uma base recriada do zero, ou para o dia
+   * em que alguém importar produto com foto embutida. Sem linha `data:` para
+   * tocar, ela não faz nada.
    */
   migrarFotosProdutoParaStorage: async (): Promise<{ migradas: number; falhas: string[] }> => {
     const { data, error } = await supabase
@@ -799,10 +804,19 @@ export const Storage = {
     // Tenta buscar o profile. Se a query falhar (rede, cold-start,
     // RLS transitório), fazemos 1 retry curto — Ctrl+Shift+R hard reload
     // frequentemente cai na primeira request antes do cliente estar quente.
+    // Colunas explícitas, não `*`. Esta consulta está no caminho do boot e
+    // roda de novo a cada TOKEN_REFRESHED (de hora em hora, em todo terminal),
+    // então tudo que entrar na linha entra junto. Com `*`, uma coluna nova
+    // criada amanhã passa a ser baixada aqui sem ninguém decidir isso.
+    //
+    // `avatar` continua vindo porque é a foto do PRÓPRIO operador, no header.
+    // Ela é o peso real desta consulta (base64, ~40 KB depois do resize) e
+    // listar colunas não resolve isso — resolver é levá-la para o Storage, como
+    // já foi feito com a foto de produto (patch 2026-09-18b).
     const fetchProfile = async () => {
       return await supabase
         .from('user_profiles')
-        .select('*')
+        .select('name, role, avatar, parentId, lojas')
         .eq('id', session.user.id)
         .single();
     };
@@ -864,9 +878,10 @@ export const Storage = {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error || !data.session) return null;
 
+    // Mesmas colunas de getSession, pelo mesmo motivo.
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('*')
+      .select('name, role, avatar, parentId, lojas')
       .eq('id', data.user.id)
       .single();
 
