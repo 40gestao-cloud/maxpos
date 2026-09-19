@@ -11,13 +11,14 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon-maxpos.png', 'icon-maxpos-192.png', 'icon-maxpos-maskable.png'],
+        includeAssets: ['icon-maxpos.png', 'icon-maxpos-192.png', 'icon-maxpos-maskable.png', 'apple-touch-icon.png', 'favicon-32.png'],
         manifest: {
           name: 'MaxPOS ERP/PDV',
           short_name: 'MaxPOS',
           description: 'Sistema de Gestão e Ponto de Venda Moderno',
           theme_color: '#121212',
-          background_color: '#121212',
+          // Mesmo navy do fundo do icone: a splash do Android fica sem emenda.
+          background_color: '#021D55',
           display: 'standalone',
           orientation: 'portrait',
           icons: [
@@ -34,9 +35,9 @@ export default defineConfig(() => {
               purpose: 'any'
             },
             {
-              // Variante com safe zone: o logo ocupa 60% do quadro, deixando
-              // ~20% de margem de cada lado. O icone normal so tinha 3,7% e o
-              // Android recortava dentro do wordmark ao aplicar a mascara.
+              // Variante com safe zone: o logo ocupa ~62% do quadro sobre o
+              // mesmo navy do icone. No icone normal o wordmark vai quase de
+              // borda a borda e o Android o recortaria ao aplicar a mascara.
               src: 'icon-maxpos-maskable.png',
               sizes: '512x512',
               type: 'image/png',

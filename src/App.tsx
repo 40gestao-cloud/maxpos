@@ -370,8 +370,10 @@ function AppInterno() {
         <div className="h-[72px] px-5 flex items-center border-b-4" style={{ background: 'var(--navy)', borderColor: 'var(--accent)' }}>
           <div className="flex items-center justify-between gap-3 w-full">
             <div className="flex items-center gap-3 min-w-0">
+              {/* Versao de fundo branco: o icone oficial e navy e sumiria no
+                  navy desta barra. */}
               <div className="w-10 h-10 bg-white rounded p-1 overflow-hidden border-2 shrink-0" style={{ borderColor: 'var(--accent)' }}>
-                <img src="/icon-maxpos.png" alt="MaxPOS" className="w-full h-full object-contain" />
+                <img src="/logo-maxpos-branco.png" alt="MaxPOS" className="w-full h-full object-contain" />
               </div>
               <div className="min-w-0">
                 <h2 className="text-lg font-black text-white tracking-tight leading-none">MaxPOS</h2>

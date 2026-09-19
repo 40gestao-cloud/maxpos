@@ -32,7 +32,7 @@ export default function FilialSelector({
     <div className="min-h-screen flex flex-col" style={{ background: '#FFFFFF' }}>
       <header className="h-[72px] px-6 flex items-center justify-between border-b-4 shrink-0" style={{ borderColor: '#FFC107' }}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-white rounded p-1 border-2 shrink-0" style={{ borderColor: '#FFC107' }}>
+          <div className="w-10 h-10 rounded overflow-hidden border-2 shrink-0" style={{ borderColor: '#FFC107' }}>
             <img src="/icon-maxpos.png" alt="" className="w-full h-full object-contain" />
           </div>
           <div>

@@ -58,7 +58,7 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
             style={{ borderTopColor: NAVY_DARK }}
           >
             <div
-              className="w-32 h-32 bg-white rounded-xl p-3 border-2 flex items-center justify-center mb-4"
+              className="w-32 h-32 rounded-xl overflow-hidden border-2 flex items-center justify-center mb-4"
               style={{ borderColor: YELLOW }}
             >
               <img src="/icon-maxpos.png" alt="MaxPOS" className="max-w-full max-h-full object-contain" draggable={false} />

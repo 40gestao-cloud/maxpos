@@ -34,9 +34,9 @@ export function VitrineCarousel() {
     return () => clearInterval(t);
   }, [items.length]);
 
-  // Sem vitrine montada, a coluna mostra a marca — em TIPOGRAFIA, não com o
-  // PNG: icon-maxpos.png tem fundo branco chapado, e sobre o navy do login ele
-  // virava um quadrado branco lavado em vez de um logo.
+  // Sem vitrine montada, a coluna mostra a marca em tipografia discreta: o
+  // icon-maxpos.png já aparece no card de login ao lado, e repeti-lo aqui
+  // disputaria atenção com ele.
   if (!loaded || items.length === 0) {
     return (
       <div className="hidden md:flex flex-col items-center justify-center w-full h-full p-10 select-none" aria-hidden="true">
