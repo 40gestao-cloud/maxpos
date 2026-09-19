@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
@@ -15,12 +15,21 @@ import { useAlertDialog } from './ConfirmDialog';
 
 const DISMISSED_MOVES_KEY = 'estoque_dismissed_moves';
 
+// Vendas baixadas para a lista de "Movimentação Recente", que mostra 10 itens.
+// Folga para as que o usuário ocultou; o total de movimentações não depende
+// disto — vem contado do banco (resumoSaidasEstoque).
+const LIMITE_VENDAS_RECENTES = 100;
+
 export default function EstoqueModule() {
   const { showAlert, host: alertHost } = useAlertDialog();
   const { filialAtiva } = useFilial();
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  // Total de movimentações e quantas das ocultas valem nesta empresa. Antes
+  // saía de `sales.flatMap(items)` sobre TODAS as vendas, que era o motivo de
+  // a tela baixar o histórico inteiro.
+  const [saidas, setSaidas] = useState<{ total: number; ocultas: number } | null>(null);
   const [dismissedMoves, setDismissedMoves] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set();
     try {
@@ -48,6 +57,19 @@ export default function EstoqueModule() {
     persistDismissed(empty);
   };
 
+  // O Realtime chama a recontagem de dentro de um efeito que não reinicia a
+  // cada movimentação ocultada; o ref entrega o conjunto atual a ele.
+  const dismissedRef = useRef(dismissedMoves);
+  dismissedRef.current = dismissedMoves;
+
+  useEffect(() => {
+    let active = true;
+    Storage.resumoSaidasEstoque(filialAtiva ?? 'supermax', [...dismissedMoves])
+      .then(r => { if (active) setSaidas(r); })
+      .catch(err => { if (active) showAlert(`Não foi possível contar as movimentações: ${err?.message ?? 'falha'}`); });
+    return () => { active = false; };
+  }, [filialAtiva, dismissedMoves]);
+
   useEffect(() => {
     let active = true;
     const load = () =>
@@ -63,7 +85,7 @@ export default function EstoqueModule() {
       // problema era outro.
       Promise.allSettled([
         Storage.getProductsLite(filialAtiva ?? 'supermax'),
-        Storage.getSalesMovimentacao(filialAtiva ?? 'supermax'),
+        Storage.getSalesMovimentacao(filialAtiva ?? 'supermax', LIMITE_VENDAS_RECENTES),
       ])
         .then(([rp, rs]) => {
           if (!active) return;
@@ -100,9 +122,14 @@ export default function EstoqueModule() {
         filtro: escopo,
         aoMudar: async ({ alterados, removidos }) => {
           if (removidos.size) setSales(semRemovidos(removidos));
-          if (!alterados.size) return;
-          const lista = await Storage.getSalesMovimentacao(filialAtiva ?? 'supermax');
-          if (active) setSales(lista);
+          const loja = filialAtiva ?? 'supermax';
+          const [lista, contagem] = await Promise.all([
+            alterados.size ? Storage.getSalesMovimentacao(loja, LIMITE_VENDAS_RECENTES) : null,
+            Storage.resumoSaidasEstoque(loja, [...dismissedRef.current]),
+          ]);
+          if (!active) return;
+          if (lista) setSales(lista);
+          setSaidas(contagem);
         },
       },
     ]);
@@ -142,7 +169,11 @@ export default function EstoqueModule() {
     );
   const visibleMoves = allMoves.filter(m => !dismissedMoves.has(m.key));
   const recentMoves = visibleMoves.slice(0, 10);
-  const dismissedCount = allMoves.length - visibleMoves.length;
+  // Os dois números agora vêm do banco: `allMoves` só cobre as vendas
+  // recentes, e contar em cima dele subestimaria assim que o histórico
+  // passasse do recorte.
+  const dismissedCount = saidas?.ocultas ?? 0;
+  const totalMovimentacoes = saidas ? saidas.total - saidas.ocultas : null;
 
   // `skelW` = largura da barra enquanto carrega, proxima do valor final pra
   // o card nao pular de tamanho quando o dado chega.
@@ -153,7 +184,7 @@ export default function EstoqueModule() {
     // tela e o mais difícil de ler. --accent-text é o mesmo dourado, escuro o
     // suficiente pra se ler (~4.6:1).
     { label: 'Valor Total', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, accent: 'var(--navy)', desc: 'Total investido', tint: 'var(--accent-text)' },
-    { label: 'Movimentações', value: visibleMoves.length.toString(), skelW: '3rem', icon: TrendingUp, accent: 'var(--navy)', desc: 'Saídas registradas' },
+    { label: 'Movimentações', value: totalMovimentacoes?.toString() ?? '…', skelW: '3rem', icon: TrendingUp, accent: 'var(--navy)', desc: 'Saídas registradas' },
     { label: 'Total de Itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, accent: 'var(--navy)', desc: 'Unidades em estoque' },
   ] as Array<{ label: string; value: string; skelW: string; icon: any; accent: string; desc: string; tint?: string }>;
 

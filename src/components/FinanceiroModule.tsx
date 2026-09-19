@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   DollarSign, ArrowUpCircle, ArrowDownCircle, CreditCard, History,
   Printer, Plus, X, Search, Filter, Calendar, Trash2, CheckCircle2,
@@ -45,6 +45,11 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
   });
 }
 
+// Vendas baixadas para o "Fluxo de Caixa Recente", que mostra 20. A folga
+// cobre as ocultadas e as que o filtro de status/tipo esconde. Os cartões do
+// topo não dependem disto: vêm somados do banco (Storage.resumoVendas).
+const LIMITE_VENDAS_LISTA = 200;
+
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function FinanceiroModule() {
@@ -52,6 +57,10 @@ export default function FinanceiroModule() {
   const { showAlert, host: alertHost } = useAlertDialog();
   const { filialAtiva } = useFilial();
   const [sales, setSales] = useState<Sale[]>([]);
+  // Total vendas e Ticket médio, somados no banco desde o início e já sem as
+  // vendas ocultadas. Antes saíam de `sales`, e era por isso que a tela
+  // baixava o histórico inteiro com itens e pagamentos.
+  const [resumo, setResumo] = useState<{ total: number; quantidade: number } | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -102,13 +111,51 @@ export default function FinanceiroModule() {
     persistDismissedFlow(empty);
   };
 
+  // O Realtime roda dentro de um efeito que só reinicia ao trocar de empresa;
+  // os refs entregam a ele o filtro de datas e as ocultas atuais.
+  const filtrosRef = useRef(filters);
+  filtrosRef.current = filters;
+  const dismissedFlowRef = useRef(dismissedFlow);
+  dismissedFlowRef.current = dismissedFlow;
+
+  const buscarVendasDaLista = (loja: Sale['pdvMode']) =>
+    Storage.getSalesRecorte(loja, {
+      limite: LIMITE_VENDAS_LISTA,
+      de: filtrosRef.current.startDate || undefined,
+      ate: filtrosRef.current.endDate || undefined,
+    });
+
+  const idsDeVendaOcultos = (set: Set<string>) =>
+    [...set].filter(k => k.startsWith('sale-')).map(k => k.slice('sale-'.length));
+
+  useEffect(() => {
+    let active = true;
+    Storage.resumoVendas(filialAtiva ?? 'supermax', idsDeVendaOcultos(dismissedFlow))
+      .then(r => { if (active) setResumo(r); })
+      .catch(err => { if (active) showAlert(`Não foi possível somar as vendas: ${err?.message ?? 'falha'}`); });
+    return () => { active = false; };
+  }, [filialAtiva, dismissedFlow]);
+
+  // Filtro de datas: a lista busca o PERÍODO no servidor. Sem isto, filtrar um
+  // mês antigo mostraria lista vazia — o recorte recente não chega lá. O
+  // primeiro disparo é pulado porque a carga inicial abaixo já busca.
+  const filtroMontado = useRef(false);
+  useEffect(() => {
+    if (!filtroMontado.current) { filtroMontado.current = true; return; }
+    let active = true;
+    buscarVendasDaLista(filialAtiva ?? 'supermax')
+      .then(lista => { if (active) setSales(lista); })
+      .catch(err => { if (active) showAlert(`Não foi possível filtrar as vendas: ${err?.message ?? 'falha'}`); });
+    return () => { active = false; };
+  }, [filters.startDate, filters.endDate]);
+
   useEffect(() => {
     let active = true;
     const load = () =>
       // Ver o comentario em EstoqueModule: `Promise.all` + catch vazio faz uma
       // falha unica apagar a tela toda, sem dizer nada.
       Promise.allSettled([
-        Storage.getSales(filialAtiva ?? 'supermax'),
+        buscarVendasDaLista(filialAtiva ?? 'supermax'),
         Storage.getAccounts(filialAtiva ?? 'supermax'),
       ])
         .then(([rs, ra]) => {
@@ -135,9 +182,13 @@ export default function FinanceiroModule() {
         filtro: escopo,
         aoMudar: async ({ alterados, removidos }) => {
           if (removidos.size) setSales(semRemovidos(removidos));
-          if (!alterados.size) return;
-          const lista = await Storage.getSales(loja);
-          if (active) setSales(lista);
+          const [lista, soma] = await Promise.all([
+            alterados.size ? buscarVendasDaLista(loja) : null,
+            Storage.resumoVendas(loja, idsDeVendaOcultos(dismissedFlowRef.current)),
+          ]);
+          if (!active) return;
+          if (lista) setSales(lista);
+          setResumo(soma);
         },
       },
       {
@@ -228,10 +279,9 @@ export default function FinanceiroModule() {
   // e fica como rede de seguranca barata.
   const vendas = sales.filter(s => ((s as any).pdvMode ?? 'supermax') === filialAtiva);
 
-  const visibleSalesForStats = vendas.filter(s => !dismissedFlow.has(`sale-${s.id}`));
   const visibleAccountsForStats = accounts.filter(a => !dismissedFlow.has(`acc-${a.id}`));
 
-  const totalSales = visibleSalesForStats.reduce((acc, s) => acc + s.total, 0);
+  const totalSales = resumo?.total ?? 0;
   const totalReceivable = visibleAccountsForStats
     .filter(a => a.type === 'receivable' && a.status === 'pending')
     .reduce((acc, a) => acc + a.amount, 0);
@@ -240,13 +290,25 @@ export default function FinanceiroModule() {
     .reduce((acc, a) => acc + a.amount, 0);
 
   const handlePrintReport = async () => {
-    if (accounts.length === 0 && vendas.length === 0) {
+    if (accounts.length === 0 && !resumo?.quantidade) {
       showAlert('Nenhuma movimentação/conta para gerar relatório.');
       return;
     }
 
+    // O relatório detalha o histórico INTEIRO, como sempre fez. A tela só
+    // guarda o recorte recente, então a lista completa é buscada aqui, no
+    // clique — o custo de baixar tudo fica com quem pediu o PDF, não com cada
+    // abertura da tela.
+    let vendasRelatorio: Sale[];
+    try {
+      vendasRelatorio = await Storage.getSales(filialAtiva ?? 'supermax');
+    } catch (err: any) {
+      showAlert(explicarErro(err, 'buscar as vendas do relatório'));
+      return;
+    }
+
     // Pré-carrega parcelas de todas as vendas a crédito parcelado
-    const creditSales = vendas.filter(s => getCreditPayment(s));
+    const creditSales = vendasRelatorio.filter(s => getCreditPayment(s));
     const missing = creditSales.filter(s => !installmentsMap[s.id]);
     let fullMap = { ...installmentsMap };
 
@@ -268,7 +330,7 @@ export default function FinanceiroModule() {
       setInstallmentsMap(fullMap);
     }
 
-    PDFReport.generateFinancialReport(accounts, vendas, fullMap, FILIAL_META[filialAtiva ?? 'supermax'].label);
+    PDFReport.generateFinancialReport(accounts, vendasRelatorio, fullMap, FILIAL_META[filialAtiva ?? 'supermax'].label);
   };
 
   const handleAddAccount = async () => {
@@ -304,7 +366,7 @@ export default function FinanceiroModule() {
     { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, cor: 'var(--money)', icon: DollarSign },
     { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, cor: '#2563eb', icon: ArrowUpCircle },
     { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, cor: 'var(--danger)', icon: ArrowDownCircle },
-    { label: 'Ticket Médio', value: `R$ ${visibleSalesForStats.length ? (totalSales / visibleSalesForStats.length).toFixed(2) : '0.00'}`, cor: 'var(--accent-text)', icon: CreditCard },
+    { label: 'Ticket Médio', value: `R$ ${resumo?.quantidade ? (totalSales / resumo.quantidade).toFixed(2) : '0.00'}`, cor: 'var(--accent-text)', icon: CreditCard },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };

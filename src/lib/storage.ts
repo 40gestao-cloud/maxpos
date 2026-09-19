@@ -483,12 +483,60 @@ export const Storage = {
   // quantidade (a "movimentação"). getSales traz as três tabelas com todas as
   // colunas — pagamento, custo, EAN, campos de nicho — e o Estoque não usa
   // nenhuma. Como a tela recarrega a cada venda, é o payload que mais se repete.
-  getSalesMovimentacao: async (pdvMode?: Sale['pdvMode']): Promise<Sale[]> => {
+  // Só as `limite` vendas mais recentes: a tela mostra as 10 últimas
+  // movimentações, e o total de "Movimentações" vem de resumoSaidasEstoque.
+  getSalesMovimentacao: async (pdvMode: Sale['pdvMode'], limite: number): Promise<Sale[]> => {
     const q = escopoFilial(
       supabase.from('sales').select('id, date, total, status, pdv_mode, sale_items(name, quantity)'), pdvMode);
-    const { data, error } = await q.order('date', { ascending: false });
+    const { data, error } = await q.order('date', { ascending: false }).limit(limite);
     if (error) throw error;
     return (data ?? []).map(mapSaleRow);
+  },
+
+  // Recorte da lista de vendas do Financeiro. Sem período, as mais recentes;
+  // com período (o filtro de datas da tela), as desse intervalo — senão
+  // filtrar um mês antigo mostraria lista vazia, porque o recorte recente não
+  // chega lá. `ate` é inclusivo, como no filtro da tela: vai até o fim do dia.
+  getSalesRecorte: async (
+    pdvMode: Sale['pdvMode'],
+    opts: { limite: number; de?: string; ate?: string },
+  ): Promise<Sale[]> => {
+    let q = escopoFilial(
+      supabase.from('sales').select('*, sale_items(*), sale_payments(*)'), pdvMode);
+    if (opts.de) q = q.gte('date', opts.de);
+    if (opts.ate) {
+      const fim = new Date(`${opts.ate}T00:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      q = q.lt('date', fim.toISOString());
+    }
+    const { data, error } = await q.order('date', { ascending: false }).limit(opts.limite);
+    if (error) throw error;
+    return (data ?? []).map(mapSaleRow);
+  },
+
+  // Cartões do Financeiro somados no banco (patch 2026-09-18c): desde o
+  // início, menos as vendas ocultadas na tela. Nenhuma venda trafega.
+  resumoVendas: async (
+    pdvMode: Sale['pdvMode'],
+    ocultas: string[],
+  ): Promise<{ total: number; quantidade: number }> => {
+    const { data, error } = await supabase.rpc('resumo_vendas', { p_pdv_mode: pdvMode, p_ocultas: ocultas });
+    if (error) throw error;
+    const r = (data as any[])?.[0] ?? {};
+    return { total: Number(r.total ?? 0), quantidade: Number(r.quantidade ?? 0) };
+  },
+
+  // "Movimentações" do Estoque contada no banco. `ocultas` são as chaves
+  // `<venda>-<posição>` que a tela guarda; volta quantas delas valem nesta
+  // empresa, que é o número do botão "restaurar".
+  resumoSaidasEstoque: async (
+    pdvMode: Sale['pdvMode'],
+    ocultas: string[],
+  ): Promise<{ total: number; ocultas: number }> => {
+    const { data, error } = await supabase.rpc('resumo_saidas_estoque', { p_pdv_mode: pdvMode, p_ocultas: ocultas });
+    if (error) throw error;
+    const r = (data as any[])?.[0] ?? {};
+    return { total: Number(r.total ?? 0), ocultas: Number(r.ocultas ?? 0) };
   },
 
   // saveSale foi REMOVIDA em 2026-09-01.
