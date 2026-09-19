@@ -116,6 +116,8 @@ export interface AlertOptions {
   title?: string;
   message: string | ReactNode;
   variant?: AlertVariant;
+  /** Roda quando o usuário fecha o aviso — para o que só pode vir depois de lido. */
+  onClose?: () => void;
 }
 
 const ALERT_STYLE: Record<AlertVariant, {
@@ -196,7 +198,7 @@ export function useAlertDialog() {
       setAlert(a);
     }
   };
-  const host = <AlertDialogHost alert={alert} onClose={() => setAlert(null)} />;
+  const host = <AlertDialogHost alert={alert} onClose={() => { const depois = alert?.onClose; setAlert(null); depois?.(); }} />;
   return { showAlert, host };
 }
 

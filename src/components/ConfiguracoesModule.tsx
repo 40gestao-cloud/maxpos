@@ -92,7 +92,10 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
   // Auditoria e leitura de rastro de quem fez o que — cabe a gestao, nao ao
   // Operador de Caixa, que apareceria no proprio log.
   const canAudit = user?.role === 'admin_master' || user?.role === 'ceo';
-  const canFactoryReset = canAudit;
+  // Só o Admin Master: é a regra do banco (`factory_reset` exige nível 100).
+  // Com `canAudit` o botão aparecia para o CEO e sempre terminava em erro.
+  const canFactoryReset = user?.role === 'admin_master';
+  const empresaReset = FILIAL_META[filialAtiva ?? 'supermax'].label;
 
   const loadAudit = async () => {
     setAuditLoading(true);
@@ -195,11 +198,28 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     if (resetConfirmText !== 'APAGAR') return;
     setResetting(true);
     try {
-      const { error } = await supabase.rpc('factory_reset');
+      // Zera SÓ a empresa da sessão, e devolve ao estoque (e ao saldo de fiado)
+      // o que as vendas dela tinham baixado — patch 2026-09-18d.
+      const { data, error } = await supabase.rpc('factory_reset', { p_pdv_mode: filialAtiva ?? 'supermax' });
       if (error) throw error;
       DATA_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
-      showAlert('Reset concluído. Todos os dados operacionais foram apagados. A página será recarregada.');
-      window.location.reload();
+      const r = (data ?? {}) as Record<string, number>;
+      const un = Number(r.unidades_devolvidas ?? 0);
+      setResetModalOpen(false);
+      setResetConfirmText('');
+      setResetting(false);
+      // O reload espera o aviso ser fechado: antes ele vinha logo em seguida
+      // ao showAlert, e o resumo sumia antes de alguém conseguir ler.
+      showAlert({
+        variant: 'success',
+        onClose: () => window.location.reload(),
+        title: `${empresaReset} zerada`,
+        message:
+          `${r.vendas ?? 0} venda(s) e ${r.caixas ?? 0} caixa(s) apagados. ` +
+          `${un.toLocaleString('pt-BR')} unidade(s) voltaram ao estoque de ${r.produtos_ajustados ?? 0} produto(s)` +
+          `${r.clientes_ajustados ? `, e o fiado de ${r.clientes_ajustados} cliente(s) foi devolvido` : ''}. ` +
+          'As outras empresas não foram tocadas. Ao fechar este aviso, a página será recarregada.',
+      });
     } catch (err: any) {
       showAlert(explicarErro(err, 'executar o reset'));
       setResetting(false);
@@ -303,18 +323,18 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
               </h3>
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div className="max-w-2xl">
-                  <p className="text-sm font-bold text-gray-900 mb-1">Apagar todos os dados operacionais</p>
+                  <p className="text-sm font-bold text-gray-900 mb-1">Zerar o movimento da {empresaReset}</p>
                   <p className="text-xs text-gray-600 leading-relaxed">
-                    Remove <b>permanentemente</b> vendas, produtos, clientes, fornecedores, serviços, contas,
-                    agendamentos, fichas e PIX pendentes. Os membros da equipe (login/perfis) <b>são preservados</b>.
-                    Esta ação não pode ser desfeita.
+                    Apaga <b>permanentemente</b> as vendas, os caixas e os PIX/cartões pendentes <b>só da {empresaReset}</b>,
+                    e devolve ao estoque tudo o que essas vendas tinham baixado. Cadastros, contas, equipe e as
+                    outras empresas <b>não são tocados</b>. Esta ação não pode ser desfeita.
                   </p>
                 </div>
                 <button
                   onClick={() => setResetModalOpen(true)}
                   className="shrink-0 bg-red-600 hover:bg-red-700 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 uppercase text-xs tracking-widest active:scale-95 transition-all"
                 >
-                  <Trash2 size={16} /> Apagar Dados
+                  <Trash2 size={16} /> Zerar {empresaReset}
                 </button>
               </div>
             </div>
@@ -501,7 +521,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
                 <div className="p-2 bg-red-100 rounded-lg">
                   <AlertTriangle className="text-red-600" size={22} />
                 </div>
-                <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Confirmar Reset Total</h3>
+                <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Zerar {empresaReset}</h3>
               </div>
               <button onClick={closeResetModal} disabled={resetting} className="text-gray-400 hover:text-gray-700 disabled:opacity-30">
                 <X size={20} />
@@ -509,15 +529,18 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
             </div>
 
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-900 space-y-1">
-              <p className="font-bold">Esta ação apagará permanentemente:</p>
+              <p className="font-bold">Da {empresaReset}, esta ação apagará permanentemente:</p>
               <ul className="text-xs list-disc list-inside space-y-0.5 ml-1">
-                <li>Todas as vendas, itens e pagamentos</li>
-                <li>Todos os produtos cadastrados</li>
-                <li>Todos os clientes e fornecedores</li>
-                <li>Todos os serviços, contas, agendamentos e fichas</li>
-                <li>Parcelas de crédito e PIX pendentes</li>
+                <li>Todas as vendas, itens, pagamentos e parcelas</li>
+                <li>Todos os caixas, sangrias e suprimentos</li>
+                <li>PIX e cartões pendentes</li>
               </ul>
-              <p className="font-bold pt-2">Membros da equipe e logins serão preservados.</p>
+              <p className="font-bold pt-2">E vai devolver:</p>
+              <ul className="text-xs list-disc list-inside space-y-0.5 ml-1">
+                <li>Ao estoque, as unidades que essas vendas baixaram</li>
+                <li>Ao saldo dos clientes, o fiado dessas vendas</li>
+              </ul>
+              <p className="font-bold pt-2">Produtos, clientes, contas, equipe e as outras empresas ficam como estão.</p>
             </div>
 
             <div className="space-y-2">
@@ -556,7 +579,7 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
                     APAGANDO...
                   </>
                 ) : (
-                  <><Trash2 size={14} /> Apagar Tudo</>
+                  <><Trash2 size={14} /> Zerar {empresaReset}</>
                 )}
               </button>
             </div>
