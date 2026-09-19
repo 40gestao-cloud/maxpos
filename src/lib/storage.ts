@@ -122,6 +122,66 @@ async function enviarFotoProduto(dataUrl: string, pdvMode: string, productId: st
   return `${data.publicUrl}?v=${Date.now()}`;
 }
 
+// ─── Foto de cliente e de fornecedor no Storage ──────────────
+// Bucket PRIVADO e restrito por empresa — na leitura também, ao contrário do
+// de produto. Produto é catálogo e a vitrine é pública; isto é dado de pessoa,
+// e quem opera a MaxLook não tem o que fazer com a foto de um cliente do
+// SuperMax.
+//
+// A coluna `image` guarda o CAMINHO (`<empresa>/<tipo>/<id>`). Como a lista de
+// clientes é carregada na abertura de TODO PDV, as URLs são assinadas em LOTE:
+// uma ida ao servidor para a lista inteira, não uma por pessoa.
+const BUCKET_CADASTROS = 'cadastros';
+type TipoCadastro = 'clientes' | 'fornecedores';
+
+const caminhoFotoCadastro = (pdvMode: string, tipo: TipoCadastro, id: string) =>
+  `${pdvMode}/${tipo}/${id}`;
+
+async function enviarFotoCadastro(
+  dataUrl: string, pdvMode: string, tipo: TipoCadastro, id: string,
+): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const caminho = caminhoFotoCadastro(pdvMode, tipo, id);
+  const { error } = await supabase.storage
+    .from(BUCKET_CADASTROS)
+    .upload(caminho, blob, { upsert: true, contentType: blob.type, cacheControl: '3600' });
+  if (error) throw error;
+  return caminho;
+}
+
+/**
+ * Troca os caminhos por URLs assinadas, numa consulta só para a lista inteira.
+ *
+ * Valor legado (base64 `data:` ou URL `http`) passa direto — foi assim que as
+ * três fotos de fornecedor que existiam continuaram aparecendo enquanto a
+ * migração não rodava, e é o que salva quem importar um dump antigo.
+ */
+async function resolverFotosCadastro<T extends { image?: string }>(linhas: T[]): Promise<T[]> {
+  const caminhos = [...new Set(
+    linhas
+      .map(l => l.image)
+      .filter((v): v is string => !!v && !v.startsWith('data:') && !v.startsWith('http')),
+  )];
+  if (caminhos.length === 0) return linhas;
+
+  const { data, error } = await supabase.storage
+    .from(BUCKET_CADASTROS)
+    .createSignedUrls(caminhos, 3600);
+  if (error) {
+    // Degrade certo: a lista aparece sem foto em vez de não aparecer.
+    console.warn('[resolverFotosCadastro] não foi possível assinar as URLs', error);
+    return linhas.map(l => (l.image && !l.image.startsWith('data:') && !l.image.startsWith('http'))
+      ? { ...l, image: undefined } : l);
+  }
+  const mapa = new Map((data ?? []).map((d: any) => [d.path, d.signedUrl]));
+  return linhas.map(l => (l.image && mapa.has(l.image))
+    ? { ...l, image: mapa.get(l.image) as string } : l);
+}
+
+/** Caminho no bucket a partir do que está gravado; null se não for do Storage. */
+const caminhoDaFotoCadastro = (valor?: string | null): string | null =>
+  (valor && !valor.startsWith('data:') && !valor.startsWith('http')) ? valor : null;
+
 // ─── Foto de perfil no Supabase Storage ──────────────────────
 // Mesma ideia da foto de produto, com UMA diferença que muda tudo: o bucket é
 // PRIVADO. `produtos` é público porque a vitrine da tela de login mostra
@@ -427,27 +487,85 @@ export const Storage = {
     return { migradas, falhas };
   },
 
+  /**
+   * Migração única das fotos de cliente e fornecedor que ainda estão em base64.
+   * Idempotente — só toca linha que começa com `data:`, então pode rodar de
+   * novo se parar no meio. Mesmo desenho de `migrarFotosProdutoParaStorage`.
+   *
+   * Não houve tabela de backup desta vez: eram 3 fotos, 25 kB no total, e a
+   * função é reversível na prática (o original continua na linha até o UPDATE
+   * dar certo, porque o arquivo sobe primeiro).
+   */
+  migrarFotosCadastroParaStorage: async (): Promise<{ migradas: number; falhas: string[] }> => {
+    let migradas = 0;
+    const falhas: string[] = [];
+    for (const [tabela, tipo] of [['clients', 'clientes'], ['suppliers', 'fornecedores']] as const) {
+      const { data, error } = await supabase
+        .from(tabela)
+        .select('id, pdv_mode, image')
+        .like('image', 'data:%');
+      if (error) throw error;
+      for (const linha of (data ?? []) as any[]) {
+        try {
+          const caminho = await enviarFotoCadastro(
+            linha.image, linha.pdv_mode ?? 'supermax', tipo, linha.id);
+          // Só troca se ainda estiver em base64: se alguém salvou foto nova no
+          // meio da migração, ela já virou caminho e não é sobrescrita.
+          const { error: e } = await supabase.from(tabela)
+            .update({ image: caminho }).eq('id', linha.id).like('image', 'data:%');
+          if (e) throw e;
+          migradas++;
+        } catch (err: any) {
+          falhas.push(`${tabela}/${linha.id}: ${err?.message ?? err}`);
+        }
+      }
+    }
+    return { migradas, falhas };
+  },
+
   // ─── Clientes ────────────────────────────────────────────
   getClients: async (pdvMode?: Client['pdvMode']): Promise<Client[]> => {
     const q = escopoFilial(supabase.from('clients').select('*'), pdvMode);
     const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+    const linhas = (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
       pdvMode: pdv_mode ?? 'supermax',
     })) as Client[];
+    // Uma assinatura em lote para a lista toda. Esta leitura roda na abertura
+    // de todo PDV, então uma requisição por cliente seria caro na turma.
+    return resolverFotosCadastro(linhas);
   },
 
   upsertClient: async (client: Client): Promise<void> => {
     const { created_at, pdvMode, ...row } = client as any;
     (row as any).pdv_mode = pdvMode ?? 'supermax';
+    // Foto nova chega como data URL (é o que o preview usa) e vira arquivo só
+    // aqui, no salvar — subir na escolha deixaria órfão a cada desistência.
+    if (typeof row.image === 'string' && row.image.startsWith('data:')) {
+      row.image = await enviarFotoCadastro(row.image, row.pdv_mode, 'clientes', row.id);
+    } else if (!row.image) {
+      supabase.storage.from(BUCKET_CADASTROS)
+        .remove([caminhoFotoCadastro(row.pdv_mode, 'clientes', row.id)])
+        .catch(() => {});
+    } else if (row.image.startsWith('http')) {
+      // URL assinada lida na própria tela: NÃO regravar, senão a coluna passa a
+      // guardar uma URL que expira em uma hora. Volta a ser o caminho.
+      row.image = caminhoFotoCadastro(row.pdv_mode, 'clientes', row.id);
+    }
     const { error } = await supabase.from('clients').upsert(row);
     if (error) throw error;
   },
 
   deleteClient: async (id: string): Promise<void> => {
+    const { data: antes } = await supabase.from('clients')
+      .select('image').eq('id', id).maybeSingle();
     const { error } = await supabase.from('clients').delete().eq('id', id);
     if (error) throw error;
+    const caminho = caminhoDaFotoCadastro((antes as any)?.image);
+    if (caminho) {
+      supabase.storage.from(BUCKET_CADASTROS).remove([caminho]).catch(() => {});
+    }
   },
 
   // ─── Fornecedores ────────────────────────────────────────
@@ -455,22 +573,39 @@ export const Storage = {
     const q = escopoFilial(supabase.from('suppliers').select('*'), pdvMode);
     const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+    const linhas = (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
       pdvMode: pdv_mode ?? 'supermax',
     }));
+    return resolverFotosCadastro(linhas);
   },
 
+  // Espelho exato de upsertClient — ver os porquês lá.
   upsertSupplier: async (supplier: any): Promise<void> => {
     const { created_at, pdvMode, ...row } = supplier;
     (row as any).pdv_mode = pdvMode ?? 'supermax';
+    if (typeof row.image === 'string' && row.image.startsWith('data:')) {
+      row.image = await enviarFotoCadastro(row.image, row.pdv_mode, 'fornecedores', row.id);
+    } else if (!row.image) {
+      supabase.storage.from(BUCKET_CADASTROS)
+        .remove([caminhoFotoCadastro(row.pdv_mode, 'fornecedores', row.id)])
+        .catch(() => {});
+    } else if (row.image.startsWith('http')) {
+      row.image = caminhoFotoCadastro(row.pdv_mode, 'fornecedores', row.id);
+    }
     const { error } = await supabase.from('suppliers').upsert(row);
     if (error) throw error;
   },
 
   deleteSupplier: async (id: string): Promise<void> => {
+    const { data: antes } = await supabase.from('suppliers')
+      .select('image').eq('id', id).maybeSingle();
     const { error } = await supabase.from('suppliers').delete().eq('id', id);
     if (error) throw error;
+    const caminho = caminhoDaFotoCadastro((antes as any)?.image);
+    if (caminho) {
+      supabase.storage.from(BUCKET_CADASTROS).remove([caminho]).catch(() => {});
+    }
   },
 
   // ─── Serviços ────────────────────────────────────────────
