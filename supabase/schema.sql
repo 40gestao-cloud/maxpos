@@ -183,9 +183,11 @@ CREATE TABLE IF NOT EXISTS public.categories (
   id text NOT NULL,
   name text NOT NULL,
   color text,
-  pdv_mode text,
+  pdv_mode text DEFAULT 'supermax'::text NOT NULL,
   active boolean DEFAULT true NOT NULL,
-  created_at timestamp with time zone DEFAULT now()
+  created_at timestamp with time zone DEFAULT now(),
+  image text,
+  markup_alvo numeric(6,2)
 );
 
 CREATE TABLE IF NOT EXISTS public.clients (
@@ -527,7 +529,9 @@ ALTER TABLE public.cash_sessions ADD COLUMN IF NOT EXISTS pdv_mode text DEFAULT 
 ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS id text;
 ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS name text;
 ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS color text;
-ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS pdv_mode text;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS pdv_mode text DEFAULT 'supermax'::text;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS image text;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS markup_alvo numeric(6,2);
 ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS active boolean DEFAULT true;
 ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
 ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS id text;
@@ -771,6 +775,14 @@ DO $do$ BEGIN
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
   ALTER TABLE public.categories ADD CONSTRAINT categories_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
+DO $do$ BEGIN
+  ALTER TABLE public.categories ADD CONSTRAINT categories_pdv_mode_check
+    CHECK (pdv_mode = ANY (ARRAY['supermax'::text, 'maxlook'::text, 'techmax'::text]));
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
+DO $do$ BEGIN
+  ALTER TABLE public.categories ADD CONSTRAINT categories_markup_alvo_check
+    CHECK (markup_alvo IS NULL OR markup_alvo >= 0);
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
   ALTER TABLE public.clients ADD CONSTRAINT clients_pkey PRIMARY KEY (id);
@@ -3772,7 +3784,7 @@ CREATE POLICY cadastros_fotos_insert ON storage.objects FOR INSERT TO authentica
   WITH CHECK (
     bucket_id = 'cadastros'
     AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
-    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores'])
+    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores','categorias'])
     AND (
       (select public.vejo_todas_as_lojas())
       OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
@@ -3789,7 +3801,7 @@ CREATE POLICY cadastros_fotos_update ON storage.objects FOR UPDATE TO authentica
   WITH CHECK (
     bucket_id = 'cadastros'
     AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
-    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores'])
+    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores','categorias'])
     AND (
       (select public.vejo_todas_as_lojas())
       OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
