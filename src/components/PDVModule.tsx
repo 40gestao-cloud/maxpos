@@ -15,6 +15,7 @@ import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
 import { buscarProdutos, separarQtdETermo, chaveCategoria } from '../lib/produtoBusca';
 import { explicarErro } from '../lib/erros';
 import { assinarTabelas } from '../lib/realtime';
+import { useCobrancaPendente } from '../lib/cobrancaPendente';
 import TrainingCoach, { CoachPDVState } from './TrainingCoach';
 import { ProdutoDetalheModal } from './ProdutoDetalheModal';
 
@@ -3306,64 +3307,51 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setPixModalOpen(false);
   };
 
-  // Realtime: ouve quando o MaxBank atualiza o PIX para 'pago' e auto-confirma
-  useEffect(() => {
-    if (!pixModalOpen || !pixUuid) return;
-    if (isTraining) return;
-    const channel = supabase
-      .channel(`pix-${pixUuid}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'pix_pendentes', filter: `id=eq.${pixUuid}` },
-        (payload) => {
-          const status = (payload.new as any)?.status;
-          if (status === 'pago' && !pixConfirmedRef.current.has(pixUuid)) {
-            pixConfirmedRef.current.add(pixUuid);
-            setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
-            setPartialAmount('');
-            setPixModalOpen(false);
-            // Fix #10 — mostra o flash "PIX RECEBIDO" por 1,2s antes do auto-finalize
-            setPixConfirmedFlash(true);
-            setTimeout(() => {
-              setPixConfirmedFlash(false);
-              setPixAutoFinalize(true);
-            }, 1200);
-          }
-        }
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [pixModalOpen, pixUuid, pixAmount, isTraining]);
+  // PIX e cartão esperam a mesma coisa — uma linha virar "paga" por obra de
+  // outro sistema — e antes cada um tinha seu próprio listener, quase idêntico
+  // (o comentário do cartão dizia "espelho do listener Pix"). Agora os dois
+  // passam por `useCobrancaPendente`, que além de escutar em tempo real CONFERE
+  // a linha de tempos em tempos. Ver lib/cobrancaPendente: o canal podia cair
+  // sem avisar, e o caixa ficava olhando "aguardando" para sempre enquanto o
+  // dinheiro já tinha entrado.
+  const cobrancaPix = (!isTraining && pixModalOpen && pixUuid)
+    ? { tabela: 'pix_pendentes' as const, id: pixUuid, statusFinal: 'pago' }
+    : null;
 
-  // Realtime cartão: espelho do listener Pix acima, mas cartão no
-  // ecossistema LogMax transita pra 'autorizado' (não 'pago'), tanto via
-  // MaxPay/MaxBank operador (autorizar_cartao_maxbank) quanto via visitante
-  // (confirmar_cartao_pendente). Pegamos o UPDATE, gravamos o Payment e
-  // disparamos o auto-finalize (finalize_sale_atomic). Botão PAGAMENTO
-  // RECEBIDO segue como fallback manual em rede ruim.
+  const { aoVivo: pixAoVivo } = useCobrancaPendente(cobrancaPix, () => {
+    if (pixConfirmedRef.current.has(pixUuid)) return;
+    pixConfirmedRef.current.add(pixUuid);
+    setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
+    setPartialAmount('');
+    setPixModalOpen(false);
+    // Fix #10 — mostra o flash "PIX RECEBIDO" por 1,2s antes do auto-finalize
+    setPixConfirmedFlash(true);
+    setTimeout(() => {
+      setPixConfirmedFlash(false);
+      setPixAutoFinalize(true);
+    }, 1200);
+  });
+
+  // Cartão no ecossistema LogMax transita pra 'autorizado' (não 'pago'), tanto
+  // via MaxPay/MaxBank operador (autorizar_cartao_maxbank) quanto via visitante
+  // (confirmar_cartao_pendente). Botão PAGAMENTO RECEBIDO segue como fallback
+  // manual — agora ele é a terceira rede, não a segunda.
   const cartaoConfirmedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!cartaoModal || isTraining) return;
-    const { uuid, metodo, amount, parcelas } = cartaoModal;
-    const channel = supabase
-      .channel(`cartao-${uuid}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'cartao_pendentes', filter: `id=eq.${uuid}` },
-        (payload) => {
-          const status = (payload.new as any)?.status;
-          if (status !== 'autorizado' || cartaoConfirmedRef.current.has(uuid)) return;
-          cartaoConfirmedRef.current.add(uuid);
-          const payment: Payment = metodo === 'credito'
-            ? { method: 'credito', amount, installments: parcelas }
-            : { method: 'debito', amount };
-          setPayments(prev => [...prev, payment]);
-          setCartaoModal(null);
-        },
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [cartaoModal, isTraining]);
+  const cobrancaCartao = (!isTraining && cartaoModal)
+    ? { tabela: 'cartao_pendentes' as const, id: cartaoModal.uuid, statusFinal: 'autorizado' }
+    : null;
+
+  // Sem ref: o hook guarda o callback num ref reatribuído a cada render, então
+  // `cartaoModal` aqui é sempre o do render mais recente.
+  const { aoVivo: cartaoAoVivo } = useCobrancaPendente(cobrancaCartao, () => {
+    if (!cartaoModal || cartaoConfirmedRef.current.has(cartaoModal.uuid)) return;
+    cartaoConfirmedRef.current.add(cartaoModal.uuid);
+    const payment: Payment = cartaoModal.metodo === 'credito'
+      ? { method: 'credito', amount: cartaoModal.amount, installments: cartaoModal.parcelas }
+      : { method: 'debito', amount: cartaoModal.amount };
+    setPayments(prev => [...prev, payment]);
+    setCartaoModal(null);
+  });
 
   const confirmFiadoClient = (client: Client) => {
     if (clientPickerMode === 'link') {
@@ -6059,6 +6047,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </span>
                   Aguardando confirmação do MaxBank...
                 </div>
+                {/* Só aparece quando a escuta ao vivo NÃO está de pé. O PDV
+                    continua conferindo por consulta, então o pagamento ainda
+                    cai sozinho — só demora alguns segundos a mais. Dizer isso
+                    evita as duas reações erradas: achar que travou e cancelar
+                    uma cobrança já paga, ou apertar PAGAMENTO RECEBIDO sem ter
+                    visto o dinheiro entrar. */}
+                {!isTraining && !pixAoVivo && (
+                  <div
+                    className="text-[11px] font-bold text-center px-3 py-1.5 rounded"
+                    style={{ background: '#fef3c7', color: '#78350f' }}
+                  >
+                    Sem conexão ao vivo — conferindo o pagamento a cada poucos segundos
+                  </div>
+                )}
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
                   {buildPixQrValue(pixUuid)}
                 </div>
@@ -6146,6 +6148,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </span>
                   Aguardando autorização MaxPay...
                 </div>
+                {/* Mesmo aviso do PIX, pelo mesmo motivo. */}
+                {!isTraining && !cartaoAoVivo && (
+                  <div
+                    className="text-[11px] font-bold text-center px-3 py-1.5 rounded"
+                    style={{ background: '#fef3c7', color: '#78350f' }}
+                  >
+                    Sem conexão ao vivo — conferindo a autorização a cada poucos segundos
+                  </div>
+                )}
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
                   {buildCartaoQrValue(cartaoModal.uuid)}
                 </div>
