@@ -3699,22 +3699,110 @@ DROP POLICY IF EXISTS produtos_fotos_select ON storage.objects;
 CREATE POLICY produtos_fotos_select ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'produtos');
 
+-- Escrita presa a empresa. A decisao de quem enxerga o que sai de dentro do
+-- objeto e vira InitPlan, como nas policies de tabela — ver
+-- 2026-09-19d_fotos_cadastro_e_storage_initplan.sql.
+
 DROP POLICY IF EXISTS produtos_fotos_insert ON storage.objects;
 CREATE POLICY produtos_fotos_insert ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'produtos'
+  WITH CHECK (
+    bucket_id = 'produtos'
     AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
-    AND public.pode_loja((storage.foldername(name))[1]));
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
 
 DROP POLICY IF EXISTS produtos_fotos_update ON storage.objects;
 CREATE POLICY produtos_fotos_update ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'produtos' AND public.pode_loja((storage.foldername(name))[1]))
-  WITH CHECK (bucket_id = 'produtos'
+  USING (
+    bucket_id = 'produtos'
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+      OR ((storage.foldername(name))[1] IS NULL AND (select public.tenho_perfil()))
+    ))
+  WITH CHECK (
+    bucket_id = 'produtos'
     AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
-    AND public.pode_loja((storage.foldername(name))[1]));
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
 
 DROP POLICY IF EXISTS produtos_fotos_delete ON storage.objects;
 CREATE POLICY produtos_fotos_delete ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'produtos' AND public.pode_loja((storage.foldername(name))[1]));
+  USING (
+    bucket_id = 'produtos'
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+      OR ((storage.foldername(name))[1] IS NULL AND (select public.tenho_perfil()))
+    ));
+
+-- ─── Storage: bucket das fotos de cliente e fornecedor ───
+--
+-- PRIVADO e restrito por empresa na LEITURA tambem, ao contrario de
+-- `produtos`. Produto e catalogo e a vitrine e publica; isto e dado de pessoa,
+-- e quem opera a MaxLook nao tem o que fazer com a foto de um cliente do
+-- SuperMax. Caminho: `<empresa>/<tipo>/<id>`, tipo em (clientes, fornecedores).
+--
+-- Bucket proprio, e nao `avatares`: aquele e chaveado por auth.uid() na escrita
+-- (cada um so mexe na propria foto), e aqui quem cadastra e o operador.
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('cadastros', 'cadastros', false, 262144,
+        ARRAY['image/jpeg','image/png','image/webp'])
+ON CONFLICT (id) DO UPDATE
+  SET public             = EXCLUDED.public,
+      file_size_limit    = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS cadastros_fotos_select ON storage.objects;
+CREATE POLICY cadastros_fotos_select ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'cadastros'
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
+
+DROP POLICY IF EXISTS cadastros_fotos_insert ON storage.objects;
+CREATE POLICY cadastros_fotos_insert ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'cadastros'
+    AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
+    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores'])
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
+
+DROP POLICY IF EXISTS cadastros_fotos_update ON storage.objects;
+CREATE POLICY cadastros_fotos_update ON storage.objects FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'cadastros'
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ))
+  WITH CHECK (
+    bucket_id = 'cadastros'
+    AND (storage.foldername(name))[1] = ANY (ARRAY['supermax','maxlook','techmax'])
+    AND (storage.foldername(name))[2] = ANY (ARRAY['clientes','fornecedores'])
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
+
+DROP POLICY IF EXISTS cadastros_fotos_delete ON storage.objects;
+CREATE POLICY cadastros_fotos_delete ON storage.objects FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'cadastros'
+    AND (
+      (select public.vejo_todas_as_lojas())
+      OR (select public.minhas_lojas()) @> ARRAY[(storage.foldername(name))[1]]
+    ));
 
 
 -- ─── Storage: bucket das fotos de perfil ───
