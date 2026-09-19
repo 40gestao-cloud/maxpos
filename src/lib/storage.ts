@@ -65,6 +65,35 @@ function mapSaleRow(row: any): Sale {
   } as Sale;
 }
 
+// ─── Foto de produto no Supabase Storage ─────────────────────
+// A coluna `products.image` guarda a URL pública do arquivo, não mais o
+// base64 (patch 2026-09-18b). O caminho é `<empresa>/<id do produto>`, sem
+// extensão: trocar a foto sobrescreve o mesmo arquivo, e o `?v=` na URL fura
+// o cache do navegador/CDN — por isso o cache pode ser longo.
+const BUCKET_FOTOS_PRODUTO = 'produtos';
+const PREFIXO_URL_FOTO = `/storage/v1/object/public/${BUCKET_FOTOS_PRODUTO}/`;
+
+const caminhoFotoProduto = (pdvMode: string, productId: string) => `${pdvMode}/${productId}`;
+
+/** Caminho no bucket a partir da URL gravada; null se não for foto do Storage. */
+const caminhoDaUrlFoto = (url?: string | null): string | null => {
+  if (!url) return null;
+  const i = url.indexOf(PREFIXO_URL_FOTO);
+  if (i < 0) return null;
+  return decodeURIComponent(url.slice(i + PREFIXO_URL_FOTO.length).split('?')[0]);
+};
+
+async function enviarFotoProduto(dataUrl: string, pdvMode: string, productId: string): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const caminho = caminhoFotoProduto(pdvMode, productId);
+  const { error } = await supabase.storage
+    .from(BUCKET_FOTOS_PRODUTO)
+    .upload(caminho, blob, { upsert: true, contentType: blob.type, cacheControl: '31536000' });
+  if (error) throw error;
+  const { data } = supabase.storage.from(BUCKET_FOTOS_PRODUTO).getPublicUrl(caminho);
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
   // pdv_mode (SQL snake_case) <-> pdvMode (JS camelCase) mapeado nas
@@ -83,6 +112,22 @@ export const Storage = {
     // direto no formData, e upsertProduct manda de volta pro banco. Deixar as
     // duas chaves (pdv_mode E pdvMode) na mesma linha é só uma coluna a mais
     // que um dia vaza pro upsert e quebra com "column does not exist".
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+      ...r,
+      pdvMode: pdv_mode ?? 'supermax',
+    })) as Product[];
+  },
+
+  // Só as linhas indicadas, com o mesmo escopo de empresa de getProducts.
+  // Existe para o Realtime do Cadastros: uma venda baixa o estoque de 2-3
+  // produtos, e recarregar o catálogo inteiro (com as fotos) para refletir
+  // isso custava ~1,5 MB por venda. Id que não volta saiu da empresa ou foi
+  // excluído — quem chama trata a ausência como remoção.
+  getProductsByIds: async (ids: string[], pdvMode?: Product['pdvMode']): Promise<Product[]> => {
+    if (ids.length === 0) return [];
+    const q = escopoFilial(supabase.from('products').select('*').in('id', ids), pdvMode);
+    const { data, error } = await q;
+    if (error) throw error;
     return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
       pdvMode: pdv_mode ?? 'supermax',
@@ -212,13 +257,75 @@ export const Storage = {
   upsertProduct: async (product: Product): Promise<void> => {
     const { created_at, pdvMode, ...row } = product as any;
     (row as any).pdv_mode = pdvMode ?? 'supermax';
+
+    // Foto nova chega do formulário como data URL (é o que o preview usa).
+    // Vira arquivo no Storage só aqui, no salvar: subir na hora da escolha
+    // deixaria arquivo órfão toda vez que alguém cancela o cadastro.
+    if (typeof row.image === 'string' && row.image.startsWith('data:')) {
+      try {
+        row.image = await enviarFotoProduto(row.image, row.pdv_mode, row.id);
+      } catch (err) {
+        // Sem o bucket (patch 2026-09-18b ainda não aplicado) ou com o
+        // Storage fora, grava o base64 como sempre foi. O produto não pode
+        // deixar de ser salvo por causa da foto; a migração recolhe depois.
+        console.warn('[upsertProduct] foto não foi para o Storage, gravando base64', err);
+      }
+    } else if (!row.image) {
+      // Foto removida no formulário: apaga o arquivo. Sem await e sem erro —
+      // se não havia arquivo, não há o que apagar.
+      supabase.storage.from(BUCKET_FOTOS_PRODUTO)
+        .remove([caminhoFotoProduto(row.pdv_mode, row.id)])
+        .catch(() => {});
+    }
+
     const { error } = await supabase.from('products').upsert(row);
     if (error) throw error;
   },
 
   deleteProduct: async (id: string): Promise<void> => {
+    // A URL da foto sai antes do DELETE: depois dele não há onde ler.
+    const { data: antes } = await supabase.from('products').select('image').eq('id', id).maybeSingle();
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) throw error;
+    const caminho = caminhoDaUrlFoto((antes as any)?.image);
+    if (caminho) {
+      supabase.storage.from(BUCKET_FOTOS_PRODUTO).remove([caminho]).catch(() => {});
+    }
+  },
+
+  /**
+   * Migração única: leva para o Storage as fotos que ainda estão em base64
+   * na coluna `image`. Idempotente — só toca linha que ainda começa com
+   * `data:`, então pode ser rodada de novo se parar no meio. Roda com a
+   * sessão de quem chama (precisa enxergar as três empresas: Admin/CEO), e
+   * cada troca fica na Auditoria em nome dessa pessoa.
+   *
+   * Original preservado em `products_image_backup` (patch 2026-09-18b).
+   */
+  migrarFotosProdutoParaStorage: async (): Promise<{ migradas: number; falhas: string[] }> => {
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, pdv_mode, image')
+      .like('image', 'data:%');
+    if (error) throw error;
+    let migradas = 0;
+    const falhas: string[] = [];
+    for (const p of (data ?? []) as any[]) {
+      try {
+        const url = await enviarFotoProduto(p.image, p.pdv_mode ?? 'supermax', p.id);
+        // Só troca se a linha ainda estiver em base64: se alguém salvou uma
+        // foto nova no meio da migração, ela já virou URL e não é
+        // sobrescrita. (Comparar com o base64 inteiro poria até 120 KB na
+        // URL da requisição.)
+        const { error: e } = await supabase.from('products')
+          .update({ image: url }).eq('id', p.id).like('image', 'data:%');
+        if (e) throw e;
+        migradas++;
+      } catch (err: any) {
+        falhas.push(`${p.id}: ${err?.message ?? err}`);
+      }
+    }
+    return { migradas, falhas };
   },
 
   // ─── Clientes ────────────────────────────────────────────
@@ -372,6 +479,18 @@ export const Storage = {
     return (data ?? []).map(mapSaleRow);
   },
 
+  // Vendas só com o que o Estoque desenha: data e, de cada item, nome e
+  // quantidade (a "movimentação"). getSales traz as três tabelas com todas as
+  // colunas — pagamento, custo, EAN, campos de nicho — e o Estoque não usa
+  // nenhuma. Como a tela recarrega a cada venda, é o payload que mais se repete.
+  getSalesMovimentacao: async (pdvMode?: Sale['pdvMode']): Promise<Sale[]> => {
+    const q = escopoFilial(
+      supabase.from('sales').select('id, date, total, status, pdv_mode, sale_items(name, quantity)'), pdvMode);
+    const { data, error } = await q.order('date', { ascending: false });
+    if (error) throw error;
+    return (data ?? []).map(mapSaleRow);
+  },
+
   // saveSale foi REMOVIDA em 2026-09-01.
   //
   // Era codigo morto — nenhuma tela a chamava — e uma armadilha esperando:
@@ -394,6 +513,23 @@ export const Storage = {
       .order('installment_number');
     if (error) throw error;
     return (data ?? []) as CreditInstallment[];
+  },
+
+  // Parcelas de várias vendas numa consulta só, agrupadas por venda. O
+  // relatório do Financeiro fazia uma ida ao banco POR venda a crédito.
+  getInstallmentsBySales: async (saleIds: string[]): Promise<Record<string, CreditInstallment[]>> => {
+    const porVenda: Record<string, CreditInstallment[]> = {};
+    if (saleIds.length === 0) return porVenda;
+    const { data, error } = await supabase
+      .from('credit_installments')
+      .select('*')
+      .in('sale_id', saleIds)
+      .order('installment_number');
+    if (error) throw error;
+    for (const row of (data ?? []) as CreditInstallment[]) {
+      (porVenda[row.sale_id] ??= []).push(row);
+    }
+    return porVenda;
   },
 
   createInstallments: async (installments: CreditInstallment[]): Promise<void> => {

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
-import { supabase } from '../lib/supabase';
+import { assinarTabelas, semRemovidos } from '../lib/realtime';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
 import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
@@ -125,24 +125,50 @@ export default function FinanceiroModule() {
 
     load();
 
-    const ch = supabase.channel('financeiro-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'accounts' }, load)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'credit_installments' }, (payload: any) => {
-        const updated = payload.new as CreditInstallment;
-        setInstallmentsMap(prev => {
-          if (!prev[updated.sale_id]) return prev;
-          return {
-            ...prev,
-            [updated.sale_id]: prev[updated.sale_id].map(i =>
-              i.id === updated.id ? { ...i, ...updated } : i
-            ),
-          };
-        });
-      })
-      .subscribe();
+    // Mesmo padrão do Estoque: evento só da empresa ativa, rajada agrupada, e
+    // cada tabela recarrega só a si mesma — conta nova não refaz as vendas.
+    const loja = filialAtiva ?? 'supermax';
+    const escopo = `pdv_mode=eq.${loja}`;
+    const cancelar = assinarTabelas('financeiro-rt', [
+      {
+        tabela: 'sales',
+        filtro: escopo,
+        aoMudar: async ({ alterados, removidos }) => {
+          if (removidos.size) setSales(semRemovidos(removidos));
+          if (!alterados.size) return;
+          const lista = await Storage.getSales(loja);
+          if (active) setSales(lista);
+        },
+      },
+      {
+        tabela: 'accounts',
+        filtro: escopo,
+        aoMudar: async ({ alterados, removidos }) => {
+          if (removidos.size) setAccounts(semRemovidos(removidos));
+          if (!alterados.size) return;
+          const lista = await Storage.getAccounts(loja);
+          if (active) setAccounts(lista);
+        },
+      },
+      {
+        tabela: 'credit_installments',
+        eventos: ['UPDATE'],
+        bruto: (payload: any) => {
+          const updated = payload.new as CreditInstallment;
+          setInstallmentsMap(prev => {
+            if (!prev[updated.sale_id]) return prev;
+            return {
+              ...prev,
+              [updated.sale_id]: prev[updated.sale_id].map(i =>
+                i.id === updated.id ? { ...i, ...updated } : i
+              ),
+            };
+          });
+        },
+      },
+    ]);
 
-    return () => { active = false; supabase.removeChannel(ch); };
+    return () => { active = false; cancelar(); };
   }, [filialAtiva]);
 
   // ─── accordion handlers ────────────────────────────────────
@@ -225,16 +251,20 @@ export default function FinanceiroModule() {
     let fullMap = { ...installmentsMap };
 
     if (missing.length > 0) {
-      await Promise.all(missing.map(async s => {
-        let list = await Storage.getInstallmentsBySale(s.id);
+      // Uma leitura para todas as vendas e um insert para todas as parcelas
+      // que ainda não existem. Antes era uma leitura (e às vezes um insert)
+      // POR venda, todas disparadas juntas.
+      const existentes = await Storage.getInstallmentsBySales(missing.map(s => s.id));
+      const aCriar: CreditInstallment[] = [];
+      for (const s of missing) {
+        let list = existentes[s.id] ?? [];
         if (list.length === 0) {
-          const credit = getCreditPayment(s)!;
-          const created = buildInstallments(s, credit);
-          await Storage.createInstallments(created);
-          list = created;
+          list = buildInstallments(s, getCreditPayment(s)!);
+          aCriar.push(...list);
         }
         fullMap[s.id] = list;
-      }));
+      }
+      if (aCriar.length > 0) await Storage.createInstallments(aCriar);
       setInstallmentsMap(fullMap);
     }
 

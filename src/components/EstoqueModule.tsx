@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
-import { supabase } from '../lib/supabase';
+import { assinarTabelas, semRemovidos } from '../lib/realtime';
 import { PDFReport } from '../lib/pdfReport';
 import { formatBRL } from '../lib/masks';
 import { Product, Sale } from '../types';
@@ -63,7 +63,7 @@ export default function EstoqueModule() {
       // problema era outro.
       Promise.allSettled([
         Storage.getProductsLite(filialAtiva ?? 'supermax'),
-        Storage.getSales(filialAtiva ?? 'supermax'),
+        Storage.getSalesMovimentacao(filialAtiva ?? 'supermax'),
       ])
         .then(([rp, rs]) => {
           if (!active) return;
@@ -79,12 +79,35 @@ export default function EstoqueModule() {
 
     load();
 
-    const ch = supabase.channel('estoque-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, load)
-      .subscribe();
+    // Realtime por tabela e só da empresa ativa. Antes, cada evento de
+    // `products` ou `sales` refazia as DUAS consultas — e uma venda de 3 itens
+    // são 4 eventos, de qualquer loja. Agora a rajada vira um lote, produto
+    // recarrega só a lista leve e venda recarrega só as vendas.
+    const escopo = `pdv_mode=eq.${filialAtiva ?? 'supermax'}`;
+    const cancelar = assinarTabelas('estoque-rt', [
+      {
+        tabela: 'products',
+        filtro: escopo,
+        aoMudar: async ({ alterados, removidos }) => {
+          if (removidos.size) setProducts(semRemovidos(removidos));
+          if (!alterados.size) return;
+          const lista = await Storage.getProductsLite(filialAtiva ?? 'supermax');
+          if (active) setProducts(lista);
+        },
+      },
+      {
+        tabela: 'sales',
+        filtro: escopo,
+        aoMudar: async ({ alterados, removidos }) => {
+          if (removidos.size) setSales(semRemovidos(removidos));
+          if (!alterados.size) return;
+          const lista = await Storage.getSalesMovimentacao(filialAtiva ?? 'supermax');
+          if (active) setSales(lista);
+        },
+      },
+    ]);
 
-    return () => { active = false; supabase.removeChannel(ch); };
+    return () => { active = false; cancelar(); };
   }, [filialAtiva]);
 
   // O recorte por loja agora vem pronto do servidor. O filtro segue aqui como

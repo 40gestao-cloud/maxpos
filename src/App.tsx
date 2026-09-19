@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import {
   ShoppingCart, Users, Package, LogOut, Menu, X,
   DollarSign, Wallet,
@@ -12,18 +12,24 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 // Modules
+// Início, Login e o seletor de empresa vêm no bundle principal: são o que
+// aparece antes de qualquer clique. O resto é carregado ao abrir a aba. Antes
+// tudo ia num arquivo só (~1,2 MB), e a tela de login esperava baixar e
+// interpretar o PDV inteiro (7,7 mil linhas + o Coach do treinamento) e o
+// Cadastros para desenhar dois campos de texto.
 import InicioModule from './components/InicioModule';
-import PDVModule from './components/PDVModule';
-import CadastrosModule from './components/CadastrosModule';
-import EstoqueModule from './components/EstoqueModule';
-import FinanceiroModule from './components/FinanceiroModule';
-import FolhaPagamentoModule from './components/FolhaPagamentoModule';
-import MarketingModule from './components/MarketingModule';
-import { ConfiguracoesModule } from './components/ConfiguracoesModule';
 import Login from './components/Login';
 import FilialSelector from './components/FilialSelector';
 import { ToastProvider } from './components/Toast';
 import { FilialProvider, useFilial, FILIAL_META } from './contexts/FilialContext';
+const PDVModule = lazy(() => import('./components/PDVModule'));
+const CadastrosModule = lazy(() => import('./components/CadastrosModule'));
+const EstoqueModule = lazy(() => import('./components/EstoqueModule'));
+const FinanceiroModule = lazy(() => import('./components/FinanceiroModule'));
+const FolhaPagamentoModule = lazy(() => import('./components/FolhaPagamentoModule'));
+const MarketingModule = lazy(() => import('./components/MarketingModule'));
+const ConfiguracoesModule = lazy(() =>
+  import('./components/ConfiguracoesModule').then(m => ({ default: m.ConfiguracoesModule })));
 
 // Services
 import { supabase } from './lib/supabase';
@@ -532,13 +538,25 @@ function AppInterno() {
         <div className={`${activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'flex-1 overflow-y-auto custom-scrollbar bg-gray-50 p-6'}`}>
           <AnimatePresence mode="wait">
             <motion.div
-              key={`${filialAtiva}-${activeTab}`}
+              // As sub-abas de Cadastros dividem UMA chave: com a aba inteira
+              // na key, ir de Clientes para Produtos desmontava o módulo, e a
+              // remontagem baixava de novo as seis listas — fotos incluídas —
+              // mesmo já estando tudo na memória. A troca de sub-aba zera
+              // formulário e busca por conta própria (efeito em `subTab`).
+              key={`${filialAtiva}-${subCadastroAtivo ? 'cadastros' : activeTab}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.15 }}
               className={activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'min-h-full'}
             >
+              {/* Fallback só na primeira abertura de cada aba: depois o chunk
+                  está em cache e a troca é instantânea. */}
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-24">
+                  <div className="w-10 h-10 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+                </div>
+              }>
               {activeTab === 'inicio' && (
                 <InicioModule
                   currentUser={user}
@@ -589,6 +607,7 @@ function AppInterno() {
               {activeTab === 'financeiro' && <FinanceiroModule />}
               {activeTab === 'folha' && <FolhaPagamentoModule />}
               {activeTab === 'configuracoes' && <ConfiguracoesModule onUserUpdate={setUser} />}
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </div>

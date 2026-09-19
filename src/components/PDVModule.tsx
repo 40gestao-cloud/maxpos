@@ -3410,6 +3410,21 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     });
   };
 
+  // Traz do servidor o estado atual de ALGUNS produtos e troca no lugar. Os
+  // dois pontos que dessincronizam o cache (recusa de estoque/preço na venda e
+  // devolução) sabem exatamente quais produtos mudaram, e recarregar o
+  // catálogo inteiro custava ~1,5 MB de fotos no SuperMax. Id que não volta
+  // saiu do cadastro e sai da lista.
+  const atualizarProdutos = async (ids: string[]) => {
+    const alvo = new Set(ids.map(String));
+    if (alvo.size === 0) return;
+    const frescos = await Storage.getProductsByIds([...alvo], pdvMode);
+    const mapa = new Map(frescos.map(p => [String(p.id), p]));
+    setProducts(prev => prev
+      .filter(p => !alvo.has(String(p.id)) || mapa.has(String(p.id)))
+      .map(p => mapa.get(String(p.id)) ?? p));
+  };
+
   const finalizeSale = async () => {
     const fiadoPayment = payments.find(p => p.method === 'fiado');
     setSaving(true);
@@ -3563,11 +3578,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       const isPriceError = /nao confere|saiu do cadastro/i.test(msg);
       if (isStockError || isPriceError) {
         try {
-          // Escopado no pdvMode: sem isso o recarregamento pós-erro trocava a
-          // lista filtrada pela lista das TRÊS lojas, e o PDV passava a exibir
-          // produto de outro nicho até o próximo reload.
-          const fresh = await Storage.getProducts(pdvMode);
-          setProducts(fresh);
+          // Só os produtos do carrinho: são eles que o servidor acabou de
+          // recusar. Escopado no pdvMode (dentro de atualizarProdutos) — sem
+          // isso o PDV passava a exibir produto de outro nicho.
+          await atualizarProdutos(cart.map(i => i.id));
           if (isPriceError) {
             // As ofertas junto: é a metade da conta do preço efetivo, e é
             // justamente ela que costuma ter mudado.
@@ -3948,9 +3962,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         ));
       } else {
         await Storage.reverseSale(venda.id);
-        // Estoque voltou no servidor — recarrega pra tela não ficar atrasada.
-        const fresh = await Storage.getProducts(pdvMode);
-        setProducts(fresh);
+        // Estoque voltou no servidor — atualiza pra tela não ficar atrasada.
+        // A venda é estornada INTEIRA (reverse_sale_atomic), então são todos
+        // os itens dela, não só os marcados para devolver.
+        await atualizarProdutos(venda.itens.map(it => it.productId));
       }
       setReversalsCount(c => c + 1);
       setDevolucaoModal(null);

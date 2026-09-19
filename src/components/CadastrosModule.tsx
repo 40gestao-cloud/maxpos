@@ -10,7 +10,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Client, User, UserRole, Category } from '../types';
 import { Storage } from '../lib/storage';
-import { supabase } from '../lib/supabase';
+import { assinarTabelas, semRemovidos, type Mudancas } from '../lib/realtime';
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
@@ -23,9 +23,10 @@ import { LIMITE_VITRINE } from './VitrineModule';
 
 type SubCadastro = 'categorias' | 'produtos' | 'servicos' | 'clientes' | 'fornecedores' | 'equipe';
 
-// Teto do que fica GRAVADO na coluna `image` (base64 lido junto com o catálogo
-// inteiro no PDV e na Vitrine). O arquivo que o usuário escolhe pode ser muito
-// maior: o navegador reduz até caber aqui.
+// Teto do arquivo de foto de produto. Desde o patch 2026-09-18b ela vai para o
+// Storage (a coluna `image` guarda só a URL), mas comprimir continua valendo:
+// é o que cada PDV e a Vitrine baixam. O arquivo que o usuário escolhe pode ser
+// muito maior: o navegador reduz até caber aqui.
 const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
 
 // MaxID — app irmão que gera CPF, CNPJ e celular de treino com dígito
@@ -661,6 +662,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setFormData({});
     setCatForm(null);
     setSearch('');
+    // Estes o remount limpava sozinho: a sub-aba fazia parte da `key` do
+    // conteúdo (App.tsx). Agora o módulo sobrevive à troca, e um detalhe ou
+    // uma confirmação de exclusão abertos em Produtos não podem aparecer em
+    // Clientes apontando para um produto.
+    setViewingDetails(null);
+    setDeleteConfirm(null);
+    setExcluirContaConfirm(null);
+    setBarcodeModal({ isOpen: false, product: null });
+    setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
+    setMarginDraft(null);
+    setMarkupDraft(null);
   }, [subTab]);
 
   useEffect(() => {
@@ -714,15 +726,55 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
     load();
 
-    const ch = supabase.channel('cadastros-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profiles' }, load)
-      .subscribe();
+    // Realtime: cada tabela recarrega SÓ a si mesma, e só com evento da
+    // empresa da sessão. Antes, qualquer evento em qualquer das cinco tabelas
+    // chamava `load` — as seis consultas, fotos incluídas —, e uma venda de 3
+    // itens em QUALQUER loja fazia isso 3-4 vezes (ver lib/realtime).
+    const escopo = `pdv_mode=eq.${nichoFilter}`;
+    const recarregarTabela = <T,>(buscar: () => Promise<T[]>, definir: (f: (prev: T[]) => T[]) => void) =>
+      async ({ alterados, removidos }: Mudancas) => {
+        if (removidos.size) definir(semRemovidos(removidos) as any);
+        if (!alterados.size) return;
+        const lista = await buscar();
+        if (active) definir(() => lista);
+      };
 
-    return () => { active = false; supabase.removeChannel(ch); };
+    const cancelar = assinarTabelas('cadastros-rt', [
+      {
+        // Produto é o que mais muda (baixa de estoque a cada item vendido) e o
+        // mais caro de recarregar (fotos). Busca só as linhas tocadas e troca
+        // no lugar.
+        tabela: 'products',
+        filtro: escopo,
+        aoMudar: async ({ alterados, removidos }) => {
+          if (removidos.size) setProducts(semRemovidos(removidos));
+          if (!alterados.size) return;
+          const linhas = await Storage.getProductsByIds([...alterados], nichoFilter);
+          if (!active) return;
+          const frescos = new Map(linhas.map(p => [String(p.id), p]));
+          setProducts(prev => {
+            const conhecidos = new Set(prev.map(p => String(p.id)));
+            // Alterado que não voltou saiu da empresa (ou foi excluído no meio).
+            const lista = prev
+              .filter(p => !alterados.has(String(p.id)) || frescos.has(String(p.id)))
+              .map(p => frescos.get(String(p.id)) ?? p);
+            const novos = linhas.filter(p => !conhecidos.has(String(p.id)));
+            if (novos.length === 0) return lista;
+            return [...lista, ...novos].sort((a, b) =>
+              String(a.name ?? '').localeCompare(String(b.name ?? ''), 'pt-BR'));
+          });
+        },
+      },
+      { tabela: 'clients',   filtro: escopo, aoMudar: recarregarTabela(() => Storage.getClients(nichoFilter), setClients) },
+      { tabela: 'suppliers', filtro: escopo, aoMudar: recarregarTabela(() => Storage.getSuppliers(nichoFilter), setSuppliers) },
+      { tabela: 'services',  filtro: escopo, aoMudar: recarregarTabela(() => Storage.getServices(nichoFilter), setServices) },
+      // `user_profiles` não tem pdv_mode (a empresa mora no array `lojas`, e o
+      // Realtime não filtra por "contém"). Fica sem filtro — a tabela quase
+      // não muda e não participa de venda.
+      { tabela: 'user_profiles', aoMudar: recarregarTabela(() => Storage.getUsers(nichoFilter), setUsers) },
+    ]);
+
+    return () => { active = false; cancelar(); };
   }, []);
 
   const [users, setUsers] = useState<User[]>([]);
