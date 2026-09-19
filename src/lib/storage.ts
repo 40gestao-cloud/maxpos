@@ -122,6 +122,53 @@ async function enviarFotoProduto(dataUrl: string, pdvMode: string, productId: st
   return `${data.publicUrl}?v=${Date.now()}`;
 }
 
+// ─── Foto de perfil no Supabase Storage ──────────────────────
+// Mesma ideia da foto de produto, com UMA diferença que muda tudo: o bucket é
+// PRIVADO. `produtos` é público porque a vitrine da tela de login mostra
+// mercadoria sem sessão; rosto de pessoa não tem esse requisito, e o projeto já
+// tinha tomado essa posição — foto de cliente e fornecedor ficou em base64
+// justamente por o bucket existente ser público.
+//
+// Consequência prática: não existe URL fixa. A coluna `user_profiles.avatar`
+// guarda o CAMINHO (que é o próprio id do dono), e quem vai exibir pede uma URL
+// assinada, que expira. Por isso as leituras de perfil passam por
+// `urlDoAvatar` antes de devolver o usuário.
+const BUCKET_AVATARES = 'avatares';
+/** Uma hora: o mesmo passo do refresh de token, então a URL não morre em uso. */
+const VALIDADE_URL_AVATAR = 3600;
+
+async function enviarAvatar(dataUrl: string, userId: string): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const { error } = await supabase.storage
+    .from(BUCKET_AVATARES)
+    .upload(userId, blob, { upsert: true, contentType: blob.type, cacheControl: '3600' });
+  if (error) throw error;
+  return userId;
+}
+
+/**
+ * Caminho gravado → URL que o `<img>` consegue abrir.
+ *
+ * Aceita valor legado sem reclamar: base64 (`data:`) e URL pública (`http`)
+ * voltam como estão. Hoje não há nenhum no banco — a coluna estava zerada
+ * quando isto entrou —, mas quem importar um dump antigo não fica com a tela
+ * quebrada, e o custo de tolerar é uma linha.
+ */
+async function urlDoAvatar(valor?: string | null): Promise<string | undefined> {
+  if (!valor) return undefined;
+  if (valor.startsWith('data:') || valor.startsWith('http')) return valor;
+  const { data, error } = await supabase.storage
+    .from(BUCKET_AVATARES)
+    .createSignedUrl(valor, VALIDADE_URL_AVATAR);
+  // Falhar aqui mostra a inicial do nome no lugar da foto. É o degrade certo:
+  // ninguém fica sem entrar no sistema porque a foto não carregou.
+  if (error) {
+    console.warn('[urlDoAvatar] não foi possível assinar a URL da foto', error);
+    return undefined;
+  }
+  return data?.signedUrl;
+}
+
 export const Storage = {
   // ─── Produtos ────────────────────────────────────────────
   // pdv_mode (SQL snake_case) <-> pdvMode (JS camelCase) mapeado nas
@@ -672,7 +719,8 @@ export const Storage = {
     })) as User[];
   },
 
-  /** Foto de um único usuário. Existe para getUsers poder ser leve. */
+  /** Foto de um único usuário, pronta para o `<img>`. Existe para getUsers
+   *  poder ser leve — quem lista gente não carrega rosto de ninguém. */
   getUserAvatar: async (userId: string): Promise<string | undefined> => {
     const { data, error } = await supabase
       .from('user_profiles')
@@ -680,7 +728,7 @@ export const Storage = {
       .eq('id', userId)
       .single();
     if (error) return undefined;
-    return (data as any)?.avatar ?? undefined;
+    return urlDoAvatar((data as any)?.avatar);
   },
 
   // `loja` define a EMPRESA do novo usuario: criado no SuperMax, e do
@@ -754,12 +802,42 @@ export const Storage = {
     } as User;
   },
 
-  updateUserProfile: async (userId: string, fields: Partial<User>): Promise<void> => {
-    const { error } = await supabase
-      .from('user_profiles')
-      .update({ name: fields.name, role: fields.role, avatar: fields.avatar })
-      .eq('id', userId);
+  /**
+   * Devolve a foto já resolvida (URL assinada) quando mexeu nela; `undefined`
+   * quando não mexeu ou quando a foto foi removida.
+   *
+   * A foto só é tocada se a CHAVE `avatar` vier no objeto — não basta o valor
+   * ser `undefined`. A distinção é necessária: a tela de Usuários salva
+   * `{ name, role }` e não pode apagar a foto de ninguém sem querer, enquanto a
+   * tela de perfil manda `avatar: undefined` justamente para removê-la.
+   */
+  updateUserProfile: async (userId: string, fields: Partial<User>): Promise<string | undefined> => {
+    const row: Record<string, unknown> = { name: fields.name, role: fields.role };
+    let resolvida: string | undefined;
+
+    if ('avatar' in fields) {
+      const valor = fields.avatar;
+      if (typeof valor === 'string' && valor.startsWith('data:')) {
+        // Foto nova: vira arquivo aqui, no salvar. Subir na hora de escolher
+        // deixaria arquivo órfão toda vez que alguém desiste — mesmo motivo de
+        // `upsertProduct`.
+        row.avatar = await enviarAvatar(valor, userId);
+        resolvida = await urlDoAvatar(row.avatar as string);
+      } else if (!valor) {
+        // Removeu: apaga o arquivo e zera a coluna. Sem await e sem erro — se
+        // não havia arquivo, não há o que apagar.
+        supabase.storage.from(BUCKET_AVATARES).remove([userId]).catch(() => {});
+        row.avatar = null;
+      } else {
+        // Já é caminho ou URL legada: passa direto, sem reenviar.
+        row.avatar = valor;
+        resolvida = await urlDoAvatar(valor);
+      }
+    }
+
+    const { error } = await supabase.from('user_profiles').update(row).eq('id', userId);
     if (error) throw error;
+    return resolvida;
   },
 
   // Deleta o usuário POR COMPLETO — auth.users cascateia pro
@@ -809,10 +887,11 @@ export const Storage = {
     // então tudo que entrar na linha entra junto. Com `*`, uma coluna nova
     // criada amanhã passa a ser baixada aqui sem ninguém decidir isso.
     //
-    // `avatar` continua vindo porque é a foto do PRÓPRIO operador, no header.
-    // Ela é o peso real desta consulta (base64, ~40 KB depois do resize) e
-    // listar colunas não resolve isso — resolver é levá-la para o Storage, como
-    // já foi feito com a foto de produto (patch 2026-09-18b).
+    // `avatar` vem, mas desde o patch 2026-09-19c a coluna guarda o CAMINHO no
+    // Storage, não mais a imagem. Era ela o peso real daqui: ~40 KB de base64
+    // por operador, em toda abertura e em todo refresh de token — 50 terminais
+    // baixando isso de hora em hora. Agora são poucos bytes, e a URL assinada
+    // sai depois, só para quem tem foto.
     const fetchProfile = async () => {
       return await supabase
         .from('user_profiles')
@@ -833,7 +912,8 @@ export const Storage = {
         email: session.user.email ?? '',
         name: profile.name,
         role: profile.role,
-        avatar: profile.avatar,
+        // Caminho -> URL assinada. Sem foto não há requisição nenhuma.
+        avatar: await urlDoAvatar(profile.avatar),
         parentId: profile.parentId,
         // Sem `lojas` aqui o FilialContext nao sabe quais empresas este
         // usuario opera, e o Operador de Caixa cairia no seletor das tres
@@ -870,9 +950,12 @@ export const Storage = {
 
   getCurrentUser: async (): Promise<User | null> => Storage.getSession(),
 
-  setCurrentUser: async (user: User): Promise<void> => {
-    await Storage.updateUserProfile(user.id, user);
-  },
+  // setCurrentUser saiu em 2026-09-19c. Era `updateUserProfile(user.id, user)`,
+  // e passar o User INTEIRO virou armadilha quando a foto foi para o Storage:
+  // o objeto sempre carrega a chave `avatar`, então toda gravação de perfil
+  // mexia na foto — inclusive para reenviar ao Storage a URL assinada que
+  // acabara de ser lida. Quem salva perfil agora chama `updateUserProfile`
+  // dizendo explicitamente quais campos está mudando.
 
   login: async (email: string, password: string): Promise<User | null> => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -892,7 +975,7 @@ export const Storage = {
       email: data.user.email ?? '',
       name: profile.name,
       role: profile.role,
-      avatar: profile.avatar,
+      avatar: await urlDoAvatar(profile.avatar),
       parentId: profile.parentId,
       lojas: profile.lojas ?? [],
     } as User;

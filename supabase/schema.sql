@@ -3717,6 +3717,44 @@ CREATE POLICY produtos_fotos_delete ON storage.objects FOR DELETE TO authenticat
   USING (bucket_id = 'produtos' AND public.pode_loja((storage.foldername(name))[1]));
 
 
+-- ─── Storage: bucket das fotos de perfil ───
+--
+-- PRIVADO, ao contrario de `produtos`. Aquele e publico porque a vitrine da
+-- tela de login mostra mercadoria sem sessao; rosto de pessoa nao tem esse
+-- requisito. A coluna `user_profiles.avatar` guarda o CAMINHO (que e o id do
+-- dono) e quem exibe pede uma URL assinada, que expira. Ver
+-- 2026-09-19c_avatar_no_storage.sql.
+--
+-- Ler: qualquer autenticado — o seletor de troca de operador do PDV mostra a
+-- foto de quem vai assumir o caixa, que e onde ela serve para conferir que a
+-- pessoa e quem diz ser. Escrever: so a propria foto, nem a gestao muda a de
+-- outro.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('avatares', 'avatares', false, 262144,
+        ARRAY['image/jpeg','image/png','image/webp'])
+ON CONFLICT (id) DO UPDATE
+  SET public             = EXCLUDED.public,
+      file_size_limit    = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS avatares_select ON storage.objects;
+CREATE POLICY avatares_select ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'avatares');
+
+DROP POLICY IF EXISTS avatares_insert ON storage.objects;
+CREATE POLICY avatares_insert ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'avatares' AND name = (select auth.uid())::text);
+
+DROP POLICY IF EXISTS avatares_update ON storage.objects;
+CREATE POLICY avatares_update ON storage.objects FOR UPDATE TO authenticated
+  USING      (bucket_id = 'avatares' AND name = (select auth.uid())::text)
+  WITH CHECK (bucket_id = 'avatares' AND name = (select auth.uid())::text);
+
+DROP POLICY IF EXISTS avatares_delete ON storage.objects;
+CREATE POLICY avatares_delete ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'avatares' AND name = (select auth.uid())::text);
+
+
 -- ============================================================
 -- DEPOIS DE RODAR ESTE ARQUIVO
 -- ============================================================
