@@ -45,7 +45,8 @@ export default function Login({ onLogin }: LoginProps) {
     // login volta a ser o único conteúdo, centralizado.
     <div
       className="min-h-screen w-full flex items-center justify-center relative overflow-hidden"
-      style={{ background: '#172554' }}
+      // Mesmo navy do fundo do icon-maxpos.png.
+      style={{ background: '#021D55' }}
     >
       <div className="w-full max-w-6xl flex flex-col md:flex-row md:min-h-screen items-center">
         <div className="hidden md:flex md:flex-1 md:min-h-screen items-center justify-center">
@@ -55,7 +56,7 @@ export default function Login({ onLogin }: LoginProps) {
         <div className="flex-1 flex items-center justify-center p-6 md:p-10 w-full">
       <div className="w-full max-w-md bg-white rounded-2xl border-4 p-10 space-y-8" style={{ borderColor: '#FFC107' }}>
         <div className="text-center">
-          <div className="w-40 h-40 mx-auto flex items-center justify-center mb-4 overflow-hidden">
+          <div className="w-40 h-40 mx-auto flex items-center justify-center mb-4 overflow-hidden rounded-2xl border-4" style={{ borderColor: '#FFC107' }}>
             <img src="/icon-maxpos.png" alt="MaxPOS" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </div>
         </div>
