@@ -29,7 +29,10 @@ export interface User {
   password?: string;
   role: UserRole;
   name: string;
-  avatar?: string; // Base64 or URL
+  // URL pronta para o `<img>`: as leituras de perfil (getSession, login,
+  // getUserAvatar) já resolvem a URL assinada do bucket privado `avatares`.
+  // No BANCO a coluna guarda o caminho, não isto — ver `urlDoAvatar`.
+  avatar?: string;
   parentId?: string; // To track who registered whom
   /** Empresas que este usuario opera. Criado no SuperMax => ['supermax']. */
   lojas?: string[];

@@ -174,9 +174,19 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
     if (!user) return;
     setSaving(true);
     try {
-      const updatedUser = { ...user, avatar: avatarPreview ?? undefined };
-      await Storage.setCurrentUser(updatedUser);
+      // A foto sobe para o Storage aqui dentro, e o que volta é a URL assinada
+      // já pronta para o `<img>`. Usar o retorno, e não o `avatarPreview`,
+      // importa: o preview é o base64 do arquivo escolhido, e jogá-lo no estado
+      // do App deixaria ~40 KB de data URL vivos na memória até o próximo
+      // reload — justamente o que esta mudança veio tirar do caminho.
+      const salva = await Storage.updateUserProfile(user.id, {
+        name: user.name,
+        role: user.role,
+        avatar: avatarPreview ?? undefined,
+      });
+      const updatedUser = { ...user, avatar: salva };
       setUser(updatedUser);
+      setAvatarPreview(salva ?? null);
       onUserUpdate(updatedUser);
       // "Configurações salvas" prometia mais do que esta tela faz: o que ela
       // grava é a foto do operador. O aviso agora diz o que mudou e onde a
