@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, MapPin, ClipboardPaste } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
@@ -115,10 +115,11 @@ function ColarEnderecoMaxID({ onPreencher }: { onPreencher: (campos: EnderecoCam
   );
 }
 
-// Foto do cadastro. Mesmo tratamento do produto: entra foto grande, o
+// Foto de um cadastro — pessoa (cliente, fornecedor) ou categoria. Mesmo
+// tratamento do produto: entra foto grande, o
 // navegador reduz. O teto aqui é menor (400 px / 60 KB) porque a imagem
 // aparece em 48 px no card, e a lista inteira vem numa query só.
-function CampoFotoPessoa({
+function CampoFoto({
   nome, image, onChange, onErro,
 }: {
   nome: string;
@@ -400,6 +401,21 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [viewingDetails, setViewingDetails] = useState<any | null>(null);
   const [formData, setFormData] = useState<any>({});
+
+  // Markup-alvo da categoria escolhida no produto, e o preço que ele sugere a
+  // partir do custo. `null` quando não há categoria, quando ela não tem alvo ou
+  // quando ainda não há custo — e aí nada é sugerido, que é o certo: sugerir
+  // preço sem custo seria inventar número.
+  const markupAlvoDaCategoria = useMemo(
+    () => categories.find(c => c.name === formData.category)?.markupAlvo ?? null,
+    [categories, formData.category],
+  );
+
+  const precoSugerido = useMemo(() => {
+    const custo = Number(formData.costPrice || 0);
+    if (markupAlvoDaCategoria == null || custo <= 0) return null;
+    return Math.round(custo * (1 + markupAlvoDaCategoria / 100) * 100) / 100;
+  }, [markupAlvoDaCategoria, formData.costPrice]);
   // Campos da ficha por nicho em modo "Outro…" (livre: true em
   // atributosProduto.ts) — precisa viver fora do valor do campo. Se o modo
   // dependesse só do valor estar vazio, escolher "Outro" e ainda não ter
@@ -1573,13 +1589,23 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     if (!catForm) return;
     const nome = catForm.name.trim();
     if (nome.length < 2) { showAlert('Informe o nome da categoria.'); return; }
+    // A empresa é SEMPRE a da sessão, nunca o que veio no formulário. Vale
+    // também ao EDITAR: uma categoria de outra empresa não aparece nesta tela,
+    // então o que está aqui é, por construção, da empresa ativa. Amarrar isto
+    // aqui em vez de confiar no estado do form é o que fecha o furo — o seletor
+    // saiu da tela, mas quem grava é esta função.
+    const categoria: Category = { ...catForm, name: nome, pdvMode: nichoFilter };
+
     // A trava real é o índice único no banco (nome+pdv_mode, sem caixa). Aqui
     // só antecipamos a mensagem pra não fazer o operador esperar o erro 23505.
+    // A lista já vem só desta empresa, então comparar o nome basta.
     const duplicada = categories.some(c =>
       c.id !== catForm.id &&
-      c.name.trim().toLowerCase() === nome.toLowerCase() &&
-      (c.pdvMode ?? '') === (catForm.pdvMode ?? ''));
-    if (duplicada) { showAlert(`Já existe a categoria "${nome}" neste PDV.`); return; }
+      c.name.trim().toLowerCase() === nome.toLowerCase());
+    if (duplicada) {
+      showAlert(`Já existe a categoria "${nome}" na ${FILIAL_META[nichoFilter].label}.`);
+      return;
+    }
     setCatSaving(true);
     try {
       const original = categories.find(c => c.id === catForm.id);
@@ -1588,18 +1614,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       // Renomear mexe em todos os itens que usam a categoria, e o operador
       // merece saber quantos foram — é o efeito colateral da operação.
       const afetados = renomeando
-        ? await Storage.countCategoryUsage(original!.name, (catForm.pdvMode ?? nichoFilter) as any)
+        ? await Storage.countCategoryUsage(original!.name, nichoFilter)
         : 0;
       if (renomeando) {
         // Renomear arrasta os produtos junto — ver Storage.renameCategory.
         // O pdvMode é obrigatório aqui: sem ele o rename atravessava as
         // empresas, porque o mesmo nome de categoria existe nas três.
-        await Storage.renameCategory(
-          catForm.id, original.name, nome, (catForm.pdvMode ?? nichoFilter) as any);
-        await Storage.upsertCategory({ ...catForm, name: nome });
-      } else {
-        await Storage.upsertCategory({ ...catForm, name: nome });
+        await Storage.renameCategory(catForm.id, original.name, nome, nichoFilter);
       }
+      await Storage.upsertCategory(categoria);
       setCategories(await Storage.getCategories(nichoFilter));
       // Escopado como a carga inicial: sem o nicho, renomear uma categoria
       // repovoava o estado com o catálogo das três empresas (e as imagens).
@@ -2296,7 +2319,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           {/* Foto antes dos campos: é a primeira coisa que identifica o
               cadastro no card da lista, e leva dois cliques. */}
           <div className="mb-8">
-            <CampoFotoPessoa
+            <CampoFoto
               nome={formData.name || ''}
               image={formData.image}
               onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
@@ -2721,9 +2744,27 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 <input
                   type="text"
                   value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
-                  onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
+                  onChange={e => {
+                    const custo = parseCurrencyToNumber(e.target.value);
+                    // Preenche a venda sozinho SÓ quando ela ainda está vazia.
+                    // Sugestão não sobrescreve decisão: quem já digitou um preço
+                    // tem um motivo, e ver o número mudar sob os dedos é a pior
+                    // forma de "ajudar". Com preço já posto, a sugestão vira o
+                    // aviso abaixo do campo, que a pessoa aplica se quiser.
+                    const alvo = markupAlvoDaCategoria;
+                    const precoAtual = Number(formData.price || 0);
+                    const price = (alvo != null && custo > 0 && precoAtual === 0)
+                      ? Math.round(custo * (1 + alvo / 100) * 100) / 100
+                      : formData.price;
+                    setFormData({ ...formData, costPrice: custo, price });
+                  }}
                   className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80"
                 />
+                {markupAlvoDaCategoria != null && (
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Categoria com markup-alvo de <strong>{markupAlvoDaCategoria}%</strong> — a venda é sugerida a partir do custo.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -2736,6 +2777,18 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
                   className="w-full neumorphic-inset p-3 bg-transparent outline-none text-emerald-500 text-sm font-black"
                 />
+                {/* Só aparece quando a sugestão DIVERGE do que está no campo —
+                    repetir um número igual ao que já está ali é ruído. */}
+                {precoSugerido != null && precoSugerido !== Number(formData.price || 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, price: precoSugerido })}
+                    className="text-[11px] font-bold underline underline-offset-2 hover:opacity-80"
+                    style={{ color: 'var(--navy)' }}
+                  >
+                    Aplicar sugestão da categoria: R$ {precoSugerido.toFixed(2).replace('.', ',')}
+                  </button>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -3204,7 +3257,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           {/* Foto antes dos campos: é a primeira coisa que identifica o
               cadastro no card da lista, e leva dois cliques. */}
           <div className="mb-8">
-            <CampoFotoPessoa
+            <CampoFoto
               nome={formData.name || ''}
               image={formData.image}
               onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
@@ -3414,6 +3467,15 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               {categories.some(c => c.id === catForm.id) ? 'Editar categoria' : 'Nova categoria'}
             </h3>
           </div>
+          {/* A foto ajuda a achar a categoria de relance, que é o que se faz
+              numa lista longa. Mesmo componente de cliente e fornecedor: o
+              navegador reduz antes de subir. */}
+          <CampoFoto
+            nome={catForm.name}
+            image={catForm.image}
+            onChange={img => setCatForm({ ...catForm, image: img })}
+            onErro={showAlert}
+          />
           <div className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col gap-1.5 flex-1 min-w-[220px]">
               <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">Nome</label>
@@ -3427,18 +3489,47 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 style={{ borderColor: 'var(--border-strong)' }}
               />
             </div>
+            {/* O seletor de empresa saiu daqui em 2026-09-19e. Ele permitia,
+                operando na SuperMax, criar categoria para a MaxLook — e a
+                empresa é o CONTEXTO da sessão em todo o resto do sistema, não
+                um campo de formulário. Agora a categoria nasce na empresa em
+                que se está, e a tela apenas informa qual é. */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">PDV</label>
-              <select
-                value={catForm.pdvMode ?? 'supermax'}
-                onChange={e => setCatForm({ ...catForm, pdvMode: e.target.value as any })}
-                className="px-3 py-2 rounded-lg border-2 outline-none bg-white text-sm font-bold cursor-pointer"
-                style={{ borderColor: 'var(--border-strong)' }}
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">Empresa</label>
+              <div
+                className="px-3 py-2 rounded-lg border-2 text-sm font-black flex items-center gap-2"
+                style={{
+                  background: FILIAL_META[nichoFilter].color,
+                  color: FILIAL_META[nichoFilter].fg,
+                  borderColor: FILIAL_META[nichoFilter].dark,
+                }}
+                title="A categoria pertence à empresa em que você está operando"
               >
-                <option value="supermax">SuperMax</option>
-                <option value="maxlook">MaxLook</option>
-                <option value="techmax">TechMax</option>
-              </select>
+                {FILIAL_META[nichoFilter].label}
+              </div>
+            </div>
+            {/* Markup-alvo: o que a empresa QUER ganhar nesta categoria. Não
+                trava preço nenhum — o cadastro de produto usa isso para sugerir
+                a venda assim que o custo é digitado, para quem cadastra não ter
+                de fazer a conta de cabeça (e errar para baixo). */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">
+                Markup-alvo (%)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={catForm.markupAlvo ?? ''}
+                onChange={e => {
+                  const v = e.target.value.replace(',', '.').trim();
+                  const n = parseFloat(v);
+                  setCatForm({ ...catForm, markupAlvo: v === '' || !Number.isFinite(n) || n < 0 ? undefined : n });
+                }}
+                placeholder="Ex.: 40"
+                title="Sobre o CUSTO. Custo 10 com markup 100% sugere venda 20."
+                className="w-28 px-3 py-2 rounded-lg border-2 outline-none focus:border-blue-700 bg-white text-sm font-bold"
+                style={{ borderColor: 'var(--border-strong)' }}
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] font-black uppercase tracking-wider text-gray-600">Cor</label>

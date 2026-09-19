@@ -128,9 +128,17 @@ export interface Category {
   name: string;
   /** Hex da cor usada no badge. */
   color?: string;
-  /** Nicho dono da categoria. Ausente = vale para todos os PDVs. */
+  /** Empresa dona. Obrigatória desde 2026-09-19e: é a da sessão, não do form. */
   pdvMode?: PdvMode;
   active: boolean;
+  /** URL pronta para o `<img>`; no banco a coluna guarda o caminho. */
+  image?: string;
+  /**
+   * Markup que a empresa quer nesta categoria, em % sobre o CUSTO. Não trava
+   * nada — serve para o cadastro de produto sugerir o preço de venda assim que
+   * o custo é digitado. Ausente = categoria sem alvo, nada é sugerido.
+   */
+  markupAlvo?: number;
 }
 
 export interface Service {

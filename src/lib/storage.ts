@@ -26,20 +26,12 @@ const escopoFilial = <T>(q: T, pdvMode?: string | null): T => {
   return (q as any).eq('pdv_mode', pdvMode) as T;
 };
 
-/**
- * Mesma coisa, mas a linha SEM empresa conta como do supermercado.
- *
- * Só `categories` usa: é a única tabela do escopo cuja `pdv_mode` continua
- * nullable e sem default, e `upsertCategory` de fato grava NULL ali (categoria
- * que vale para as três empresas). Aqui a régua não é legado — é regra viva, e
- * por isso ficou explícita em vez de embutida na genérica.
- */
-const escopoFilialComSemEmpresa = <T>(q: T, pdvMode?: string | null): T => {
-  if (!pdvMode) return q;
-  return (pdvMode === 'supermax'
-    ? (q as any).or('pdv_mode.eq.supermax,pdv_mode.is.null')
-    : (q as any).eq('pdv_mode', pdvMode)) as T;
-};
+// `escopoFilialComSemEmpresa` existiu aqui até 2026-09-19e. Era só para
+// `categories`, a única tabela do escopo cuja `pdv_mode` ainda aceitava NULL —
+// e NULL significava "categoria das três empresas". Isso caiu junto com o
+// seletor de empresa do formulário: a categoria pertence à empresa em que foi
+// criada, e a coluna virou NOT NULL DEFAULT 'supermax'. Sem a exceção, a
+// consulta volta a concordar exatamente com o filtro do Realtime.
 
 // Uma linha de `sales` (com sale_items/sale_payments embutidos) virando Sale.
 // Três leituras diferentes montavam este objeto na mão e já divergiam entre si
@@ -134,11 +126,13 @@ async function enviarFotoProduto(dataUrl: string, pdvMode: string, productId: st
 const BUCKET_CADASTROS = 'cadastros';
 type TipoCadastro = 'clientes' | 'fornecedores';
 
-const caminhoFotoCadastro = (pdvMode: string, tipo: TipoCadastro, id: string) =>
+type TipoCadastroFoto = TipoCadastro | 'categorias';
+
+const caminhoFotoCadastro = (pdvMode: string, tipo: TipoCadastroFoto, id: string) =>
   `${pdvMode}/${tipo}/${id}`;
 
 async function enviarFotoCadastro(
-  dataUrl: string, pdvMode: string, tipo: TipoCadastro, id: string,
+  dataUrl: string, pdvMode: string, tipo: TipoCadastroFoto, id: string,
 ): Promise<string> {
   const blob = await (await fetch(dataUrl)).blob();
   const caminho = caminhoFotoCadastro(pdvMode, tipo, id);
@@ -335,34 +329,68 @@ export const Storage = {
 
   // ─── Categorias ──────────────────────────────────────────
   getCategories: async (pdvMode?: string | null): Promise<Category[]> => {
-    const q = escopoFilialComSemEmpresa(supabase
+    const q = escopoFilial(supabase
       .from('categories')
-      .select('id, name, color, pdv_mode, active'), pdvMode);
+      .select('id, name, color, pdv_mode, active, image, markup_alvo'), pdvMode);
     const { data, error } = await q.order('name');
     if (error) throw error;
-    return (data ?? []).map((r: any) => ({
+    const linhas = (data ?? []).map((r: any) => ({
       id: r.id,
       name: r.name,
       color: r.color ?? undefined,
       pdvMode: r.pdv_mode ?? undefined,
       active: r.active !== false,
+      image: r.image ?? undefined,
+      markupAlvo: r.markup_alvo != null ? Number(r.markup_alvo) : undefined,
     })) as Category[];
+    return resolverFotosCadastro(linhas);
   },
 
+  /**
+   * `pdvMode` é obrigatório desde 2026-09-19e — e é a empresa da SESSÃO, não
+   * uma escolha do formulário. O formulário tinha um seletor de empresa, o que
+   * permitia criar categoria da MaxLook estando dentro da SuperMax; a empresa é
+   * o contexto da sessão em todo o resto do sistema, e aqui não podia ser
+   * diferente.
+   */
   upsertCategory: async (c: Category): Promise<void> => {
+    const pdvMode = c.pdvMode ?? 'supermax';
+    let image = c.image ?? null;
+    // Mesmo tratamento de cliente e fornecedor: data URL vira arquivo no
+    // salvar; ausência apaga o arquivo; URL assinada volta a ser o caminho,
+    // senão a coluna passaria a guardar uma URL que expira em uma hora.
+    if (typeof image === 'string' && image.startsWith('data:')) {
+      image = await enviarFotoCadastro(image, pdvMode, 'categorias', c.id);
+    } else if (!image) {
+      supabase.storage.from(BUCKET_CADASTROS)
+        .remove([caminhoFotoCadastro(pdvMode, 'categorias', c.id)])
+        .catch(() => {});
+      image = null;
+    } else if (image.startsWith('http')) {
+      image = caminhoFotoCadastro(pdvMode, 'categorias', c.id);
+    }
+
     const { error } = await supabase.from('categories').upsert({
       id: c.id,
       name: c.name.trim(),
       color: c.color ?? null,
-      pdv_mode: c.pdvMode ?? null,
+      pdv_mode: pdvMode,
       active: c.active,
+      image,
+      markup_alvo: c.markupAlvo ?? null,
     });
     if (error) throw error;
   },
 
   deleteCategory: async (id: string): Promise<void> => {
+    const { data: antes } = await supabase.from('categories')
+      .select('image').eq('id', id).maybeSingle();
     const { error } = await supabase.from('categories').delete().eq('id', id);
     if (error) throw error;
+    const caminho = caminhoDaFotoCadastro((antes as any)?.image);
+    if (caminho) {
+      supabase.storage.from(BUCKET_CADASTROS).remove([caminho]).catch(() => {});
+    }
   },
 
   /**
