@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, TrendingUp, DollarSign, Package, FileText, Trash2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
-import { assinarTabelas, semRemovidos } from '../lib/realtime';
+import { assinarTabelas, semRemovidos, mesclarAlterados, porNome } from '../lib/realtime';
 import { PDFReport } from '../lib/pdfReport';
 import { formatBRL } from '../lib/masks';
 import { Product, Sale } from '../types';
@@ -110,11 +110,16 @@ export default function EstoqueModule() {
       {
         tabela: 'products',
         filtro: escopo,
+        // Só as linhas que mudaram, como o Cadastros já fazia. Recarregar o
+        // catálogo inteiro a cada venda era caro em dobro numa turma: cada
+        // terminal baixava tudo, e todos recebem o mesmo evento no mesmo
+        // instante — uma venda virava uma rajada simultânea de consultas.
         aoMudar: async ({ alterados, removidos }) => {
           if (removidos.size) setProducts(semRemovidos(removidos));
           if (!alterados.size) return;
-          const lista = await Storage.getProductsLite(filialAtiva ?? 'supermax');
-          if (active) setProducts(lista);
+          const linhas = await Storage.getProductsLiteByIds([...alterados], filialAtiva ?? 'supermax');
+          if (!active) return;
+          setProducts(prev => mesclarAlterados(prev, linhas, alterados, porNome));
         },
       },
       {

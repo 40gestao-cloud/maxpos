@@ -289,3 +289,36 @@ export function assinarTabelas(
 /** Tira da lista os itens cujos ids foram excluídos. */
 export const semRemovidos = <T extends { id: unknown }>(removidos: Set<string>) =>
   (prev: T[]): T[] => (removidos.size ? prev.filter(x => !removidos.has(String(x.id))) : prev);
+
+/**
+ * Aplica à lista em memória as linhas que voltaram frescas do banco, sem
+ * recarregar o resto. Três coisas de uma vez:
+ *
+ *  - id alterado que VOLTOU: troca no lugar (o estoque novo do produto);
+ *  - id alterado que NÃO voltou: saiu do escopo desta empresa, ou foi excluído
+ *    entre o evento e a consulta — some da lista;
+ *  - id que voltou e não estava na lista: entrou agora, e é inserido na ordem.
+ *
+ * `ordenar` só é usado quando há item novo: reordenar a lista inteira a cada
+ * baixa de estoque seria trabalho jogado fora.
+ */
+export function mesclarAlterados<T extends { id: unknown }>(
+  prev: T[],
+  frescos: T[],
+  alterados: Set<string>,
+  ordenar?: (a: T, b: T) => number,
+): T[] {
+  const mapa = new Map(frescos.map(x => [String(x.id), x]));
+  const conhecidos = new Set(prev.map(x => String(x.id)));
+  const lista = prev
+    .filter(x => !alterados.has(String(x.id)) || mapa.has(String(x.id)))
+    .map(x => mapa.get(String(x.id)) ?? x);
+  const novos = frescos.filter(x => !conhecidos.has(String(x.id)));
+  if (novos.length === 0) return lista;
+  const juntos = [...lista, ...novos];
+  return ordenar ? juntos.sort(ordenar) : juntos;
+}
+
+/** Ordem alfabética em português — a que as listas de cadastro usam. */
+export const porNome = <T extends { name?: unknown }>(a: T, b: T): number =>
+  String(a.name ?? '').localeCompare(String(b.name ?? ''), 'pt-BR');

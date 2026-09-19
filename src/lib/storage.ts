@@ -4,15 +4,37 @@ import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appoint
 
 /**
  * Restringe uma query à empresa informada. Sem `pdvMode` a query passa
- * intacta (leituras que realmente valem para as três, como a lista de
- * categorias, que o cliente filtra depois).
+ * intacta (leituras que realmente valem para as três).
  *
- * A régua do 'supermax' inclui `pdv_mode IS NULL`: linha legada, gravada
- * antes da coluna existir, pertence ao supermercado — é a mesma conta que
- * `getProducts` faz, e as duas precisam concordar, senão um produto antigo
- * aparece numa tela e some na outra.
+ * Igualdade simples, sem tratar `pdv_mode IS NULL`. Isso ERA necessário — a
+ * coluna nasceu depois das linhas, e a régua "linha sem empresa é do
+ * supermercado" mantinha o legado visível. Hoje não é mais: `products`,
+ * `clients`, `sales`, `accounts`, `services`, `suppliers` e `promocoes` são
+ * todas `NOT NULL DEFAULT 'supermax'`, então o banco já não deixa a linha órfã
+ * existir, e a migração de dados terminou (zero linhas nulas nas sete).
+ *
+ * Tirar o `OR` rende duas coisas. A primeira é o plano: com ele o Postgres
+ * monta um BitmapOr de dois índices em vez de um index scan direto. A segunda
+ * importa mais — o filtro do Realtime é `pdv_mode=eq.<empresa>`, que por
+ * construção NUNCA casa com NULL. Enquanto a consulta e a assinatura
+ * discordassem, elas só concordavam por não existir linha nula; a primeira que
+ * aparecesse ficaria visível na tela e invisível para o tempo real, que é a
+ * classe de bug mais difícil de enxergar que existe.
  */
 const escopoFilial = <T>(q: T, pdvMode?: string | null): T => {
+  if (!pdvMode) return q;
+  return (q as any).eq('pdv_mode', pdvMode) as T;
+};
+
+/**
+ * Mesma coisa, mas a linha SEM empresa conta como do supermercado.
+ *
+ * Só `categories` usa: é a única tabela do escopo cuja `pdv_mode` continua
+ * nullable e sem default, e `upsertCategory` de fato grava NULL ali (categoria
+ * que vale para as três empresas). Aqui a régua não é legado — é regra viva, e
+ * por isso ficou explícita em vez de embutida na genérica.
+ */
+const escopoFilialComSemEmpresa = <T>(q: T, pdvMode?: string | null): T => {
   if (!pdvMode) return q;
   return (pdvMode === 'supermax'
     ? (q as any).or('pdv_mode.eq.supermax,pdv_mode.is.null')
@@ -74,6 +96,12 @@ const BUCKET_FOTOS_PRODUTO = 'produtos';
 const PREFIXO_URL_FOTO = `/storage/v1/object/public/${BUCKET_FOTOS_PRODUTO}/`;
 
 const caminhoFotoProduto = (pdvMode: string, productId: string) => `${pdvMode}/${productId}`;
+
+// Tudo de produto MENOS `image`. Numa constante porque duas leituras usam a
+// mesma lista (a tela toda e o recorte por ids do Realtime), e uma coluna que
+// entrasse só numa delas faria o produto mudar de forma ao ser atualizado.
+const COLUNAS_PRODUTO_LITE =
+  'id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine';
 
 /** Caminho no bucket a partir da URL gravada; null se não for foto do Storage. */
 const caminhoDaUrlFoto = (url?: string | null): string | null => {
@@ -144,8 +172,27 @@ export const Storage = {
     // filtro que so existe na tela: some o `.filter` e a loja errada aparece.
     const q = escopoFilial(supabase
       .from('products')
-      .select('id, name, price, costPrice, category, ref, stock, minStock, unit, ean13, controlStock, marca, pdv_mode, vitrine'), pdvMode);
+      .select(COLUNAS_PRODUTO_LITE), pdvMode);
     const { data, error } = await q.order('name');
+    if (error) throw error;
+    return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
+      ...r,
+      pdvMode: pdv_mode ?? 'supermax',
+    })) as Product[];
+  },
+
+  // getProductsLite restrito a alguns ids — o que getProductsByIds é para
+  // getProducts. Existe pelo mesmo motivo, agora no Estoque: uma venda mexe em
+  // 2-3 produtos, e a tela recarregava o catálogo inteiro para refletir isso.
+  // Numa turma isso é caro duas vezes: é o catálogo inteiro POR terminal, e
+  // todos os terminais recebem o mesmo evento no mesmo instante.
+  getProductsLiteByIds: async (ids: string[], pdvMode?: Product['pdvMode']): Promise<Product[]> => {
+    if (ids.length === 0) return [];
+    const q = escopoFilial(supabase
+      .from('products')
+      .select(COLUNAS_PRODUTO_LITE)
+      .in('id', ids), pdvMode);
+    const { data, error } = await q;
     if (error) throw error;
     return (data ?? []).map(({ pdv_mode, ...r }: any) => ({
       ...r,
@@ -181,7 +228,7 @@ export const Storage = {
 
   // ─── Categorias ──────────────────────────────────────────
   getCategories: async (pdvMode?: string | null): Promise<Category[]> => {
-    const q = escopoFilial(supabase
+    const q = escopoFilialComSemEmpresa(supabase
       .from('categories')
       .select('id, name, color, pdv_mode, active'), pdvMode);
     const { data, error } = await q.order('name');
