@@ -232,7 +232,7 @@ function NichoLeituraView({
   nichoDinheiroRecebido, setNichoDinheiroRecebido,
   nichoParcelas, setNichoParcelas,
   nichoClienteFiadoId, setNichoClienteFiadoId,
-  nichoCupomAplicado, setNichoCupomAplicado,
+  nichoCupomAplicado, setNichoCupomAplicado, cupomDesconto,
   onQuickFinalize, onCancelSale,
   qtdArmada, setQtdArmada,
   fmt, RED, NAVY_DARK,
@@ -266,8 +266,11 @@ function NichoLeituraView({
   setNichoParcelas: Dispatch<SetStateAction<number>>;
   nichoClienteFiadoId: string;
   setNichoClienteFiadoId: Dispatch<SetStateAction<string>>;
-  nichoCupomAplicado: { code: string; descricao: string; desconto: number } | null;
-  setNichoCupomAplicado: Dispatch<SetStateAction<{ code: string; descricao: string; desconto: number } | null>>;
+  // Guarda a REGRA do cupom (tipo + valor), nunca o desconto ja calculado: o
+  // valor em reais depende do carrinho e e recalculado pelo pai a cada render.
+  nichoCupomAplicado: { code: string; descricao: string; tipo: 'pct' | 'fixo'; valor: number } | null;
+  setNichoCupomAplicado: Dispatch<SetStateAction<{ code: string; descricao: string; tipo: 'pct' | 'fixo'; valor: number } | null>>;
+  cupomDesconto: number;
   onQuickFinalize: (method: Payment['method']) => void;
   onCancelSale: () => void;
   qtdArmada: number | null;
@@ -314,11 +317,11 @@ function NichoLeituraView({
       setNichoCupomAplicado(null);
       return;
     }
-    const base = Math.max(0, subtotal - saleDiscount);
-    const desconto = cupom.tipo === 'pct'
-      ? parseFloat((base * cupom.valor / 100).toFixed(2))
-      : Math.min(cupom.valor, base);
-    setNichoCupomAplicado({ code, descricao: cupom.descricao, desconto });
+    // So a REGRA entra no state. Guardar o desconto ja calculado congelava o
+    // valor no carrinho de quando o cupom foi digitado: WELCOME (R$ 10) preso
+    // num carrinho que depois encolheu para R$ 8 zerava o total e a venda saia
+    // de graca; PROMO10 de um carrinho de R$ 100 continuava R$ 10 num de R$ 400.
+    setNichoCupomAplicado({ code, descricao: cupom.descricao, tipo: cupom.tipo, valor: cupom.valor });
     setCupomStr('');
   };
   const removerCupom = () => {
@@ -927,7 +930,7 @@ function NichoLeituraView({
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span className="text-xs font-black tabular-nums" style={{ color: '#15803d' }}>
-                  −R$ {fmt(nichoCupomAplicado.desconto)}
+                  −R$ {fmt(cupomDesconto)}
                 </span>
                 <button
                   onClick={removerCupom}
@@ -1253,7 +1256,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Cupom aplicado no nicho (código + descrição + valor a descontar).
   // Somado ao saleDiscount na hora de calcular o total.
   const [nichoCupomAplicado, setNichoCupomAplicado] = useState<{
-    code: string; descricao: string; desconto: number;
+    code: string; descricao: string; tipo: 'pct' | 'fixo'; valor: number;
   } | null>(null);
   // Overlay maquininha MaxPay (padrão LogMax): débito/crédito nos nichos
   // NÃO finalizam direto — abrem QR pra cliente autorizar. Simulação auto-
@@ -1590,6 +1593,39 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const partialAmountRef = useRef<HTMLInputElement>(null);
   const pixConfirmedRef = useRef<Set<string>>(new Set());
 
+  // "Ninguem esta com o foco" — precisa ser mais largo que `=== body`.
+  // Ao entrar em tela cheia o navegador move o foco para o ELEMENTO em tela
+  // cheia (<html>), e ao clicar no botao o foco fica no proprio botao. Nos dois
+  // casos activeElement nao e o body, entao os guardas antigos achavam que
+  // alguem legitimo estava com o foco e NAO devolviam o CODIGO: o leitor de
+  // codigo de barras digitava para o nada e o produto nunca entrava no cupom.
+  const focusIsOrphan = (ae: Element | null): boolean =>
+    !ae
+    || ae === document.body
+    || ae === document.documentElement
+    || ae.hasAttribute?.('data-refocus-code');
+
+  // Devolve o foco ao CODIGO quando ninguem legitimo esta com ele.
+  const refocusCodeInput = (force = false) => {
+    if (anyOverlayOpenRef.current) return;
+    if (!force && !focusIsOrphan(document.activeElement)) return;
+    codeInputRef.current?.focus();
+  };
+
+  // Foca o CODIGO e escreve um caractere nele como se tivesse sido digitado ali.
+  // Usa o setter nativo + evento `input` porque e assim que o React enxerga uma
+  // escrita feita por fora dele: atribuir `el.value` direto nao dispara o
+  // onChange e o state ficaria dessincronizado do que esta na tela.
+  const digitarNoCodigo = (ch: string): boolean => {
+    const el = codeInputRef.current;
+    if (!el) return false;
+    el.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(el, (el.value ?? '') + ch);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+
   // ─── "Tem alguma janela por cima?" — LISTA ÚNICA ───────────────
   // Existiam duas listas paralelas: uma no guarda de foco do CÓDIGO e outra
   // (`modalOpen`) no atalho global de teclado. Cada uma esquecia modais
@@ -1609,6 +1645,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     postSaleReceipt !== null || valeAuthModal !== null || reprintList !== null ||
     supervisorAuthModal !== null || screenLocked || swapOperatorModal ||
     quickClientModal || cartaoModal !== null || devolucaoModal !== null;
+  // Espelho em ref: o guarda de foco roda dentro de listeners registrados uma
+  // vez so (fullscreenchange, blur) — sem o ref eles leriam o valor do primeiro
+  // render e devolveriam o foco ao CODIGO por cima de um modal aberto.
+  const anyOverlayOpenRef = useRef(false);
+  anyOverlayOpenRef.current = anyOverlayOpen || cardPickerOpen || valePickerOpen;
   // Beeps do PDV — pré-carregados como elementos Audio (HTMLAudioElement reaproveita o buffer)
   const beepScanRef = useRef<HTMLAudioElement | null>(null);
   const beepFinalizeRef = useRef<HTMLAudioElement | null>(null);
@@ -1686,7 +1727,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // O estado precisa vir do navegador, não do nosso clique: o operador também
   // sai da tela cheia por Esc ou F11, e aí o ícone tem de acompanhar.
   useEffect(() => {
-    const sync = () => setFullscreen(!!document.fullscreenElement);
+    const sync = () => {
+      setFullscreen(!!document.fullscreenElement);
+      // Entrar/sair da tela cheia move o foco para o elemento em tela cheia
+      // (<html>). Sem devolver o foco aqui, o leitor de codigo de barras —
+      // que e so um teclado — digitava para o documento e nada entrava no
+      // cupom: o operador lia o produto e a tela nao reagia. rAF duplo porque
+      // o navegador so termina de acomodar o foco depois do reflow da troca.
+      requestAnimationFrame(() => requestAnimationFrame(() => refocusCodeInput(true)));
+    };
     sync();
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
@@ -1727,7 +1776,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       if (anyOverlayOpen || cardPickerOpen || valePickerOpen) return;
       const ae = document.activeElement;
       // Se o operador já escolheu outro campo/botão do fechamento, respeita.
-      if (ae && ae !== document.body && ae !== partialAmountRef.current) return;
+      if (!focusIsOrphan(ae) && ae !== partialAmountRef.current) return;
       partialAmountRef.current?.focus();
     }, 60);
     return () => clearTimeout(t);
@@ -1744,11 +1793,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     if (loading) return;
     if (anyOverlayOpen || cardPickerOpen || valePickerOpen) return;
     const t = setTimeout(() => {
-      const ae = document.activeElement;
       // No checkout, se o foco já está no partialAmount ou num botão de pagamento
       // ou no botão CONFIRMAR VENDA, respeita — só refoca CÓDIGO quando o foco
-      // se perdeu para o body.
-      if (!ae || ae === document.body) codeInputRef.current?.focus();
+      // se perdeu (body, <html> em tela cheia, ou o próprio botão de tela cheia).
+      refocusCodeInput();
     }, 30);
     return () => clearTimeout(t);
   }, [loading, checkoutMode, anyOverlayOpen, cardPickerOpen, valePickerOpen]);
@@ -2529,23 +2577,48 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         showAlert({ title: 'Desconto maior que o item', message: `Máximo permitido: R$ ${bruto.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
         return;
       }
+      // Mesma trava do desconto no total, que aqui faltava: abater um ITEM
+      // encolhe o total do mesmo jeito, e com pagamentos ja lancados a venda
+      // ficava com pago > total — dinheiro recebido a mais sem troco previsto.
+      // `subtotal` ja traz o desconto ATUAL deste item, entao o que muda e so
+      // a diferenca entre o novo e o velho.
+      const novoSubtotal = parseFloat((subtotal - (desc - (it.discount ?? 0))).toFixed(2));
+      if (paid > calcularTotal(novoSubtotal, saleDiscount) + 0.001) {
+        showAlert({
+          title: 'Pagamentos já cobrem o novo total',
+          message: 'Remova ou edite os pagamentos lançados antes de aplicar esse desconto.',
+          variant: 'warning',
+        });
+        return;
+      }
       setCart(prev => prev.map(c => c.id === it.id ? { ...c, discount: desc } : c));
     } else if (discountModal.scope === 'total') {
-      if (desc > subtotal) {
-        showAlert({ title: 'Desconto maior que o subtotal', message: `Máximo permitido: R$ ${subtotal.toFixed(2).replace('.', ',')}.`, variant: 'warning' });
+      // Zerar a venda pelo desconto e um beco sem saida: o total cai a R$ 0,00,
+      // o FECHAR VENDA fica habilitado (nao falta nada a pagar) mas
+      // `requestFinalizeSale` recusa venda de total zero — o operador clicava e
+      // nada acontecia. Nao cobrar nada e CANCELAR a venda (F9), nao dar 100%
+      // de desconto nela.
+      const maximo = parseFloat((subtotal - 0.01).toFixed(2));
+      if (desc > maximo) {
+        showAlert({
+          title: desc > subtotal ? 'Desconto maior que o subtotal' : 'Desconto zeraria a venda',
+          message: desc > subtotal
+            ? `Máximo permitido: R$ ${maximo.toFixed(2).replace('.', ',')}.`
+            : `O desconto no caixa não pode zerar a venda — máximo R$ ${maximo.toFixed(2).replace('.', ',')}.
+
+Para não cobrar nada, cancele a venda (F9).`,
+          variant: 'warning',
+        });
         return;
       }
       // Se já há pagamentos lançados, recalcular pode deixar pago > novo total — bloqueia
-      if (paid > 0) {
-        const newTotal = parseFloat((subtotal - desc).toFixed(2));
-        if (paid > newTotal + 0.001) {
-          showAlert({
-            title: 'Pagamentos já cobrem o novo total',
-            message: 'Remova ou edite os pagamentos lançados antes de aplicar esse desconto.',
-            variant: 'warning',
-          });
-          return;
-        }
+      if (paid > calcularTotal(subtotal, desc) + 0.001) {
+        showAlert({
+          title: 'Pagamentos já cobrem o novo total',
+          message: 'Remova ou edite os pagamentos lançados antes de aplicar esse desconto.',
+          variant: 'warning',
+        });
+        return;
       }
       setSaleDiscount(desc);
     }
@@ -2642,6 +2715,24 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       const pickerOpen = cardPickerOpen || valePickerOpen;
       const target = e.target as HTMLElement | null;
       const isEditable = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
+
+      // ── Rede de seguranca do LEITOR DE CODIGO DE BARRAS ──────────
+      // O leitor e um teclado: se o foco escapou do CODIGO (tela cheia entrega
+      // o foco ao <html>, um clique cai numa area vazia), cada digito do EAN ia
+      // para o documento e sumia — o operador bipava e a tela nao reagia, e so
+      // saindo e voltando do PDV o campo voltava a receber. Aqui qualquer
+      // caractere imprimivel com o foco orfao e redirecionado para o CODIGO,
+      // sem perder o primeiro digito do codigo.
+      if (
+        !modalOpen && !pickerOpen && !isEditable
+        && e.key.length === 1 && e.key !== '?' && !e.ctrlKey && !e.altKey && !e.metaKey
+        && focusIsOrphan(document.activeElement)
+      ) {
+        if (digitarNoCodigo(e.key)) {
+          e.preventDefault();
+          return;
+        }
+      }
 
       const cancelEntireSale = () => {
         if (cart.length === 0 && payments.length === 0) return;
@@ -2987,8 +3078,26 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Subtotal = soma de (preço × qtd − desconto do item).
   // Total = subtotal − desconto comercial − cupom (nichos).
   const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity - (item.discount ?? 0), 0);
-  const cupomDesconto = nichoCupomAplicado?.desconto ?? 0;
-  const total = Math.max(0, parseFloat((subtotal - saleDiscount - cupomDesconto).toFixed(2)));
+  // Recalculado a cada render a partir do carrinho de AGORA — e a base e o
+  // subtotal ja abatido do desconto comercial, a mesma de quando o operador
+  // digitou o codigo. Fixo nunca passa da base, entao o total nao cai a zero
+  // por um cupom maior que a venda que sobrou.
+  const descontoCupomPara = (base: number): number => !nichoCupomAplicado
+    ? 0
+    : nichoCupomAplicado.tipo === 'pct'
+      ? parseFloat((base * nichoCupomAplicado.valor / 100).toFixed(2))
+      : Math.min(nichoCupomAplicado.valor, base);
+  // Total de um cenario HIPOTETICO (outro subtotal, outro desconto de venda).
+  // Existe porque as travas de desconto precisam saber quanto a venda passaria
+  // a custar ANTES de gravar — e a conta tem de ser a mesma do total real,
+  // cupom incluido, senao a trava protege um numero que nao e o cobrado.
+  const calcularTotal = (sub: number, descVenda: number): number => {
+    const base = Math.max(0, parseFloat((sub - descVenda).toFixed(2)));
+    return Math.max(0, parseFloat((base - descontoCupomPara(base)).toFixed(2)));
+  };
+  const baseCupom = Math.max(0, parseFloat((subtotal - saleDiscount).toFixed(2)));
+  const cupomDesconto = descontoCupomPara(baseCupom);
+  const total = Math.max(0, parseFloat((baseCupom - cupomDesconto).toFixed(2)));
   // Economia das OFERTAS (preço de tabela − preço cobrado). Não se soma ao
   // desconto: o desconto é abatimento na venda, a economia já está dentro do
   // preço. É o "você economizou" do rodapé do cupom.
@@ -2998,6 +3107,20 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   }, 0);
   const paid = payments.reduce((acc, p) => acc + p.amount, 0);
   const remaining = total - paid;
+
+  // Impressao digital da tentativa de venda: itens, pagamentos e total. Serve
+  // para o auto-finalize dos nichos saber que ESTA tentativa exata ja foi
+  // recusada pelo servidor e nao insistir nela sozinho (ver o efeito adiante).
+  // Muda assim que o operador mexe no carrinho ou nos pagamentos — que e
+  // exatamente o que o alerta de erro pede que ele faca.
+  const assinaturaTentativa = () => JSON.stringify([
+    cart.map(i => [i.id, i.quantity, i.discount ?? 0]),
+    payments.map(p => [p.method, p.amount]),
+    total,
+  ]);
+  // Assinatura da ultima tentativa que o servidor recusou. Ref, e nao state:
+  // gravar isto nao pode provocar render (o render e que dispara o efeito).
+  const autoFinalizeRecusadoRef = useRef<string | null>(null);
 
   const addPayment = (method: Payment['method'], installments?: number) => {
     const usedPartial = !!partialAmount;
@@ -3036,11 +3159,14 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   };
 
   const removePayment = (index: number) => {
-    setPayments(prev => {
-      const next = prev.filter((_, i) => i !== index);
-      if (next.length === 0) setCashChange(0);
-      return next;
-    });
+    setPayments(prev => prev.filter((_, i) => i !== index));
+    // O troco pertence ao pagamento em dinheiro que o gerou. Zerar so quando a
+    // lista inteira esvaziava deixava um troco fantasma na venda mista: apagar
+    // o dinheiro de um par dinheiro+cartao mantinha o `cashChange` do
+    // lancamento removido, e a venda fechava mandando devolver um troco que
+    // nunca foi recebido. `commitEditPayment` ja zerava sem condicao — aqui
+    // tambem: quem relancar o dinheiro recalcula o troco na hora.
+    setCashChange(0);
     if (editingPaymentIdx === index) {
       setEditingPaymentIdx(null);
       setEditingPaymentValue('');
@@ -3404,7 +3530,21 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Pede confirmacao antes de finalizar a venda (mesmo padrao do CANCELAR)
   const requestFinalizeSale = () => {
     if (saving) return;
-    if (paid < total - 0.001 || total <= 0) return;
+    // Total zero ainda alcancavel por outro caminho que nao o desconto na venda
+    // (um item com 100% de abatimento sozinho no carrinho). Sair calado aqui era
+    // o botao morto: habilitado, clicado, sem resposta. Diz o que houve.
+    if (total <= 0) {
+      showAlert({
+        title: 'Venda sem valor a cobrar',
+        message: 'O total está em R$ 0,00. Revise os descontos aplicados ou cancele a venda (F9) — o caixa não fecha cupom de valor zero.',
+        variant: 'warning',
+      });
+      return;
+    }
+    if (paid < total - 0.001) return;
+    // Clique/Enter do operador e um retry explicito: a marca de recusa so
+    // existe para impedir que o AUTOMATICO insista sozinho.
+    autoFinalizeRecusadoRef.current = null;
     // TechMax OS: defeito relatado é obrigatório pra abrir a ordem de serviço.
     if (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' && !saleDefeitoRelatado.trim()) {
       showAlert({
@@ -3544,6 +3684,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         }
       }
 
+      // Deu certo: a marca de recusa nao tem mais dono.
+      autoFinalizeRecusadoRef.current = null;
       const trocoFinal = cashChange;
       setCart([]);
       setPayments([]);
@@ -3580,6 +3722,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         setChangeModal({ amount: trocoFinal });
       }
     } catch (err: any) {
+      // O auto-finalize dos nichos nao pode reencenar esta mesma tentativa. Ela
+      // falhou com o carrinho e os pagamentos intactos, e `setSaving(false)` no
+      // finally reabre a porta do efeito: sem esta marca ele chamava
+      // finalizeSale de novo no mesmo estado, para sempre — um alerta piscando
+      // sem saida e a RPC finalize_sale_atomic martelada em loop.
+      autoFinalizeRecusadoRef.current = assinaturaTentativa();
       const msg = err?.message ? String(err.message) : 'Falha desconhecida ao gravar a venda.';
       // Race de estoque concorrente (finalize_sale_atomic faz SELECT FOR UPDATE
       // e levanta excecao se outro operador esvaziou o estoque do produto entre
@@ -3633,6 +3781,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const finalizeSaleQuick = async (method: Payment['method']) => {
     if (!isSimulationMode) return;
     if (cart.length === 0) return;
+    // O operador clicou em FECHAR VENDA: mesmo que a tentativa seja identica a
+    // uma recusada antes, ele quer tentar de novo. Sem esta linha, os metodos
+    // que remontam o MESMO pagamento (dinheiro, fiado) reencontrariam a marca
+    // e o botao ficaria morto depois do primeiro erro.
+    autoFinalizeRecusadoRef.current = null;
     if (pdvMode === 'techmax' && saleTipoAtendimento === 'OS' && !saleDefeitoRelatado.trim()) {
       showAlert({
         title: 'Defeito não informado',
@@ -3854,6 +4007,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     // Não dispara se algum modal ainda está aberto (evita finalize enquanto
     // ainda vê o QR do PIX, o troco do dinheiro, o picker de cliente, etc.).
     if (pixModalOpen || cashModalOpen || showInstallments || showClientPicker || cartaoModal) return;
+    // Tentativa identica a uma que o servidor ja recusou: quem decide tentar de
+    // novo e o operador, ajustando o carrinho como o alerta pediu. Insistir
+    // aqui so repetiria a mesma recusa indefinidamente.
+    if (autoFinalizeRecusadoRef.current === assinaturaTentativa()) return;
     finalizeSale();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSimulationMode, saving, cart.length, payments.length, paid, total,
@@ -4172,6 +4329,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   </button>
                 )}
                 <button
+                  data-refocus-code
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={toggleFullscreen}
                   className="w-9 h-9 rounded-full flex items-center justify-center border transition hover:brightness-110"
                   style={{ borderColor: modeMeta.accentDark + '80', background: 'black', color: modeMeta.accent }}
@@ -4277,6 +4436,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               </button>
             )}
             <button
+              data-refocus-code
+              onMouseDown={(e) => e.preventDefault()}
               onClick={toggleFullscreen}
               className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center border-2 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
               style={{ background: 'white', color: NAVY_DARK, borderColor: NAVY_DARK }}
@@ -4562,10 +4723,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                       onBlur={() => {
                         // Só refoca se o foco realmente se perdeu (foi pro body).
                         // Se o usuário foi pra outro input/button (modal, picker, etc.), respeita.
-                        setTimeout(() => {
-                          const ae = document.activeElement;
-                          if (!ae || ae === document.body) codeInputRef.current?.focus();
-                        }, 0);
+                        setTimeout(() => refocusCodeInput(), 0);
                       }}
                       autoFocus
                       autoComplete="off"
@@ -4718,6 +4876,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
               nichoClienteFiadoId={nichoClienteFiadoId}
               setNichoClienteFiadoId={setNichoClienteFiadoId}
               nichoCupomAplicado={nichoCupomAplicado}
+              cupomDesconto={cupomDesconto}
               setNichoCupomAplicado={setNichoCupomAplicado}
               onQuickFinalize={finalizeSaleQuick}
               onCancelSale={cancelSale}
@@ -5140,6 +5299,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                   <button
                     data-action="confirm-sale"
                     onClick={requestFinalizeSale}
+                    // Total zero NAO desabilita de proposito: um botao apagado
+                    // sem explicacao e tao ruim quanto o clique que nao fazia
+                    // nada. Clicar abre o alerta que diz o que revisar.
                     disabled={paid < total - 0.001 || saving}
                     className="flex-1 px-5 py-3 text-white font-black uppercase tracking-wide text-base disabled:opacity-30 flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-green-700"
                     style={{ background: MONEY }}
@@ -5565,10 +5727,25 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
                 e.stopPropagation();
                 setThankYouOpen(false);
                 setTimeout(() => codeInputRef.current?.focus(), 50);
-              } else {
-                // Bloqueia totalmente o teclado pra não vazar pro PDV atrás
-                e.stopPropagation();
+                return;
               }
+              // O caixa não espera esta tela sair para atender o próximo da
+              // fila: ele bipa o primeiro item enquanto ela ainda está no ar.
+              // O leitor é um teclado, e esta tela engolia tudo — os dígitos
+              // sumiam e o Enter final só fechava a tela. O produto não entrava
+              // e nada dizia isso. Agora o primeiro caractere ABRE a próxima
+              // venda: fecha o agradecimento e vai para o CÓDIGO junto com o
+              // dígito, e o resto da rajada já cai no campo (o input não é
+              // descendente deste overlay, então não volta para cá).
+              if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                setThankYouOpen(false);
+                digitarNoCodigo(e.key);
+                return;
+              }
+              // Resto do teclado continua bloqueado pra não vazar pro PDV atrás
+              e.stopPropagation();
             }}
             tabIndex={-1}
             ref={(el) => { if (el && thankYouOpen) el.focus(); }}
