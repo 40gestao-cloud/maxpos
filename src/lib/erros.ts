@@ -131,9 +131,18 @@ export function explicarErro(err: unknown, acao: string): ErroExplicado {
     };
   }
 
-  // 6. Chave estrangeira — o registro está em uso, ou aponta para algo que
-  //    não existe mais.
+  // 6. Chave estrangeira, nas duas direções. "insert or update" é gravar
+  //    apontando para algo que outra pessoa apagou com o formulário aberto
+  //    (a lista da tela ainda o oferecia); o resto é apagar o que está em uso.
   if (codigo === '23503' || baixo.includes('foreign key')) {
+    if (baixo.includes('insert or update')) {
+      return {
+        title: 'Um item escolhido não existe mais',
+        message:
+          'Algo escolhido numa lista deste formulário (categoria, fornecedor, cliente, produto…) foi apagado por outra pessoa depois que a tela abriu. Escolha outro na lista. Se a lista ainda mostrar o que foi apagado, recarregue a tela.',
+        variant: 'warning',
+      };
+    }
     return {
       title: 'Registro em uso',
       message:

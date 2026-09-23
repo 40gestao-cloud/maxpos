@@ -30,6 +30,8 @@ export type CoachPDVState = {
   valePickerOpen: boolean;
   showInstallments: boolean;
   pixModalOpen: boolean;
+  // Maquininha MaxPay aguardando: o cartão só vira pagamento quando ela autoriza.
+  cartaoModalOpen: boolean;
   showClientPicker: boolean;
   sangriaModal: boolean;
   supModal: boolean;
@@ -329,11 +331,11 @@ const TRACK_CARD: Track = {
       title: 'Escolha CRÉDITO',
       body:
         'Use as setas ↑↓ para percorrer as opções (CRÉDITO / DÉBITO) e aperte ENTER em CRÉDITO. O crédito abre a escolha de parcela.',
-      hint: 'Débito não parcela — cai direto na revisão. Vamos praticar débito na 2ª venda logo em seguida.',
+      hint: 'Débito não parcela — vai direto para a maquininha. Vamos praticar débito na 2ª venda logo em seguida.',
       blocked: (s) =>
         s.paymentsCount > 0 && !s.showInstallments
           ? desfazerPagamentoLancado(
-              'Você escolheu DÉBITO — e ele não parcela, então o pagamento entrou direto e a tela de parcelas não vai aparecer.',
+              'Você escolheu DÉBITO — e ele não parcela, então foi direto para a maquininha e a tela de parcelas não vai aparecer.',
               'Depois aperte F2 de novo e escolha CRÉDITO. (O débito você pratica na 2ª venda, logo adiante.)',
             )
           : null,
@@ -344,10 +346,11 @@ const TRACK_CARD: Track = {
       target: '[data-training-target="installments-modal"]',
       title: 'Escolha em quantas vezes',
       body:
-        'Cliente pediu para parcelar em 3x? Você tem 3 formas de escolher:\n\n• Digite o número (ex.: "3" — atalho de 1 tecla)\n• Use ↑↓ ← → e ENTER\n• Clique com o mouse\n\nEscolha o parcelamento agora.',
+        'Cliente pediu para parcelar em 3x? Você tem 3 formas de escolher:\n\n• Digite o número (ex.: "3" — atalho de 1 tecla)\n• Use ↑↓ ← → e ENTER\n• Clique com o mouse\n\nEscolha o parcelamento agora. Em seguida a maquininha MaxPay aparece: no caixa de verdade o cliente autoriza no MaxBank; aqui ela autoriza sozinha em alguns segundos.',
       hint: 'Cada opção mostra o valor de CADA parcela ao lado (ex.: 3x R$ 4,00).',
-      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
-      rewind: (s, prev) => prev !== null && prev.showInstallments && !s.showInstallments && s.paymentsCount === prev.paymentsCount,
+      // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela. A
+      // maquininha aberta NÃO é desistência — é o passo seguinte do cartão.
+      rewind: (s, prev) => prev !== null && prev.showInstallments && !s.showInstallments && !s.cartaoModalOpen && s.paymentsCount === prev.paymentsCount,
       done: (s) => s.paymentsCount > 0,
     },
     reviewSaleStep,
@@ -373,8 +376,8 @@ const TRACK_CARD: Track = {
       target: '[data-pay-method="credito"]',
       title: 'Desça para DÉBITO',
       body:
-        'Aperte ↓ (ou Tab) para focar em DÉBITO e Enter. Débito NÃO abre modal de parcelas — o pagamento entra direto e você vai pra revisão.',
-      hint: 'No supermercado real, aqui o cliente digita a senha na maquininha. Como treinamento, entra automático.',
+        'Aperte ↓ (ou Tab) para focar em DÉBITO e Enter. Débito NÃO abre modal de parcelas — vai direto para a maquininha MaxPay, e quando ela autoriza você vai pra revisão.',
+      hint: 'No supermercado real, aqui o cliente autoriza no MaxBank. Como treinamento, a maquininha autoriza sozinha em alguns segundos.',
       done: (s) => s.paymentsCount > 0,
     },
     { ...reviewSaleStep, id: 'review-sale-debit' },
@@ -422,7 +425,7 @@ const TRACK_PARTIAL: Track = {
       title: 'F2 → CRÉDITO para o restante',
       body:
         'Agora o campo parcial ficou vazio de novo — a próxima forma leva o RESTANTE (R$ 10). Aperte F2, escolha CRÉDITO com Enter, e escolha 1x (ou o número que preferir).',
-      hint: 'Podia ser F1 (mais dinheiro) ou F2 débito. PIX, Vale e Fiado (F3) ficam bloqueados aqui: dependem de confirmação externa pelo valor cheio, então só valem como forma única. Aqui usamos crédito pra praticar o F2.',
+      hint: 'Podia ser F1 (mais dinheiro), F2 débito ou F3 PIX. Vale e Fiado ficam bloqueados aqui: são lançados pelo valor cheio, então só valem como forma única. Aqui usamos crédito pra praticar o F2.',
       done: (s) => s.paymentsCount >= 2,
     },
     reviewSaleStep,
@@ -463,7 +466,7 @@ const TRACK_PIX: Track = {
       target: '[data-training-target="pix-modal"]',
       title: 'Aguardar confirmação',
       body:
-        'No supermercado real: assim que o cliente paga no celular, o MaxBank avisa o PDV e a venda finaliza sozinha.\n\nAqui no treinamento: aperte ENTER (ou clique PAGAMENTO RECEBIDO) para simular a confirmação do MaxBank.',
+        'No supermercado real: assim que o cliente paga no celular, o MaxBank avisa o PDV e a venda finaliza sozinha.\n\nAqui no treinamento: espere alguns segundos (ou aperte ENTER) para simular a confirmação do MaxBank. No caixa de verdade não há botão de confirmar — só o MaxBank confirma.',
       // Fechou/cancelou sem concluir: volta ao passo que reabre esta tela.
       rewind: (s, prev) => prev !== null && prev.pixModalOpen && !s.pixModalOpen && s.paymentsCount === prev.paymentsCount,
       done: (s) => s.paymentsCount > 0,
@@ -1056,7 +1059,7 @@ const TRACK_FIX_PAYMENT: Track = {
       body:
         'Na lista PAGAMENTOS LANÇADOS, no card do pagamento em Dinheiro, clique no ícone LÁPIS (azul). O valor vira editável. Digite 3,00 e Enter — o pagamento cai para R$ 3. Repare que o RESTANTE sobe de novo (falta R$ 12).',
       hint:
-        'Também dá pra usar só teclado: Tab até focar o lápis, Enter abre a edição, digita o valor, Enter confirma. Edição só faz sentido em valores digitados por você (dinheiro, PIX, vale). Cartão parcelado é melhor remover e refazer, senão o número de parcelas fica errado.',
+        'Também dá pra usar só teclado: Tab até focar o lápis, Enter abre a edição, digita o valor, Enter confirma. Edição só vale para valores digitados por você (dinheiro, vale). PIX e cartão vêm confirmados pelo MaxBank e o lápis fica apagado: o valor é o que o cliente pagou.',
       done: (s, prev) => prev !== null && s.paymentEditsCount > prev.paymentEditsCount,
     },
     {
@@ -1072,8 +1075,8 @@ const TRACK_FIX_PAYMENT: Track = {
       target: '[data-training-target="payments-list"]',
       title: 'Remove o crédito com a LIXEIRA',
       body:
-        'No card do pagamento em Crédito, clique no ícone LIXEIRA (vermelho). Ele some da lista. Restou só o dinheiro de R$ 3, e o TOTAL A PAGAR volta a mostrar R$ 12 faltando.',
-      hint: 'Lixeira ≠ Cancelar Venda. Lixeira remove SÓ um pagamento; itens do carrinho ficam. F9 é que cancela tudo.',
+        'No card do pagamento em Crédito, clique no ícone LIXEIRA (vermelho). Como o cartão já foi autorizado no MaxBank, o PDV pergunta antes: escolha REMOVER (→ e Enter). Ele some da lista. Restou só o dinheiro de R$ 3, e o TOTAL A PAGAR volta a mostrar R$ 12 faltando.',
+      hint: 'Lixeira ≠ Cancelar Venda. Lixeira remove SÓ um pagamento; itens do carrinho ficam. F9 é que cancela tudo. No caixa real, remover PIX ou cartão já pago NÃO devolve o dinheiro ao cliente — só confirme se ele for devolvido por fora.',
       done: (s, prev) => prev !== null && s.paymentsCount < prev.paymentsCount,
     },
     {

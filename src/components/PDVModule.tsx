@@ -138,8 +138,12 @@ function trapTab(e: ReactKeyboardEvent, container: HTMLElement | null) {
   if (e.key !== 'Tab' || !container) return;
   const focusables = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
     .filter(el => el.offsetParent !== null || el === document.activeElement);
+  // Quando age, o evento para aqui: sem isso o Tab do modal subia até o trap
+  // da tela e, se o último focável do modal era também o último do PDV, o foco
+  // saltava para fora do modal e o Esc dele deixava de responder.
   if (focusables.length === 0) {
     e.preventDefault();
+    e.stopPropagation();
     return;
   }
   const first = focusables[0];
@@ -149,11 +153,13 @@ function trapTab(e: ReactKeyboardEvent, container: HTMLElement | null) {
   if (e.shiftKey) {
     if (!insideModal || active === first) {
       e.preventDefault();
+      e.stopPropagation();
       last.focus();
     }
   } else {
     if (!insideModal || active === last) {
       e.preventDefault();
+      e.stopPropagation();
       first.focus();
     }
   }
@@ -190,6 +196,21 @@ const DEMO_VENDEDORES_MAXLOOK = [
 //              o parcelamento de eletrônico vive no cartão de crédito.
 const rotuloFiado = (pdvMode?: PdvMode): string =>
   pdvMode === 'maxlook' ? 'Crediário' : 'Fiado';
+
+// PIX e cartão: o MaxBank já confirmou, o valor é o que o cliente pagou.
+// Editar a linha fecharia a venda com dinheiro que não entrou, e descartá-la
+// não estorna nada — por isso uma e outra coisa pedem tratamento à parte.
+const ehPagamentoEletronico = (p: Payment): boolean =>
+  p.method === 'pix' || p.method === 'credito' || p.method === 'debito';
+
+const valorEletronicoPago = (ps: Payment[]): number =>
+  parseFloat(ps.filter(ehPagamentoEletronico).reduce((s, p) => s + p.amount, 0).toFixed(2));
+
+const avisoEletronicoPago = (ps: Payment[]): string => {
+  const v = valorEletronicoPago(ps);
+  if (v <= 0.001) return '';
+  return `\n\nATENÇÃO: R$ ${v.toFixed(2).replace('.', ',')} já foram pagos no MaxBank (PIX/Cartão) e descartar NÃO estorna. Só confirme se o valor for devolvido ao cliente por fora.`;
+};
 
 const nichoPayMethods = (pdvMode: PdvMode): Array<{ method: Payment['method']; label: string }> => {
   const base: Array<{ method: Payment['method']; label: string }> = [
@@ -2133,7 +2154,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     }
     askConfirm({
       title: 'VOLTAR À LEITURA',
-      message: 'Há pagamentos lançados nesta venda. Voltar agora descarta esses pagamentos. Continuar?',
+      message: `Há pagamentos lançados nesta venda. Voltar agora descarta esses pagamentos. Continuar?${avisoEletronicoPago(payments)}`,
       confirmLabel: 'VOLTAR E DESCARTAR',
       cancelLabel: 'FICAR NO FECHAMENTO',
       variant: 'danger',
@@ -2523,6 +2544,16 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
 
   const openTotalDiscountModal = () => {
     if (subtotal <= 0) return;
+    // Com pagamento lançado o total não muda mais (mesma trava do LogMax): o
+    // desconto deixava o pago acima do total, e PIX/cartão não têm troco.
+    if (payments.length > 0) {
+      showAlert({
+        title: 'Pagamento já lançado',
+        message: 'O desconto muda o total, e já há pagamentos lançados por ele. Remova os pagamentos para dar desconto.',
+        variant: 'warning',
+      });
+      return;
+    }
     setDiscountModal({ scope: 'total' });
     setDiscountInput(maskCurrency(0));
     setDiscountKind('reais');
@@ -2738,7 +2769,7 @@ Para não cobrar nada, cancele a venda (F9).`,
         if (cart.length === 0 && payments.length === 0) return;
         askConfirm({
           title: 'CANCELAR VENDA',
-          message: 'Cancelar venda atual? Todos os itens e pagamentos serão descartados.',
+          message: `Cancelar venda atual? Todos os itens e pagamentos serão descartados.${avisoEletronicoPago(payments)}`,
           confirmLabel: 'CANCELAR VENDA',
           cancelLabel: 'VOLTAR',
           variant: 'danger',
@@ -2864,14 +2895,14 @@ Para não cobrar nada, cancele a venda (F9).`,
       if ((e.key === 'F1' || e.key === 'F2' || e.key === 'F3') && !e.shiftKey) {
         e.preventDefault();
         if (modalOpen || pickerOpen || !checkoutMode) return;
-        const tot = cart.reduce((a, it) => a + it.price * it.quantity, 0);
+        // Mesma conta do total do Enter, com os descontos: sem eles, venda já
+        // quitada ainda abria o menu de cartão/PIX por um "restante" fantasma.
+        const sub = cart.reduce((a, it) => a + it.price * it.quantity - (it.discount ?? 0), 0);
+        const tot = Math.max(0, parseFloat((sub - saleDiscount).toFixed(2)));
         const pd = payments.reduce((a, p) => a + p.amount, 0);
         if (tot - pd <= 0.001) return;
-        // F3 abre PIX/Vale/Fiado — formas de confirmação assíncrona, só valem
-        // como forma única (mesma trava dos botões do grid). F1/F2 continuam
-        // liberados: Dinheiro e Cartão aceitam misto.
-        const isMistoActive = payments.length > 0 || (parseCurrencyToNumber(partialAmount) > 0 && parseCurrencyToNumber(partialAmount) < (tot - pd) - 0.001);
-        if (e.key === 'F3' && isMistoActive) return;
+        // F3 abre igual em misto: o PIX aceita parcial, e o próprio menu
+        // mostra Vale/Fiado desabilitados (antes a tecla morria calada).
         if (e.key === 'F1') handleCashClick();
         else if (e.key === 'F2') { setValePickerOpen(false); setCardPickerOpen(true); }
         else if (e.key === 'F3') { setCardPickerOpen(false); setValePickerOpen(true); }
@@ -2957,7 +2988,9 @@ Para não cobrar nada, cancele a venda (F9).`,
         e.preventDefault();
         if (modalOpen || pickerOpen) return;
         if (checkoutMode) {
-          document.querySelector<HTMLButtonElement>('[data-extra-action="desconto"]')?.focus();
+          // DESCONTO fica apagado com pagamento lançado; aí o F5 cai no CPF.
+          Array.from(document.querySelectorAll<HTMLButtonElement>('[data-extra-action]'))
+            .find(b => !b.disabled)?.focus();
         } else if (cart.length > 0) {
           setCheckoutMode(true);
         }
@@ -3122,17 +3155,6 @@ Para não cobrar nada, cancele a venda (F9).`,
   // gravar isto nao pode provocar render (o render e que dispara o efeito).
   const autoFinalizeRecusadoRef = useRef<string | null>(null);
 
-  const addPayment = (method: Payment['method'], installments?: number) => {
-    const usedPartial = !!partialAmount;
-    const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
-    if (amount <= 0) return;
-    const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
-    setPayments(prev => [...prev, { method, amount: finalAmount, ...(installments ? { installments } : {}) }]);
-    if (usedPartial && finalAmount < remaining - 0.001) setPartialPaymentsCount(c => c + 1);
-    setPartialAmount('');
-    focusAfterExtraConfirm();
-  };
-
   // Trava defensiva: impede que dois modais/formas sejam acionados ao mesmo tempo
   // (ex.: parcelamento aberto + Tab para PIX + Enter). NÃO inclui os pickers
   // flutuantes de F2/F3 — os handlers globais já bloqueiam F1/F2/F3 enquanto
@@ -3151,14 +3173,41 @@ Para não cobrar nada, cancele a venda (F9).`,
     setShowInstallments(true);
   };
 
+  // Cartão no SuperMax passa pela maquininha MaxPay, como nos nichos e no
+  // LogMax: a linha só entra quando o MaxBank autoriza. Antes entrava direto
+  // na lista — a venda gravava crédito/débito sem cobrar nada de ninguém.
   const confirmInstallments = (installments: number) => {
-    setPayments(prev => [...prev, { method: 'credito', amount: pendingCreditAmount, installments }]);
-    setPartialAmount('');
     setShowInstallments(false);
-    focusAfterExtraConfirm();
+    abrirCartaoMaquininha('credito', pendingCreditAmount, installments);
+  };
+
+  const handleDebitClick = () => {
+    if (isAnyPaymentModalOpen()) return;
+    const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
+    if (amount <= 0) return;
+    const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
+    if (partialAmount && finalAmount < remaining - 0.001) setPartialPaymentsCount(c => c + 1);
+    abrirCartaoMaquininha('debito', finalAmount, 1);
   };
 
   const removePayment = (index: number) => {
+    const linha = payments[index];
+    if (!linha) return;
+    if (ehPagamentoEletronico(linha)) {
+      askConfirm({
+        title: 'PAGAMENTO JÁ RECEBIDO',
+        message: `Remover este pagamento?${avisoEletronicoPago([linha])}`,
+        confirmLabel: 'REMOVER',
+        cancelLabel: 'VOLTAR',
+        variant: 'danger',
+        onConfirm: () => removePaymentAgora(index),
+      });
+      return;
+    }
+    removePaymentAgora(index);
+  };
+
+  const removePaymentAgora = (index: number) => {
     setPayments(prev => prev.filter((_, i) => i !== index));
     // O troco pertence ao pagamento em dinheiro que o gerou. Zerar so quando a
     // lista inteira esvaziava deixava um troco fantasma na venda mista: apagar
@@ -3175,7 +3224,9 @@ Para não cobrar nada, cancele a venda (F9).`,
 
   const startEditPayment = (index: number) => {
     const p = payments[index];
-    if (!p) return;
+    // PIX/Cartão: o lápis deixava subir a linha até zerar o restante e fechar
+    // a venda sem o dinheiro ter entrado.
+    if (!p || ehPagamentoEletronico(p)) return;
     setEditingPaymentIdx(index);
     setEditingPaymentValue(maskCurrency(Math.round(p.amount * 100)));
   };
@@ -3258,7 +3309,7 @@ Para não cobrar nada, cancele a venda (F9).`,
     if (cart.length === 0 && payments.length === 0) return;
     askConfirm({
       title: 'CANCELAR VENDA',
-      message: 'Cancelar venda atual? Todos os itens e pagamentos serão descartados.',
+      message: `Cancelar venda atual? Todos os itens e pagamentos serão descartados.${avisoEletronicoPago(payments)}`,
       confirmLabel: 'CANCELAR VENDA',
       cancelLabel: 'VOLTAR',
       variant: 'danger',
@@ -3306,8 +3357,19 @@ Para não cobrar nada, cancele a venda (F9).`,
     focusAfterExtraConfirm();
   };
 
+  // Vale e Fiado só como forma única: a conta a receber e a autorização do
+  // voucher são pelo valor cheio. O grid e o F3 já travam; esta é a última
+  // porta, para nenhum caminho novo escapar.
+  const recusarSeMisto = (forma: string): boolean => {
+    const parcial = parseCurrencyToNumber(partialAmount);
+    if (payments.length === 0 && !(parcial > 0 && parcial < remaining - 0.001)) return false;
+    showAlert({ title: `${forma} só como forma única`, message: `${forma} não aceita pagamento parcial. Limpe os pagamentos lançados para usar.`, variant: 'warning' });
+    return true;
+  };
+
   const handleValeClick = () => {
     if (isAnyPaymentModalOpen()) return;
+    if (!isSimulationMode && recusarSeMisto('Vale-Alimentação')) return;
     const amount = partialAmount ? parseCurrencyToNumber(partialAmount) : remaining;
     if (amount <= 0) return;
     const finalAmount = parseFloat(Math.min(amount, remaining).toFixed(2));
@@ -3330,6 +3392,7 @@ Para não cobrar nada, cancele a venda (F9).`,
 
   const handleFiadoClick = () => {
     if (isAnyPaymentModalOpen()) return;
+    if (!isSimulationMode && recusarSeMisto('Fiado')) return;
     if (payments.some(p => p.method === 'fiado')) {
       showAlert({
         title: 'Fiado já lançado',
@@ -3364,6 +3427,7 @@ Para não cobrar nada, cancele a venda (F9).`,
     const payload = buildPixQrValue(uuid);
     try {
       if (!isTraining) {
+        await cancelarPendentesAntigas('pix_pendentes');
         const { error: insertErr } = await supabase
           .from('pix_pendentes')
           .insert({
@@ -3392,31 +3456,44 @@ Para não cobrar nada, cancele a venda (F9).`,
     }
   };
 
-  const confirmPixPayment = async () => {
-    if (!pixUuid || pixConfirmedRef.current.has(pixUuid)) {
-      setPixModalOpen(false);
-      return;
-    }
+  // A MaxPay acha a cobrança pelo VALOR (+ método e loja). Uma pendente velha
+  // do mesmo operador, largada aberta, com o mesmo valor, seria casada no lugar
+  // da nova — o cliente pagaria uma cobrança que o PDV já não olha.
+  const cancelarPendentesAntigas = async (tabela: 'pix_pendentes' | 'cartao_pendentes') => {
+    const { error } = await supabase
+      .from(tabela)
+      .update({ status: 'cancelado' })
+      .eq('operador_id', currentUser.id)
+      .eq('pdv_mode', pdvMode)
+      .eq('status', 'aguardando');
+    if (error) console.warn(`Falha ao cancelar ${tabela} antigas:`, error);
+  };
+
+  // Só no treinamento, onde o "MaxBank" é simulado (efeito mais abaixo, ou
+  // Enter no modal). No modo real quem confirma é o MaxBank e ninguém mais:
+  // havia aqui um PAGAMENTO RECEBIDO que chamava confirmar_pix_pendente do
+  // próprio caixa — a venda fechava como paga sem o cliente ter pago nada.
+  const confirmPixTreino = () => {
+    if (!isTraining || !pixUuid || pixConfirmedRef.current.has(pixUuid)) return;
     pixConfirmedRef.current.add(pixUuid);
-    if (isTraining) {
-      setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
-      setPartialAmount('');
-      setPixModalOpen(false);
-      focusAfterExtraConfirm();
-      return;
-    }
-    try {
-      await supabase.rpc('confirmar_pix_pendente', { p_id: pixUuid });
-    } catch (err: any) {
-      // Se o MaxBank já confirmou, a RPC retorna "já processado" — ignorar
-      if (!String(err?.message || '').includes('já processado')) {
-        console.warn('Falha ao marcar PIX como pago:', err);
-      }
-    }
     setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
     setPartialAmount('');
     setPixModalOpen(false);
     focusAfterExtraConfirm();
+  };
+
+  // Encostar no Esc cancelava um PIX a um segundo de ser pago: no modo real
+  // cancelar pede confirmação. No treino não há dinheiro em jogo.
+  const pedirCancelarPix = () => {
+    if (isTraining) { cancelPixPayment(); return; }
+    askConfirm({
+      title: 'CANCELAR PIX?',
+      message: 'Se o cliente já pagou no MaxBank, cancelar aqui não devolve o dinheiro. Só cancele se ele ainda não pagou.',
+      confirmLabel: 'CANCELAR PIX',
+      cancelLabel: 'VOLTAR',
+      variant: 'danger',
+      onConfirm: () => { cancelPixPayment(); },
+    });
   };
 
   const cancelPixPayment = async () => {
@@ -3447,6 +3524,11 @@ Para não cobrar nada, cancele a venda (F9).`,
   const { aoVivo: pixAoVivo } = useCobrancaPendente(cobrancaPix, () => {
     if (pixConfirmedRef.current.has(pixUuid)) return;
     pixConfirmedRef.current.add(pixUuid);
+    // PIX como forma única fecha a venda sozinho. Como linha de um misto, o
+    // valor entra na lista e o operador volta ao pagamento para lançar o resto
+    // — a venda só fecha no FECHAR VENDA. Nos nichos quem fecha é o efeito
+    // próprio deles; disparar os dois gravaria a venda duas vezes.
+    const linhaDoMisto = payments.length > 0 || pixAmount < remaining - 0.001;
     setPayments(prev => [...prev, { method: 'pix', amount: pixAmount }]);
     setPartialAmount('');
     setPixModalOpen(false);
@@ -3454,7 +3536,8 @@ Para não cobrar nada, cancele a venda (F9).`,
     setPixConfirmedFlash(true);
     setTimeout(() => {
       setPixConfirmedFlash(false);
-      setPixAutoFinalize(true);
+      if (!isSimulationMode && !linhaDoMisto) setPixAutoFinalize(true);
+      else focusAfterExtraConfirm();
     }, 1200);
   });
 
@@ -3472,11 +3555,17 @@ Para não cobrar nada, cancele a venda (F9).`,
   const { aoVivo: cartaoAoVivo } = useCobrancaPendente(cobrancaCartao, () => {
     if (!cartaoModal || cartaoConfirmedRef.current.has(cartaoModal.uuid)) return;
     cartaoConfirmedRef.current.add(cartaoModal.uuid);
+    const linhaDoMisto = payments.length > 0 || cartaoModal.amount < remaining - 0.001;
     const payment: Payment = cartaoModal.metodo === 'credito'
       ? { method: 'credito', amount: cartaoModal.amount, installments: cartaoModal.parcelas }
       : { method: 'debito', amount: cartaoModal.amount };
     setPayments(prev => [...prev, payment]);
+    setPartialAmount('');
     setCartaoModal(null);
+    // Mesma regra do PIX: forma única fecha sozinha; linha do misto volta ao
+    // pagamento. Nos nichos quem fecha é o efeito deles.
+    if (!isSimulationMode && !linhaDoMisto) setPixAutoFinalize(true);
+    else focusAfterExtraConfirm();
   });
 
   const confirmFiadoClient = (client: Client) => {
@@ -3581,6 +3670,18 @@ Para não cobrar nada, cancele a venda (F9).`,
   };
 
   const finalizeSale = async () => {
+    // Pago acima do total só acontece se o carrinho mudou DEPOIS do pagamento
+    // (nos nichos, quando a gravação falha após o PIX/cartão pago, o carrinho
+    // volta a ser editável). Gravar assim registrava um pago que ninguém devolve.
+    if (paid > total + 0.001) {
+      autoFinalizeRecusadoRef.current = assinaturaTentativa();
+      showAlert({
+        title: 'Carrinho mudou depois do pagamento',
+        message: `Já foram pagos R$ ${paid.toFixed(2).replace('.', ',')}, mas o total agora é R$ ${total.toFixed(2).replace('.', ',')}. Volte o carrinho ao que foi pago para registrar a venda.${avisoEletronicoPago(payments)}`,
+        variant: 'warning',
+      });
+      return;
+    }
     const fiadoPayment = payments.find(p => p.method === 'fiado');
     setSaving(true);
     try {
@@ -3886,6 +3987,7 @@ Para não cobrar nada, cancele a venda (F9).`,
     let qrDataUrl: string | undefined;
     try {
       if (!isTraining) {
+        await cancelarPendentesAntigas('cartao_pendentes');
         const { error: insertErr } = await supabase
           .from('cartao_pendentes')
           .insert({
@@ -3912,39 +4014,18 @@ Para não cobrar nada, cancele a venda (F9).`,
     }
   };
 
-  // Confirma manualmente o pagamento com cartão em real mode. O operador
-  // clica quando vê o aluno concluir na Área do Cliente do MaxBank —
-  // fallback pro caso do realtime não disparar (rede ruim etc).
-  // Segue o mesmo padrão do confirmPixPayment: guarda via ref pra não
-  // dobrar payment se o realtime chegar em corrida, e adiciona à lista
-  // (não substitui) pra preservar pagamento misto.
-  const confirmCartaoPayment = async () => {
-    if (!cartaoModal) return;
-    const { uuid, metodo, amount, parcelas } = cartaoModal;
-    if (cartaoConfirmedRef.current.has(uuid)) {
-      setCartaoModal(null);
-      return;
-    }
-    cartaoConfirmedRef.current.add(uuid);
-    try {
-      if (!isTraining) {
-        const { error } = await supabase.rpc('confirmar_cartao_pendente', { p_id: uuid });
-        if (error && (error as any).code !== 'P0002') throw error;
-      }
-      const payment: Payment = metodo === 'credito'
-        ? { method: 'credito', amount, installments: parcelas }
-        : { method: 'debito', amount };
-      setPayments(prev => [...prev, payment]);
-      setCartaoModal(null);
-    } catch (err: any) {
-      // Rollback do guard — deixa o operador tentar de novo.
-      cartaoConfirmedRef.current.delete(uuid);
-      showAlert({
-        title: 'Erro ao confirmar cartão',
-        message: err?.message ? String(err.message) : String(err),
-        variant: 'error',
-      });
-    }
+  // Mesma pergunta do PIX: cancelar uma cobrança que o cliente acabou de
+  // autorizar não devolve nada a ele.
+  const pedirCancelarCartao = () => {
+    if (isTraining) { cancelCartaoPayment(); return; }
+    askConfirm({
+      title: 'CANCELAR CARTÃO?',
+      message: 'Se o cliente já autorizou no MaxBank, cancelar aqui não devolve o dinheiro. Só cancele se ele ainda não autorizou.',
+      confirmLabel: 'CANCELAR CARTÃO',
+      cancelLabel: 'VOLTAR',
+      variant: 'danger',
+      onConfirm: () => { cancelCartaoPayment(); },
+    });
   };
 
   // Cancelamento: fecha o modal e marca cartao_pendentes='cancelado' no
@@ -3978,8 +4059,11 @@ Para não cobrar nada, cancele a venda (F9).`,
       const payment: Payment = cartaoModal.metodo === 'credito'
         ? { method: 'credito', amount: cartaoModal.amount, installments: cartaoModal.parcelas }
         : { method: 'debito', amount: cartaoModal.amount };
-      setPayments([payment]);
+      // Soma à lista: no SuperMax o cartão pode ser linha de um misto.
+      setPayments(prev => [...prev, payment]);
+      setPartialAmount('');
       setCartaoModal(null);
+      focusAfterExtraConfirm();
     }, 4000);
     return () => clearTimeout(t);
   }, [cartaoModal, isTraining]);
@@ -3989,7 +4073,7 @@ Para não cobrar nada, cancele a venda (F9).`,
   useEffect(() => {
     if (!pixModalOpen) return;
     if (!isTraining) return;
-    const t = setTimeout(() => { confirmPixPayment(); }, 5000);
+    const t = setTimeout(() => { confirmPixTreino(); }, 5000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pixModalOpen, isTraining]);
@@ -4181,6 +4265,8 @@ Para não cobrar nada, cancele a venda (F9).`,
     if (!pixAutoFinalize) return;
     if (saving) return;
     if (total <= 0) { setPixAutoFinalize(false); return; }
+    // Recusada pelo servidor: quem tenta de novo é o operador, no FECHAR VENDA.
+    if (autoFinalizeRecusadoRef.current === assinaturaTentativa()) { setPixAutoFinalize(false); return; }
     if (paid >= total - 0.001) {
       setPixAutoFinalize(false);
       finalizeSale();
@@ -4920,13 +5006,21 @@ Para não cobrar nada, cancele a venda (F9).`,
                 {/* Valor desta forma + pagamentos lançados */}
                 <div className="px-6 pt-4">
                   <label className="text-[11px] font-bold uppercase tracking-wider text-gray-500 block mb-1.5">
-                    VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante · PIX, Vale e Fiado só como forma única)</span>
+                    VALOR DESTA FORMA <span className="text-gray-400 normal-case font-medium">(vazio = restante · Vale e Fiado só como forma única)</span>
                   </label>
                   <input
                     ref={partialAmountRef}
                     value={partialAmount}
                     onChange={(e) => setPartialAmount(maskCurrency(e.target.value))}
                     onKeyDown={(e) => {
+                      // Com valor digitado, Esc limpa só o campo. Vazio, sobe e
+                      // vale como "voltar" — antes o Esc arrependido de um
+                      // valor já tirava o operador do fechamento.
+                      if (e.key === 'Escape' && partialAmount) {
+                        e.preventDefault(); e.stopPropagation();
+                        setPartialAmount('');
+                        return;
+                      }
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         // Padrão supermercado (Bematech/Linx): Enter NUNCA assume forma de pagamento.
@@ -4973,6 +5067,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                             label = `Fiado — ${p.clientName}`;
                           }
                           const isEditing = editingPaymentIdx === i;
+                          const eletronico = ehPagamentoEletronico(p);
                           return (
                             <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-300 px-2.5 py-1.5 gap-2 rounded">
                               <div className="min-w-0 flex-1">
@@ -5002,8 +5097,11 @@ Para não cobrar nada, cancele a venda (F9).`,
                                   // do input (que agora cancela) — assim o click confirma.
                                   onMouseDown={isEditing ? (e) => e.preventDefault() : undefined}
                                   onClick={() => isEditing ? commitEditPayment() : startEditPayment(i)}
-                                  className="p-1.5 rounded glass-blue shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                                  title={isEditing ? 'Confirmar valor (Enter)' : 'Editar valor (Enter)'}
+                                  disabled={eletronico && !isEditing}
+                                  className="p-1.5 rounded glass-blue shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                                  title={eletronico
+                                    ? 'Valor confirmado pelo MaxBank — não se edita'
+                                    : isEditing ? 'Confirmar valor (Enter)' : 'Editar valor (Enter)'}
                                 >
                                   <Pencil size={12} className="relative z-[2]" />
                                 </button>
@@ -5031,11 +5129,10 @@ Para não cobrar nada, cancele a venda (F9).`,
                   </h3>
                   <div className="relative grid grid-cols-3 gap-2">
                     {(() => {
-                      // PIX, Vale e Fiado dependem de confirmação assíncrona
-                      // (RPC/pix_pendentes ou lançamento em contas a receber pelo
-                      // valor cheio) — não dá pra fatiar como Dinheiro/Cartão.
-                      // Mesma trava do LogMax, estendida ao Vale por depender do
-                      // mesmo tipo de confirmação do PIX.
+                      // Vale e Fiado só como forma única (mesma trava do
+                      // LogMax). PIX aceita misto desde 23/09 — vários clientes
+                      // dividindo a conta: confirmado, vira uma linha, como o
+                      // cartão.
                       const partialNum = parseCurrencyToNumber(partialAmount);
                       const isMistoActive = payments.length > 0 || (partialNum > 0 && partialNum < remaining - 0.001);
                       return [
@@ -5047,7 +5144,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                         { id: 'fiado', label: 'FIADO', icon: Users, hint: 'F3' },
                       ].map((m, mIdx, arr) => {
                         const Icon = m.icon;
-                        const isMistoOnly = m.id === 'pix' || m.id === 'vale' || m.id === 'fiado';
+                        const isMistoOnly = m.id === 'vale' || m.id === 'fiado';
                         const isDisabled = remaining <= 0 || (isMistoActive && isMistoOnly);
                         return (
                           <button
@@ -5059,7 +5156,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                               else if (m.id === 'pix') handlePixClick();
                               else if (m.id === 'dinheiro') handleCashClick();
                               else if (m.id === 'vale') handleValeClick();
-                              else addPayment(m.id as any);
+                              else handleDebitClick();
                             }}
                             onKeyDown={(e) => {
                               // Setas andam DENTRO do grid (roving). Tab NÃO:
@@ -5145,7 +5242,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                             setCardPickerOpen(false);
                             setCardPickerIdx(0);
                             // Aguardar fechamento antes de disparar (evita disputa com isAnyPaymentModalOpen)
-                            setTimeout(() => { if (idx === 0) handleCreditClick(); else addPayment('debito'); }, 0);
+                            setTimeout(() => { if (idx === 0) handleCreditClick(); else handleDebitClick(); }, 0);
                           }
                         }}
                         tabIndex={-1}
@@ -5162,7 +5259,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                             onClick={() => {
                               setCardPickerOpen(false);
                               if (idx === 0) handleCreditClick();
-                              else addPayment('debito');
+                              else handleDebitClick();
                               setCardPickerIdx(0);
                             }}
                             className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === cardPickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
@@ -5174,18 +5271,33 @@ Para não cobrar nada, cancele a venda (F9).`,
                       </div>
                     )}
 
-                    {/* Picker flutuante F3 — PIX / Vale-Alimentação / Fiado */}
-                    {valePickerOpen && (
+                    {/* Picker flutuante F3 — PIX / Vale-Alimentação / Fiado.
+                        Em misto só o PIX vale: Vale e Fiado aparecem
+                        desabilitados e as setas pulam os dois. */}
+                    {valePickerOpen && (() => {
+                      const partialF3 = parseCurrencyToNumber(partialAmount);
+                      const mistoF3 = payments.length > 0 || (partialF3 > 0 && partialF3 < remaining - 0.001);
+                      const bloqueada = (idx: number) => mistoF3 && idx !== 0;
+                      const andar = (passo: 1 | 2) => setValePickerIdx(i => {
+                        let n = i;
+                        for (let k = 0; k < 3; k++) {
+                          n = (n + passo) % 3;
+                          if (!bloqueada(n)) return n;
+                        }
+                        return i;
+                      });
+                      return (
                       <div
                         className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border-2 shadow-2xl z-50 w-72"
                         style={{ borderColor: NAVY_DARK }}
                         onKeyDown={(e) => {
                           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setValePickerOpen(false); }
-                          else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i + 1) % 3); }
-                          else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); setValePickerIdx(i => (i - 1 + 3) % 3); }
+                          else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); andar(1); }
+                          else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); andar(2); }
                           else if (e.key === 'Enter') {
                             e.preventDefault(); e.stopPropagation();
                             const idx = valePickerIdx;
+                            if (bloqueada(idx)) return;
                             setValePickerOpen(false);
                             setValePickerIdx(0);
                             setTimeout(() => {
@@ -5205,11 +5317,14 @@ Para não cobrar nada, cancele a venda (F9).`,
                           { label: 'PIX', Icon: Wallet },
                           { label: 'VALE-ALIMENTAÇÃO', Icon: Wallet },
                           { label: 'FIADO', Icon: Users },
-                        ].map(({ label, Icon }, idx) => (
+                        ].map(({ label, Icon }, idx) => {
+                          const off = bloqueada(idx);
+                          return (
                           <button
                             key={label}
                             type="button"
-                            onMouseEnter={() => setValePickerIdx(idx)}
+                            disabled={off}
+                            onMouseEnter={() => { if (!off) setValePickerIdx(idx); }}
                             onClick={() => {
                               setValePickerOpen(false);
                               if (idx === 0) handlePixClick();
@@ -5217,14 +5332,18 @@ Para não cobrar nada, cancele a venda (F9).`,
                               else handleFiadoClick();
                               setValePickerIdx(0);
                             }}
-                            className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
+                            title={off ? `${label} só funciona como forma única — limpe os pagamentos lançados pra usar` : undefined}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm border-b border-gray-200 disabled:opacity-30 disabled:cursor-not-allowed ${idx === valePickerIdx ? 'bg-yellow-100' : 'bg-white hover:bg-yellow-50'}`}
                           >
                             <Icon size={18} />
                             <span className="font-bold text-gray-900">{label}</span>
+                            {off && <span className="ml-auto text-[10px] font-bold text-gray-500">só forma única</span>}
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -5234,7 +5353,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                   <button
                     data-extra-action="desconto"
                     onClick={openTotalDiscountModal}
-                    disabled={subtotal <= 0}
+                    disabled={subtotal <= 0 || payments.length > 0}
                     className="py-2 text-[11px] font-black uppercase tracking-wider border-2 disabled:opacity-30 hover:bg-yellow-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:border-blue-700"
                     style={{ borderColor: YELLOW_DARK, color: NAVY_DARK }}
                     title="Desconto no total (F6 abre direto · F5 foca aqui)"
@@ -6186,11 +6305,14 @@ Para não cobrar nada, cancele a venda (F9).`,
             ref={(el) => { if (el && pixModalOpen && !el.contains(document.activeElement)) el.focus(); }}
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPixPayment(); }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pedirCancelarPix(); }
               else if (e.key === 'Enter') {
                 const tag = (e.target as HTMLElement)?.tagName;
                 if (tag === 'BUTTON') { e.stopPropagation(); return; }
-                e.preventDefault(); e.stopPropagation(); confirmPixPayment();
+                // Enter simula o MaxBank só no treino. No real, o Enter por
+                // hábito fechava como paga uma venda que ninguém pagou.
+                e.preventDefault(); e.stopPropagation();
+                if (isTraining) confirmPixTreino();
               }
               else if (e.key.length === 1 || /^F\d+$/.test(e.key)) { e.stopPropagation(); }
             }}
@@ -6198,7 +6320,7 @@ Para não cobrar nada, cancele a venda (F9).`,
             <div data-training-target="pix-modal" className="bg-white border-2 max-w-md w-full shadow-2xl" style={{ fontFamily: 'Arial, Helvetica, sans-serif', borderColor: '#9ca3af' }}>
               <div className="px-4 py-2.5 flex items-center justify-between text-black" style={{ background: YELLOW, borderBottom: `2px solid ${YELLOW_DARK}` }}>
                 <span className="font-black tracking-wide text-sm uppercase">PIX · MaxBank</span>
-                <button onClick={cancelPixPayment} className="hover:opacity-70" tabIndex={-1}>
+                <button onClick={pedirCancelarPix} className="hover:opacity-70" tabIndex={-1}>
                   <X size={20} />
                 </button>
               </div>
@@ -6224,12 +6346,16 @@ Para não cobrar nada, cancele a venda (F9).`,
                   </span>
                   Aguardando confirmação do MaxBank...
                 </div>
+                <div className="text-xs text-gray-500 text-center px-2">
+                  {checkoutMode && (payments.length > 0 || pixAmount < remaining - 0.001)
+                    ? 'Confirmado o pagamento, o valor entra na lista e você volta pra lançar o resto.'
+                    : 'A venda fecha sozinha quando o pagamento for confirmado.'}
+                </div>
                 {/* Só aparece quando a escuta ao vivo NÃO está de pé. O PDV
                     continua conferindo por consulta, então o pagamento ainda
                     cai sozinho — só demora alguns segundos a mais. Dizer isso
-                    evita as duas reações erradas: achar que travou e cancelar
-                    uma cobrança já paga, ou apertar PAGAMENTO RECEBIDO sem ter
-                    visto o dinheiro entrar. */}
+                    evita que o operador ache que travou e cancele uma cobrança
+                    já paga. */}
                 {!isTraining && !pixAoVivo && (
                   <div
                     className="text-[11px] font-bold text-center px-3 py-1.5 rounded"
@@ -6241,26 +6367,17 @@ Para não cobrar nada, cancele a venda (F9).`,
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
                   {buildPixQrValue(pixUuid)}
                 </div>
+                {/* Sem botão de confirmação manual em modo nenhum (padrão
+                    LogMax): quem confirma é o MaxBank. Com a rede ruim o PDV
+                    continua conferindo por consulta — o aviso acima diz isso. */}
                 <div className="flex gap-3 w-full pt-2">
                   <button
-                    onClick={cancelPixPayment}
-                    className={isTraining ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50' : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
+                    onClick={pedirCancelarPix}
+                    className="w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
                     style={{ borderColor: '#9ca3af' }}
                   >
-                    CANCELAR
+                    CANCELAR PIX
                   </button>
-                  {!isTraining && (
-                    // Simulação (nichos + treinamento) NÃO tem botão manual:
-                    // o realtime do MaxBank confirma sozinho via setTimeout no
-                    // useEffect. Padrão LogMax — operador não pode auto-forçar.
-                    <button
-                      onClick={confirmPixPayment}
-                      className="flex-1 px-4 py-3 text-white font-bold"
-                      style={{ background: MONEY }}
-                    >
-                      PAGAMENTO RECEBIDO
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -6275,7 +6392,7 @@ Para não cobrar nada, cancele a venda (F9).`,
             ref={(el) => { if (el && cartaoModal && !el.contains(document.activeElement)) el.focus(); }}
             onKeyDown={(e) => {
               if (e.key === 'Tab') trapTab(e, e.currentTarget as HTMLElement);
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelCartaoPayment(); }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pedirCancelarCartao(); }
               else { e.stopPropagation(); }
             }}
           >
@@ -6286,7 +6403,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                 <span className="font-black tracking-wide text-sm uppercase flex items-center gap-2">
                   <CreditCard size={16} /> MaxPay · {cartaoModal.metodo === 'credito' ? 'Cartão de Crédito' : 'Cartão de Débito'}
                 </span>
-                <button onClick={cancelCartaoPayment} className="hover:opacity-70" tabIndex={-1}>
+                <button onClick={pedirCancelarCartao} className="hover:opacity-70" tabIndex={-1}>
                   <X size={20} />
                 </button>
               </div>
@@ -6325,6 +6442,11 @@ Para não cobrar nada, cancele a venda (F9).`,
                   </span>
                   Aguardando autorização MaxPay...
                 </div>
+                <div className="text-xs text-gray-500 text-center px-2">
+                  {checkoutMode && (payments.length > 0 || cartaoModal.amount < remaining - 0.001)
+                    ? 'Autorizado, o valor entra na lista e você volta pra lançar o resto.'
+                    : 'A venda fecha sozinha quando for autorizado.'}
+                </div>
                 {/* Mesmo aviso do PIX, pelo mesmo motivo. */}
                 {!isTraining && !cartaoAoVivo && (
                   <div
@@ -6337,28 +6459,14 @@ Para não cobrar nada, cancele a venda (F9).`,
                 <div className="text-[10px] text-gray-400 text-center font-mono break-all px-4">
                   {buildCartaoQrValue(cartaoModal.uuid)}
                 </div>
-                <div className={isTraining ? 'w-full' : 'flex gap-3 w-full'}>
+                <div className="w-full">
                   <button
-                    onClick={cancelCartaoPayment}
-                    className={isTraining
-                      ? 'w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'
-                      : 'flex-1 px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50'}
+                    onClick={pedirCancelarCartao}
+                    className="w-full px-4 py-3 border-2 text-gray-700 font-bold hover:bg-gray-50"
                     style={{ borderColor: '#9ca3af' }}
                   >
-                    CANCELAR
+                    CANCELAR CARTÃO
                   </button>
-                  {!isTraining && (
-                    // Real mode: operador confirma manualmente após ver o
-                    // aluno autorizar na Área do Cliente do MaxBank. Mesmo
-                    // padrão do botão PAGAMENTO RECEBIDO do Pix.
-                    <button
-                      onClick={confirmCartaoPayment}
-                      className="flex-1 px-4 py-3 text-white font-bold"
-                      style={{ background: MONEY }}
-                    >
-                      PAGAMENTO RECEBIDO
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -6975,7 +7083,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                 </button>
               </div>
               <div className="p-5 space-y-5">
-                <p className="text-base text-gray-800 leading-relaxed">{confirmDialog.message}</p>
+                <p className="text-base text-gray-800 leading-relaxed whitespace-pre-line">{confirmDialog.message}</p>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
@@ -7901,6 +8009,7 @@ Para não cobrar nada, cancele a venda (F9).`,
               valePickerOpen,
               showInstallments,
               pixModalOpen,
+              cartaoModalOpen: cartaoModal !== null,
               showClientPicker,
               sangriaModal,
               supModal,
@@ -7976,7 +8085,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                   <span className="font-black tracking-wide text-sm uppercase">{alertDialog.title}</span>
                 </div>
                 <div className="p-5 space-y-5">
-                  <p className="text-base text-gray-800 leading-relaxed">{alertDialog.message}</p>
+                  <p className="text-base text-gray-800 leading-relaxed whitespace-pre-line">{alertDialog.message}</p>
                   <button
                     type="button"
                     autoFocus
