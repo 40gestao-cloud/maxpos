@@ -355,6 +355,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // um filtro local, dava pra cadastrar produto numa loja estando "em" outra.
   const { filialAtiva } = useFilial();
   const nichoFilter = filialAtiva ?? 'supermax';
+  // A categoria escolhida é de UMA empresa: ao trocar, o seletor não teria a
+  // opção e a lista ficaria vazia sem motivo aparente.
+  useEffect(() => { setCategoriaFiltro(''); }, [nichoFilter]);
   // Badge sólido de empresa. A paleta mora no FilialContext (FILIAL_META) —
   // estava duplicada aqui, no FiltroLoja e no PDV, e as três já tinham
   // divergido: SuperMax chegou a ser amarelo num lugar e azul no outro.
@@ -1197,7 +1200,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const confirmStockAdjustment = async () => {
     if (!stockModal.product) return;
 
-    const atual = stockModal.product.stock || 0;
+    // Saldo da lista, que o Realtime mantém em dia: o `product` do modal é o
+    // formulário, e ele guarda o estoque de quando foi aberto.
+    const atual = Number(products.find(p => p.id === stockModal.product?.id)?.stock ?? stockModal.product.stock ?? 0);
     const amount = stockModal.amount;
     let newStock = atual;
     if (stockModal.action === 'sum') newStock += amount;
@@ -1222,8 +1227,10 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     // mostrava o erro e as linhas seguintes o sobrescreviam com "atualizado
     // com sucesso" — o operador via sucesso, a lista continuava com o número
     // velho, e o ajuste tinha se perdido.
+    // Só o saldo vai ao banco. Gravar o produto inteiro levava junto o que
+    // ainda estava sem salvar no formulário (preço, nome...).
     try {
-      await Storage.upsertProduct(updatedProduct);
+      await Storage.atualizarEstoqueProduto(stockModal.product.id, newStock);
     } catch (err: any) {
       showAlert(explicarErro(err, 'ajustar o estoque'));
       return;
@@ -1234,9 +1241,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       stockModal.action === 'sum' ? 'entrada' : stockModal.action === 'subtract' ? 'saida' : 'correcao',
     );
 
-    setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? updatedProduct : p));
+    setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? { ...p, stock: newStock } : p));
     if (editingItem && editingItem.id === stockModal.product.id) {
       setFormData((prev: any) => ({ ...prev, stock: newStock }));
+      // O saldo já está gravado: o salvar do formulário não precisa (nem
+      // deve) reenviá-lo, senão desfaria uma venda feita nesse meio tempo.
+      setEditingItem((prev: any) => prev ? { ...prev, stock: newStock } : prev);
     }
     setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
 
@@ -1474,24 +1484,30 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           // margem, que ele acabou de calcular no formulário.
           const custoProd = Number(productFields.costPrice ?? 0);
           const margemProd = preco && custoProd ? ((preco - custoProd) / preco) * 100 : 0;
-          const resumoProduto = [
+          const resumoProduto = (saldo: number) => [
             formatBRL(preco),
             custoProd > 0 ? `margem ${margemProd.toFixed(1)}%` : 'sem custo informado',
             productFields.controlStock === false
               ? 'sem controle de estoque'
-              : `${finalStock} ${productFields.unit || 'UN'} em estoque`,
+              : `${saldo} ${productFields.unit || 'UN'} em estoque`,
           ].join(' · ');
           try {
             if (editingItem) {
-              const updated = { ...editingItem, ...productFields, stock: finalStock };
-              // Saldo de antes vem da lista, não de `editingItem`: se o
-              // "Editar estoque" foi usado com o formulário aberto, ele já
-              // registrou aquele ajuste e atualizou a lista.
-              const saldoAntes = Number(products.find(p => p.id === editingItem.id)?.stock ?? editingItem.stock ?? 0);
-              await Storage.upsertProduct(updated);
+              // Saldo atual vem da lista (o Realtime a mantém em dia), não de
+              // `editingItem`, que é a foto de quando o formulário abriu.
+              const saldoAtual = Number(products.find(p => p.id === editingItem.id)?.stock ?? editingItem.stock ?? 0);
+              // Só grava estoque se ele mudou no formulário (campo direto ou
+              // "Editar estoque"). Sem isso, uma venda feita com o formulário
+              // aberto era desfeita ao salvar uma troca de preço: o produto
+              // voltava ao saldo de quando abriu. Sem `stock` no payload, o
+              // upsert não toca a coluna.
+              const estoqueMexido = Number(formData.stock ?? 0) !== Number(editingItem.stock ?? 0);
+              const updated = { ...editingItem, ...productFields, stock: estoqueMexido ? finalStock : saldoAtual };
+              const { stock: _saldo, ...semEstoque } = updated;
+              await Storage.upsertProduct(estoqueMexido ? updated : semEstoque);
               setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
-              registrarAjuste(updated, saldoAntes, Number(finalStock), 'correcao');
-              toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto });
+              if (estoqueMexido) registrarAjuste(updated, saldoAtual, Number(finalStock), 'correcao');
+              toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto(Number(updated.stock)) });
             } else {
               const newProduct = {
                 unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,
@@ -1502,7 +1518,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               setProducts(prev => [...prev, newProduct]);
               toast.sucesso({
                 titulo: `${nome} cadastrado`,
-                mensagem: `${resumoProduto}${ref ? ` · REF ${ref}` : ''}`,
+                mensagem: `${resumoProduto(Number(finalStock))}${ref ? ` · REF ${ref}` : ''}`,
               });
             }
             setShowAddProduct(false);

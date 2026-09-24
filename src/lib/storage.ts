@@ -444,6 +444,13 @@ export const Storage = {
     if (error) throw error;
   },
 
+  // Só a coluna do saldo — usado pelo "Editar estoque", que é aberto de dentro
+  // do formulário e não pode gravar junto o que ainda não foi salvo nele.
+  atualizarEstoqueProduto: async (id: string, stock: number): Promise<void> => {
+    const { error } = await supabase.from('products').update({ stock }).eq('id', id);
+    if (error) throw error;
+  },
+
   upsertProduct: async (product: Product): Promise<void> => {
     const { created_at, pdvMode, ...row } = product as any;
     (row as any).pdv_mode = pdvMode ?? 'supermax';
