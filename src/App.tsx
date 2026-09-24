@@ -323,6 +323,7 @@ function AppInterno() {
       <FilialSelector
         opcoes={permitidas}
         operador={user.name}
+        usuarioId={user.id}
         onEscolher={(f) => { setFilialAtiva(f); setActiveTab('inicio'); }}
         onSair={handleLogout}
       />
@@ -495,7 +496,8 @@ function AppInterno() {
               amarelo de 48px fechando a coluna. Agora ocupa uma linha só. */}
           <button
             onClick={handleLogout}
-            className="w-full px-3 py-1.5 flex items-center justify-center gap-1.5 font-bold text-[11px] uppercase tracking-wide glass-yellow shimmer rounded-md"
+            className="w-full px-3 py-1.5 flex items-center justify-center gap-1.5 font-bold text-[11px] uppercase tracking-wide shimmer rounded-md border transition hover:brightness-105"
+            style={{ background: 'var(--accent)', borderColor: 'var(--accent-dark)', color: 'var(--accent-fg)' }}
           >
             <LogOut size={13} className="relative z-[2]" />
             <span className="relative z-[2]">Sair do Sistema</span>
@@ -532,11 +534,14 @@ function AppInterno() {
                 onClick={clearFilial}
                 title="Trocar de empresa"
                 className="px-3 py-2 rounded-lg flex items-center gap-2 text-xs font-black uppercase tracking-wider border-2 transition hover:brightness-110"
-                style={{
-                  background: FILIAL_META[filialAtiva ?? 'supermax'].color,
-                  color: FILIAL_META[filialAtiva ?? 'supermax'].fg,
-                  borderColor: FILIAL_META[filialAtiva ?? 'supermax'].dark,
-                }}
+                // SuperMax é azul, e azul sobre o navy da header some.
+                style={(filialAtiva ?? 'supermax') === 'supermax'
+                  ? { background: '#FFC107', color: '#172554', borderColor: '#B8860B' }
+                  : {
+                      background: FILIAL_META[filialAtiva!].color,
+                      color: FILIAL_META[filialAtiva!].fg,
+                      borderColor: FILIAL_META[filialAtiva!].dark,
+                    }}
               >
                 <Building2 size={14} />
                 <span className="hidden sm:inline">{FILIAL_META[filialAtiva ?? 'supermax'].label}</span>

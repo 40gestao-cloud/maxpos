@@ -817,6 +817,9 @@ body {
   border-radius: 1rem;
   padding: 1.25rem;
 }
+.detalhes-modal .fc-section {
+  border-color: #FFC107;
+}
 .form-cadastro .fc-section-title {
   display: flex;
   align-items: center;

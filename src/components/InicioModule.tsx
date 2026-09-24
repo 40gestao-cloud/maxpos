@@ -5,6 +5,7 @@
 
 import { User } from '../types';
 import { useState } from 'react';
+import { GraduationCap } from 'lucide-react';
 import { getCompleted, ALL_SCENARIOS, resetProgress } from '../lib/trainingProgress';
 import { useConfirmDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
@@ -39,13 +40,13 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
     'Boa noite';
 
   return (
-    <div className="min-h-full flex items-center justify-center px-6 py-8" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+    <div className="min-h-full flex items-center justify-center px-6 py-8">
       {confirmHost}
       <div className="w-full max-w-5xl">
         {/* Saudação ao operador */}
         <div className="text-center mb-8">
           <div
-            className="inline-block px-4 py-1 rounded-full text-[11px] font-black uppercase tracking-[0.35em] border-2"
+            className="inline-block px-4 py-1 rounded-full text-xs font-bold tracking-wide border-2 first-letter:uppercase"
             style={{ background: YELLOW, color: NAVY_DARK, borderColor: YELLOW_DARK }}
           >
             {now.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
@@ -61,77 +62,30 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
         {/* Um card do MaxPOS (o sistema) e um da EMPRESA ATIVA. O segundo
             era o SuperMax fixo, entao MaxLook e TechMax viam a marca de outra
             loja na propria tela de entrada. */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* MaxPOS — o sistema */}
-          {/* border-4 -> borda fina + elevacao. Os 4px de contorno vinham de
-              quando o sistema inteiro era plano e a borda era o unico recurso
-              pra separar superficies; agora que os cards tem sombra, aquele
-              traco grosso era o que mais lembrava wireframe na tela de entrada. */}
-          <div className="neumorphic p-8 flex flex-col items-center text-center border-t-4"
-            style={{ borderTopColor: NAVY_DARK }}
-          >
-            <div
-              className="w-32 h-32 rounded-xl overflow-hidden border-2 flex items-center justify-center mb-4"
-              style={{ borderColor: YELLOW }}
-            >
-              <img src="/icon-maxpos.png" alt="MaxPOS" className="max-w-full max-h-full object-contain" draggable={false} />
+        {/* Só as logos: o texto repetia o que a sidebar e a header já dizem,
+            e o foco da tela é o botão de treinamento logo abaixo. */}
+        <div className="grid grid-cols-2 gap-6 md:gap-12 max-w-4xl mx-auto">
+          <div className="neumorphic p-6 md:p-10 flex items-center justify-center border-t-4" style={{ borderTopColor: NAVY_DARK }}>
+            <div className="w-56 max-w-full aspect-square rounded-xl overflow-hidden border-2 flex items-center justify-center" style={{ borderColor: YELLOW }}>
+              <img src="/icon-maxpos.png" alt="MaxPOS" className="w-full h-full object-contain" draggable={false} />
             </div>
-            <h2
-              className="text-3xl font-black tracking-tight"
-              style={{ color: NAVY_DARK, letterSpacing: '-0.02em' }}
-            >
-              {/* O POS sai no amarelo da logo (var(--accent) = #FFC107 no
-                  SuperMax). O dourado escuro que estava aqui e a cor de
-                  BORDA do tema, nao a da marca. */}
-              Max<span style={{ color: YELLOW }}>POS</span>
-            </h2>
-            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.6 }}>
-              ERP · PDV · GESTÃO
-            </p>
-            <p className="mt-4 text-sm text-gray-600 leading-relaxed">
-              {/* Dizia "...financeiro e relatórios". O módulo Relatórios saiu do
-                  sistema em 2026-09-04 e o texto virou promessa de uma tela que
-                  não existe mais. */}
-              Sistema de gestão integrado: PDV, cadastros, estoque,
-              financeiro e folha de pagamento.
-            </p>
           </div>
-
-          {/* Empresa ativa */}
-          {/* Faixa no acento do tema, nao em `empresa.dark`: no SuperMax o dark
-              e o azul da logo e o card saia azul, destoando do amarelo que
-              identifica o sistema. */}
-          <div className="neumorphic p-8 flex flex-col items-center text-center border-t-4"
-            style={{ borderTopColor: YELLOW }}
-          >
-            {/* A placa acompanha o fundo embutido no PNG de cada logo, e a
-                moldura fina fica na cor da EMPRESA (azul no SuperMax) — é ela
-                que identifica a loja dentro do card. A borda grossa em volta é
-                que carrega o amarelo do sistema. */}
+          {/* A placa acompanha o fundo embutido no PNG de cada logo, e a
+              moldura fina fica na cor da EMPRESA (azul no SuperMax). */}
+          <div className="neumorphic p-6 md:p-10 flex items-center justify-center border-t-4" style={{ borderTopColor: YELLOW }}>
             <div
-              className="w-32 h-32 rounded-xl p-3 border-2 flex items-center justify-center mb-4 overflow-hidden"
-              style={{ background: empresa.plate, borderColor: empresa.color }}
+              className={`w-56 max-w-full aspect-square rounded-xl flex items-center justify-center ${filialAtiva === 'maxlook' || filialAtiva === 'techmax' ? 'overflow-hidden' : ''}`}
+              style={{ background: empresa.plate }}
             >
-              <img src={empresa.logo} alt={empresa.label} className="max-w-full max-h-full object-contain" draggable={false} />
+              {/* O PNG da SuperMax é transparente e tem margem própria em
+                  volta: sem a ampliação ele ficava menor que o do MaxPOS. */}
+              <img
+                src={empresa.logo}
+                alt={empresa.label}
+                className={`w-full h-full object-contain ${filialAtiva === 'maxlook' || filialAtiva === 'techmax' ? '' : 'scale-[1.3]'}`}
+                draggable={false}
+              />
             </div>
-            {/* NAVY_DARK e a cor escura da MARCA (var(--navy)), que o tema
-                troca por empresa: azul no SuperMax, preto no MaxLook e no
-                TechMax. Antes usava `empresa.dark`, que e o acento escuro —
-                laranja queimado no TechMax, marrom no MaxLook — e o nome da
-                loja saía colorido em vez de preto. */}
-            <h2
-              className="text-3xl font-black tracking-tight"
-              style={{ color: NAVY_DARK, letterSpacing: '-0.02em' }}
-            >
-              {empresa.label}
-            </h2>
-            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.3em]" style={{ color: NAVY_DARK, opacity: 0.65 }}>
-              {empresa.descricao}
-            </p>
-            <p className="mt-4 text-sm text-gray-600 leading-relaxed">
-              Você está operando nesta empresa. Produtos, caixa, estoque e
-              resultado são próprios dela — troque pelo botão no topo.
-            </p>
           </div>
         </div>
 
@@ -150,26 +104,26 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
           // cards grandes que nao fazem nada. Agora e o que parece ser: a
           // porta de entrada do treino.
           return (
-            <div className="mt-8 flex flex-col items-center gap-2">
+            <div className="mt-10 flex flex-col items-center gap-3">
               <button
                 onClick={onStartTraining}
-                className="px-7 py-3.5 rounded-lg border-2 flex items-center gap-2.5 text-sm font-black uppercase tracking-wider transition hover:brightness-105 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-yellow-400"
-                style={{ borderColor: YELLOW_DARK, color: 'var(--accent-fg)', background: YELLOW, boxShadow: 'var(--shadow-raised)' }}
+                className="shimmer px-10 py-5 rounded-xl border-2 flex items-center gap-3 text-lg font-black uppercase tracking-wider transition hover:brightness-105 hover:-translate-y-1 hover:shadow-2xl focus:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 focus-visible:ring-yellow-400"
+                style={{ borderColor: YELLOW_DARK, color: 'var(--accent-fg)', background: YELLOW, boxShadow: '0 10px 28px -6px rgba(184, 134, 11, 0.55)' }}
                 title="Abrir o PDV em modo de treinamento — nada é salvo no banco"
               >
-                <span className="text-lg">🎓</span>
-                {label}
+                <GraduationCap size={28} className="relative z-[2]" />
+                <span className="relative z-[2]">{label}</span>
                 {isNew && (
                   <span
-                    className="ml-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full"
-                    style={{ background: '#b91c1c', color: 'white' }}
+                    className="relative z-[2] ml-1 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest rounded-full"
+                    style={{ background: NAVY_DARK, color: 'white' }}
                   >
                     NOVO
                   </span>
                 )}
                 {isDone && (
                   <span
-                    className="ml-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full"
+                    className="relative z-[2] ml-1 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest rounded-full"
                     style={{ background: '#15803d', color: 'white' }}
                   >
                     ✓ COMPLETO

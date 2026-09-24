@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, Smartphone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -192,11 +192,20 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
   const ehPJ = item.type === 'PJ';
   const docLabel = ehPJ ? 'CNPJ' : 'CPF';
   const endereco = formatarEnderecoLinha(item);
-  const fone = item.phone || item.cellphone;
   const ativo = item.status !== 'inactive';
+  const normalizar = (s?: string) => (s || '').trim().toLocaleLowerCase('pt-BR');
+  const mostrarFantasia = !!normalizar(item.tradeName) && normalizar(item.tradeName) !== normalizar(item.name);
+  const semAcao = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
 
   return (
-    <div className="neumorphic p-5 rounded-2xl flex flex-col gap-4 group">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onView}
+      onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onView(); } }}
+      className="neumorphic p-5 rounded-2xl flex flex-col gap-4 group cursor-pointer transition-shadow hover:shadow-lg focus-visible:outline-2 focus-visible:outline-[#FFC107]"
+      style={{ borderTop: '4px solid #FFC107' }}
+    >
       <div className="flex justify-between items-start gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <AvatarCadastro nome={item.name} image={item.image} />
@@ -206,11 +215,11 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
                 Numa linha de tabela cortar é o preço da densidade; num card
                 sobra altura, e razão social cortada não identifica ninguém. */}
             <h3 className="font-black text-gray-900 leading-tight line-clamp-2 break-words">{item.name}</h3>
-            {item.tradeName && (
+            {mostrarFantasia && (
               <div className="text-xs text-gray-500 font-bold uppercase tracking-wide truncate">{item.tradeName}</div>
             )}
             <div className="flex gap-1.5 items-center flex-wrap mt-1.5">
-              <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+              <span className="text-[10px] font-black uppercase tracking-widest text-black px-2 py-0.5 rounded" style={{ background: '#FFC107' }}>
                 {ehPJ ? 'Pessoa Jurídica' : 'Pessoa Física'}
               </span>
               {kind === 'cliente' && (
@@ -221,6 +230,12 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
                 </span>
               )}
             </div>
+            {item.document && (
+              <div className="flex items-center gap-1.5 text-gray-600 mt-1.5 min-w-0">
+                <CreditCard size={13} className="text-gray-400 shrink-0" />
+                <span className="font-mono text-xs truncate">{docLabel} {item.document}</span>
+              </div>
+            )}
           </div>
         </div>
         {/* No toque não existe hover: escondidas só a partir de md, senão as
@@ -229,16 +244,16 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
             EXISTIAM para quem usa tablet — e sumir e desaparecer sao a mesma
             coisa para quem nunca passou o mouse ali. */}
         <div className="flex gap-1 shrink-0">
-          <button onClick={onEdit} className="row-action-btn is-editar" title="Editar">
+          <button onClick={semAcao(onEdit)} className="row-action-btn is-editar" title="Editar">
             <Edit2 size={16} />
           </button>
           {podeExcluir && (
-            <button onClick={onDelete} className="row-action-btn is-excluir" title="Excluir">
+            <button onClick={semAcao(onDelete)} className="row-action-btn is-excluir" title="Excluir">
               <Trash2 size={16} />
             </button>
           )}
-          <button onClick={onView} className="row-action-btn is-detalhes" title="Detalhes">
-            <ChevronRight size={16} />
+          <button onClick={semAcao(onView)} className="row-action-btn is-detalhes" title="Detalhes">
+            <Eye size={16} />
           </button>
         </div>
       </div>
@@ -247,16 +262,16 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
         <span className="text-[10px] text-gray-500 uppercase tracking-widest font-black border-b border-gray-300/60 pb-1.5">
           Contato
         </span>
-        {item.document ? (
-          <div className="flex items-center gap-2 text-gray-700 min-w-0">
-            <CreditCard size={13} className="text-gray-400 shrink-0" />
-            <span className="font-mono text-xs truncate">{docLabel} {item.document}</span>
+        {item.cellphone ? (
+          <div className="flex items-center gap-2 text-gray-700 min-w-0" title="Celular">
+            <Smartphone size={13} className="text-gray-400 shrink-0" />
+            <span className="text-xs truncate">{item.cellphone}</span>
           </div>
         ) : null}
-        {fone ? (
-          <div className="flex items-center gap-2 text-gray-700 min-w-0">
+        {item.phone ? (
+          <div className="flex items-center gap-2 text-gray-700 min-w-0" title="Telefone fixo">
             <Phone size={13} className="text-gray-400 shrink-0" />
-            <span className="text-xs truncate">{fone}</span>
+            <span className="text-xs truncate">{item.phone}</span>
           </div>
         ) : null}
         {item.email ? (
@@ -271,7 +286,7 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
             <span className="text-xs leading-relaxed">{endereco}</span>
           </div>
         ) : null}
-        {!item.document && !fone && !item.email && !endereco && (
+        {!item.cellphone && !item.phone && !item.email && !endereco && (
           <span className="text-xs text-gray-400 italic">Sem informações de contato</span>
         )}
       </div>
@@ -283,15 +298,15 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
           <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Limite de crédito</span>
           <strong className="text-[var(--navy)] tabular-nums">{formatBRL(item.creditLimit || 0)}</strong>
         </div>
-      ) : (
+      ) : item.contact ? (
         // "Contato" aqui e "Contato" no cabeçalho do painel acima eram a mesma
         // palavra para coisas diferentes no MESMO card — o painel é o meio de
         // contato, isto é a PESSOA com quem se fala.
         <div className="flex justify-between items-center text-xs mt-auto border-t border-gray-200 pt-3 gap-2">
           <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px] shrink-0">Pessoa de contato</span>
-          <strong className="text-[var(--navy)] truncate">{item.contact || '—'}</strong>
+          <strong className="text-[var(--navy)] truncate">{item.contact}</strong>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -348,6 +363,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [search, setSearch] = useState('');
   // '' = todas. Só vale na lista de produtos.
   const [categoriaFiltro, setCategoriaFiltro] = useState('');
+  const [tipoPessoaFiltro, setTipoPessoaFiltro] = useState<'' | 'PF' | 'PJ'>('');
   // Filtro de nicho (só relevante em produtos/serviços). 'todos' mostra tudo,
   // ou filtra por PDV: SuperMax (supermercado), MaxLook (boutique), TechMax
   // (eletrônicos/assistência). Coluna pdv_mode adicionada em 2026-07-20.
@@ -668,6 +684,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
     setMarginDraft(null);
     setMarkupDraft(null);
+    setTipoPessoaFiltro('');
   }, [subTab]);
 
   useEffect(() => {
@@ -909,8 +926,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const availableRoles = getAvailableRoles(currentUser?.role);
 
   const filteredClients = clients.filter(c =>
-    (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (c.document || '').includes(search)
+    (!tipoPessoaFiltro || c.type === tipoPessoaFiltro) && (
+      (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (c.document || '').includes(search))
   );
 
   const filteredProducts = products.filter(p => {
@@ -1114,8 +1132,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   };
 
   const filteredSuppliers = suppliers.filter(s =>
-    (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (s.document || '').includes(search)
+    (!tipoPessoaFiltro || s.type === tipoPessoaFiltro) && (
+      (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (s.document || '').includes(search))
   );
 
   const filteredServices = services.filter(s => {
@@ -2258,7 +2277,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         className="row-action-btn is-detalhes"
                         title="Detalhes"
                       >
-                        <ChevronRight size={16} />
+                        <Eye size={16} />
                       </button>
                     </div>
                   </td>
@@ -2325,7 +2344,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         className="row-action-btn is-detalhes"
                         title="Detalhes"
                       >
-                        <ChevronRight size={16} />
+                        <Eye size={16} />
                       </button>
                     </div>
                   </td>
@@ -2389,6 +2408,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       subTab === 'fornecedores' ? suppliers.length : 
                       users.length;
 
+  const emCards = subTab === 'clientes' || subTab === 'fornecedores';
+
   return (
     <div className="space-y-8 flex flex-col max-w-full">
       {alertHost}
@@ -2405,6 +2426,18 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          {emCards && (
+            <select
+              value={tipoPessoaFiltro}
+              onChange={e => setTipoPessoaFiltro(e.target.value as '' | 'PF' | 'PJ')}
+              className="smart-input !w-auto !py-2 !text-sm"
+              aria-label="Filtrar por tipo de pessoa"
+            >
+              <option value="">Pessoa física e jurídica</option>
+              <option value="PF">Só pessoa física</option>
+              <option value="PJ">Só pessoa jurídica</option>
+            </select>
+          )}
           {subTab === 'produtos' && (
             <>
               <select
@@ -3401,7 +3434,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         </div>
       )}
 
-      <div className="neumorphic flex flex-col min-h-[480px] relative">
+      <div className={emCards ? 'flex flex-col relative' : 'neumorphic flex flex-col min-h-[480px] relative'}>
         {/* @container: as colunas opcionais precisam responder a largura DESTE
             box, nao a da janela. Com breakpoint de viewport, uma tela de 1280
             (onde `xl:` ja vale) dava so ~966px de tabela depois da sidebar — a
@@ -3710,7 +3743,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
           return (
             <div
-              className="fixed inset-0 min-h-screen z-[60] overflow-y-auto bg-black/70 backdrop-blur-md p-4 flex justify-center items-start animate-in fade-in duration-200"
+              className="detalhes-modal fixed inset-0 min-h-screen z-[60] overflow-y-auto bg-black/70 backdrop-blur-md p-4 flex justify-center items-start animate-in fade-in duration-200"
               onClick={e => { if (e.target === e.currentTarget) fechar(); }}
             >
               <div className="form-cadastro p-5 md:p-7 max-w-3xl w-full my-8 animate-in slide-in-from-top duration-300">
@@ -3737,17 +3770,19 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   )}
                   <div className="min-w-0">
                     <h4 className="text-xl font-bold text-white leading-tight break-words">{d.name}</h4>
-                    {d.tradeName && <p className="text-sm text-white mt-0.5">{d.tradeName}</p>}
+                    {d.tradeName && d.tradeName.trim().toLocaleLowerCase('pt-BR') !== (d.name || '').trim().toLocaleLowerCase('pt-BR') && (
+                      <p className="text-sm text-white mt-0.5">{d.tradeName}</p>
+                    )}
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {(tipo === 'cliente' || tipo === 'fornecedor') && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white/15 text-white">{ehPJ ? 'Pessoa jurídica' : 'Pessoa física'}</span>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold text-black" style={{ background: '#FFC107' }}>{ehPJ ? 'Pessoa jurídica' : 'Pessoa física'}</span>
                       )}
                       {tipo === 'cliente' && (
                         <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={d.status === 'inactive' ? { background: '#dc2626', color: '#fff' } : { background: '#16a34a', color: '#fff' }}>
                           {d.status === 'inactive' ? 'Inativo' : 'Ativo'}
                         </span>
                       )}
-                      {d.category && <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white/15 text-white">{d.category}</span>}
+                      {d.category && <span className="px-2 py-0.5 rounded-full text-xs font-semibold text-black" style={{ background: '#FFC107' }}>{d.category}</span>}
                       {tipo === 'produto' && d.vitrine && (
                         <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>Na vitrine</span>
                       )}
@@ -3862,7 +3897,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         {currentListLength === 0 && (
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-gray-600 opacity-50 space-y-4">
             <Search size={48} />
-            <p className="font-bold">Nenhum registro em "{subTab}" para "{search}"</p>
+            <p className="font-bold">Nenhum registro em "{subTab}"{search ? ` para "${search}"` : ''}</p>
           </div>
         )}
 
@@ -3875,8 +3910,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             estado de pagina — eram desenho de paginacao, e a lista ja mostra
             todos os registros de uma vez. Controle que nao controla nada custa
             mais confianca do que economiza espaco. */}
-        <div className="mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-sm text-gray-600 font-medium border-t border-gray-200 bg-white">
-          <span>{currentListLength} de {totalLength} registros</span>
+        <div className={`mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-sm text-gray-600 font-medium ${emCards ? '' : 'border-t border-gray-200 bg-white'}`}>
+          <span>{currentListLength} de {totalLength} {totalLength === 1 ? 'registro' : 'registros'}</span>
         </div>
       </div>
     </div>
