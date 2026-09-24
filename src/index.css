@@ -946,3 +946,23 @@ body {
   .aviso-btn-sec { background: #ffffff; color: #1f2937; border: 2px solid #d1d5db; }
   .aviso-btn-sec:hover { background: #f3f4f6; filter: none; }
 }
+
+/* Campo só de leitura no painel dos formulários (modal de detalhes). */
+.form-cadastro .fc-dado {
+  background: rgb(255 255 255 / 0.07);
+  border: 1px solid var(--fc-line);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
+}
+.form-cadastro .fc-dado-rotulo {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fc-faint);
+}
+.form-cadastro .fc-dado-valor {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin-top: 0.125rem;
+  overflow-wrap: anywhere;
+}

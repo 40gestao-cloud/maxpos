@@ -15,7 +15,7 @@ import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurre
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
-import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
+import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado, Dado } from './FormCadastro';
 import { AvatarCadastro } from './AvatarCadastro';
 import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
@@ -3676,180 +3676,188 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
         )}
 
-        {/* View Details Modal */}
-        {viewingDetails && (
-          <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="neumorphic p-8 max-w-2xl w-full space-y-8 relative animate-in zoom-in duration-300 bg-card">
-              <button 
-                onClick={() => setViewingDetails(null)}
-                className="absolute top-4 right-4 text-gray-600 hover:text-red-500 p-2 transition-colors"
-              >
-                <CloseIcon size={24} />
-              </button>
+        {/* Detalhes — um desenho por tipo. Era um modal só para tudo: o
+            produto aparecia com CPF, e-mail, limite de crédito e endereço
+            vazios, e com o ID interno no lugar do documento. */}
+        {viewingDetails && (() => {
+          const d = viewingDetails;
+          const tipo: 'produto' | 'servico' | 'cliente' | 'fornecedor' =
+            subTab === 'produtos' ? 'produto' : subTab === 'servicos' ? 'servico' : subTab === 'fornecedores' ? 'fornecedor' : 'cliente';
+          const fechar = () => setViewingDetails(null);
+          const editar = () => { setViewingDetails(null); handleEdit(d, tipo); };
+          const loja = (d.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META;
+          const ehPJ = d.type === 'PJ';
+          const custo = Number(d.costPrice || 0);
+          const preco = Number(d.price || 0);
+          const margem = preco && custo ? ((preco - custo) / preco) * 100 : null;
+          const markup = preco && custo ? ((preco - custo) / custo) * 100 : null;
+          const minimo = d.minStock ?? 5;
+          const semControle = d.controlStock === false;
+          const situacaoEstoque = semControle ? null
+            : d.stock <= minimo ? { txt: 'Abaixo do mínimo', bg: '#dc2626', fg: '#fff' }
+            : minimo > 0 && d.stock <= minimo * 1.5 ? { txt: 'Perto do mínimo', bg: '#f59e0b', fg: '#1c1207' }
+            : { txt: 'Estoque ok', bg: '#16a34a', fg: '#fff' };
+          const ficha = tipo === 'produto'
+            ? (ATRIBUTOS_PRODUTO[loja] ?? []).filter(a => (d.atributos as any)?.[a.key])
+            : [];
+          const endereco = [
+            d.address ? `${d.address}, ${d.number || 's/n'}` : '',
+            [d.neighborhood, d.complement].filter(Boolean).join(' · '),
+            [d.city, d.state].filter(Boolean).join(' / '),
+            d.zipCode ? `CEP ${d.zipCode}` : '',
+          ].filter(Boolean);
+          const data = (iso?: string) => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR') : '';
 
-              <div className="flex items-center gap-6">
-                <div className="w-24 h-24 neumorphic-inset rounded-2xl flex items-center justify-center text-[var(--accent)] shadow-inner">
-                  {subTab === 'clientes' ? <UserIcon size={40} /> : subTab === 'produtos' ? <Barcode size={40} /> : <Shield size={40} />}
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">{viewingDetails.name}</h3>
-                  <p className="text-xs text-gray-600 font-black tracking-widest uppercase flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    {subTab.slice(0, -1)} ATIVO
-                  </p>
-                </div>
-              </div>
+          return (
+            <div
+              className="fixed inset-0 min-h-screen z-[60] overflow-y-auto bg-black/70 backdrop-blur-md p-4 flex justify-center items-start animate-in fade-in duration-200"
+              onClick={e => { if (e.target === e.currentTarget) fechar(); }}
+            >
+              <div className="form-cadastro p-5 md:p-7 max-w-3xl w-full my-8 animate-in slide-in-from-top duration-300">
+                <CabecalhoForm
+                  titulo={tipo === 'produto' ? 'Detalhes do produto' : tipo === 'servico' ? 'Detalhes do serviço' : tipo === 'cliente' ? 'Detalhes do cliente' : 'Detalhes do fornecedor'}
+                  filial={loja}
+                  onFechar={fechar}
+                />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6 border-y border-gray-200 overflow-y-auto max-h-[60vh] custom-scrollbar">
-                <div className="space-y-4">
-                  <div className="space-y-1">
-                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
-                      {viewingDetails.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
-                    </span>
-                    <p className="text-sm font-bold text-gray-900">{viewingDetails.name}</p>
-                  </div>
-
-                  {viewingDetails.type === 'PJ' && viewingDetails.tradeName && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Nome Fantasia</span>
-                      <p className="text-sm font-bold text-gray-900">{viewingDetails.tradeName}</p>
+                {/* Identidade: foto (ou iniciais) + nome + situação */}
+                <div className="flex items-center gap-4 mb-5">
+                  {tipo === 'produto' ? (
+                    <div className="w-20 h-20 rounded-xl bg-white overflow-hidden flex items-center justify-center shrink-0 border-2" style={{ borderColor: 'var(--accent)' }}>
+                      {d.image ? <img src={d.image} alt="" className="w-full h-full object-cover" /> : <Package size={36} className="text-slate-400" />}
+                    </div>
+                  ) : tipo === 'servico' ? (
+                    <div className="w-20 h-20 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>
+                      <FileText size={34} />
+                    </div>
+                  ) : (
+                    <div className="rounded-xl ring-2 ring-[var(--accent)] shrink-0">
+                      <AvatarCadastro nome={d.name} image={d.image} size={80} />
                     </div>
                   )}
-
-                  <div className="space-y-1">
-                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
-                      {viewingDetails.type === 'PJ' ? 'CNPJ' : 'CPF'} / ID
-                    </span>
-                    <p className="text-sm font-mono text-gray-900">{viewingDetails.document} <span className="opacity-30 text-sm">({viewingDetails.id})</span></p>
-                  </div>
-
-                  {viewingDetails.type === 'PF' && viewingDetails.rg && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">RG</span>
-                      <p className="text-sm font-mono text-gray-900">{viewingDetails.rg}</p>
-                    </div>
-                  )}
-
-                  {viewingDetails.type === 'PJ' && viewingDetails.ie && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">IE</span>
-                      <p className="text-sm font-mono text-gray-900">{viewingDetails.ie}</p>
-                    </div>
-                  )}
-
-                  <div className="space-y-1">
-                    <span className="text-sm font-black text-gray-600 uppercase tracking-widest">E-mail</span>
-                    <p className="text-sm font-bold text-gray-900">{viewingDetails.email || 'N/A'}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Telefone</span>
-                      <p className="text-sm font-bold text-gray-900">{viewingDetails.phone || 'N/A'}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Celular</span>
-                      <p className="text-sm font-bold text-gray-900">{viewingDetails.cellphone || 'N/A'}</p>
-                    </div>
-                  </div>
-
-                  {subTab !== 'fornecedores' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Limite de Crédito</span>
-                        <p className="text-sm font-black text-[var(--navy)]">R$ {(viewingDetails.creditLimit || 0).toFixed(2)}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">
-                          {viewingDetails.type === 'PJ' ? 'Fundação' : 'Aniversário'}
+                  <div className="min-w-0">
+                    <h4 className="text-xl font-bold text-white leading-tight break-words">{d.name}</h4>
+                    {d.tradeName && <p className="text-sm text-white mt-0.5">{d.tradeName}</p>}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {(tipo === 'cliente' || tipo === 'fornecedor') && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white/15 text-white">{ehPJ ? 'Pessoa jurídica' : 'Pessoa física'}</span>
+                      )}
+                      {tipo === 'cliente' && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={d.status === 'inactive' ? { background: '#dc2626', color: '#fff' } : { background: '#16a34a', color: '#fff' }}>
+                          {d.status === 'inactive' ? 'Inativo' : 'Ativo'}
                         </span>
-                        <p className="text-sm font-bold text-gray-900">{viewingDetails.birthDate || 'N/A'}</p>
-                      </div>
+                      )}
+                      {d.category && <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white/15 text-white">{d.category}</span>}
+                      {tipo === 'produto' && d.vitrine && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>Na vitrine</span>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="space-y-1">
-                    <span className="text-sm font-black text-[var(--navy)] uppercase tracking-widest">Endereço</span>
-                    <div className="neumorphic-inset p-3 bg-main/20 rounded-xl space-y-2">
-                       <p className="text-xs text-gray-900">
-                        {viewingDetails.address ? `${viewingDetails.address}, ${viewingDetails.number || 'S/N'}` : 'Endereço não informado'}
-                       </p>
-                       <p className="text-sm text-gray-600 uppercase font-black">
-                        {viewingDetails.neighborhood} {viewingDetails.complement && ` - ${viewingDetails.complement}`}
-                       </p>
-                       <p className="text-sm text-gray-600 uppercase font-black">
-                        {viewingDetails.city} - {viewingDetails.state} | CEP: {viewingDetails.zipCode}
-                       </p>
-                    </div>
-                  </div>
-
-                  {viewingDetails.observations && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Observações</span>
-                      <p className="text-xs text-gray-600 italic whitespace-pre-wrap">{viewingDetails.observations}</p>
-                    </div>
+                  {(tipo === 'produto' || tipo === 'servico') && (
+                    <section className="fc-section">
+                      <h4 className="fc-section-title"><CircleDollarSign size={18} /> Preço</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <Dado rotulo="Custo" valor={custo ? formatBRL(custo) : '—'} cor="#fca5a5" grande />
+                        <Dado rotulo="Venda" valor={formatBRL(preco)} cor="#86efac" grande />
+                        <Dado rotulo="Margem" valor={margem != null ? `${margem.toFixed(1).replace('.', ',')}%` : '—'} grande />
+                        <Dado rotulo="Markup" valor={markup != null ? `${markup.toFixed(1).replace('.', ',')}%` : '—'} grande />
+                      </div>
+                      {preco && custo ? (
+                        <p className="fc-hint mt-2">Lucro de {formatBRL(preco - custo)} por unidade vendida.</p>
+                      ) : null}
+                    </section>
                   )}
 
-                  {viewingDetails.category && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Categoria</span>
-                      <p className="text-sm font-bold text-gray-900">{viewingDetails.category.toUpperCase()}</p>
-                    </div>
+                  {tipo === 'produto' && (
+                    <>
+                      <section className="fc-section">
+                        <div className="flex items-center justify-between gap-2 mb-4">
+                          <h4 className="fc-section-title !mb-0"><Boxes size={18} /> Estoque</h4>
+                          {situacaoEstoque && (
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold" style={{ background: situacaoEstoque.bg, color: situacaoEstoque.fg }}>
+                              {situacaoEstoque.txt}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          <Dado rotulo="Saldo atual" valor={semControle ? 'Sem controle' : `${d.stock} ${d.unit || 'UN'}`} grande />
+                          <Dado rotulo="Mínimo" valor={semControle ? '—' : `${minimo} ${d.unit || 'UN'}`} grande />
+                          <Dado rotulo="Unidade" valor={d.unit || 'UN'} grande />
+                        </div>
+                      </section>
+
+                      <section className="fc-section">
+                        <h4 className="fc-section-title"><Tag size={18} /> Identificação</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <Dado rotulo="Código / REF" valor={d.ref || '—'} mono />
+                          <Dado rotulo="Código de barras (EAN-13)" valor={d.ean13 || '—'} mono />
+                          {d.marca && <Dado rotulo="Marca" valor={d.marca} />}
+                          {ficha.map(a => <Dado key={a.key} rotulo={a.label} valor={String((d.atributos as any)[a.key])} />)}
+                        </div>
+                      </section>
+                    </>
                   )}
-                  {viewingDetails.costPrice !== undefined && subTab !== 'clientes' && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest text-red-500/60">Preço de Custo</span>
-                      <p className="text-sm font-bold text-gray-900 text-red-500/80">R$ {viewingDetails.costPrice.toFixed(2)}</p>
-                    </div>
+
+                  {tipo === 'servico' && d.additionalInfo && (
+                    <section className="fc-section">
+                      <h4 className="fc-section-title"><FileText size={18} /> Informações adicionais</h4>
+                      <p className="text-sm text-white leading-relaxed whitespace-pre-wrap">{d.additionalInfo}</p>
+                    </section>
                   )}
-                  {viewingDetails.price !== undefined && subTab !== 'clientes' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Preço de Venda</span>
-                        <p className="text-sm font-black text-emerald-500">R$ {viewingDetails.price.toFixed(2)}</p>
-                      </div>
-                      <div className="space-y-1 text-right">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Lucro Estimado</span>
-                        <p className="text-sm font-black text-[var(--navy)]">
-                          {viewingDetails.costPrice ? (((viewingDetails.price - viewingDetails.costPrice) / viewingDetails.price) * 100).toFixed(1) : '0.0'}%
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  {viewingDetails.stock !== undefined && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Estoque Atual</span>
-                        <p className="text-sm font-black text-gray-900">{viewingDetails.stock} {viewingDetails.unit || 'UN'}</p>
-                      </div>
-                      <div className="space-y-1 text-right">
-                        <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Estoque Mínimo</span>
-                        <p className="text-sm font-black text-red-500/60">{viewingDetails.minStock || 0} {viewingDetails.unit || 'UN'}</p>
-                      </div>
-                    </div>
-                  )}
-                  {viewingDetails.additionalInfo && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-black text-gray-600 uppercase tracking-widest">Informações Adicionais</span>
-                      <p className="text-sm text-gray-900 italic">{viewingDetails.additionalInfo}</p>
-                    </div>
+
+                  {(tipo === 'cliente' || tipo === 'fornecedor') && (
+                    <>
+                      <section className="fc-section">
+                        <h4 className="fc-section-title"><UserIcon size={18} /> {ehPJ ? 'Dados da empresa' : 'Dados pessoais'}</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <Dado rotulo={ehPJ ? 'CNPJ' : 'CPF'} valor={d.document || '—'} mono />
+                          <Dado rotulo={ehPJ ? 'Inscrição estadual' : 'RG'} valor={(ehPJ ? d.ie : d.rg) || '—'} mono />
+                          {tipo === 'cliente' && <Dado rotulo={ehPJ ? 'Fundação' : 'Aniversário'} valor={data(d.birthDate) || '—'} />}
+                          {tipo === 'cliente' && <Dado rotulo="Limite de crédito" valor={formatBRL(d.creditLimit || 0)} />}
+                        </div>
+                      </section>
+                      <section className="fc-section">
+                        <h4 className="fc-section-title"><Phone size={18} /> Contato</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {tipo === 'fornecedor' && <Dado rotulo="Pessoa de contato" valor={d.contact || '—'} />}
+                          <Dado rotulo="Celular" valor={d.cellphone || '—'} />
+                          <Dado rotulo="Telefone fixo" valor={d.phone || '—'} />
+                          <Dado rotulo="E-mail" valor={d.email || '—'} />
+                        </div>
+                      </section>
+                      <section className="fc-section">
+                        <h4 className="fc-section-title"><MapPin size={18} /> Endereço</h4>
+                        {endereco.length ? (
+                          <p className="text-sm text-white leading-relaxed whitespace-pre-line">{endereco.join('\n')}</p>
+                        ) : (
+                          <p className="fc-hint !text-sm">Endereço não informado.</p>
+                        )}
+                      </section>
+                      {d.observations && (
+                        <section className="fc-section">
+                          <h4 className="fc-section-title"><FileText size={18} /> Observações</h4>
+                          <p className="text-sm text-white leading-relaxed whitespace-pre-wrap">{d.observations}</p>
+                        </section>
+                      )}
+                    </>
                   )}
                 </div>
-              </div>
 
-              <div className="flex justify-end pt-4">
-                <button 
-                  onClick={() => setViewingDetails(null)}
-                  className="px-8 py-3 bg-card neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 active:scale-95 transition-all"
-                >
-                  Fechar Visualização
-                </button>
+                <div className="mt-6 pt-5 border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                  <button type="button" onClick={fechar} className="smart-btn-secondary !text-sm !bg-transparent !text-white !border-white/30 hover:!bg-white/10">
+                    Fechar
+                  </button>
+                  <button type="button" onClick={editar} className="smart-btn-primary !text-sm !px-8">
+                    <Edit2 size={16} /> Editar
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {currentListLength === 0 && (
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-gray-600 opacity-50 space-y-4">

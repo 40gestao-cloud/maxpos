@@ -84,3 +84,24 @@ export function Segmentado<T extends string>({ valor, opcoes, onChange, rotulo }
     </div>
   );
 }
+
+/** Campo só de leitura dentro de um painel .form-cadastro (modal de detalhes). */
+export function Dado({ rotulo, valor, cor, grande, mono }: {
+  rotulo: string;
+  valor: string;
+  cor?: string;
+  grande?: boolean;
+  mono?: boolean;
+}) {
+  return (
+    <div className="fc-dado min-w-0">
+      <div className="fc-dado-rotulo">{rotulo}</div>
+      <div
+        className={`fc-dado-valor ${grande ? '!text-lg !font-bold tabular-nums' : ''} ${mono ? 'font-mono !text-sm' : ''}`}
+        style={cor ? { color: cor } : undefined}
+      >
+        {valor}
+      </div>
+    </div>
+  );
+}
