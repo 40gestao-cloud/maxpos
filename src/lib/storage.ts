@@ -436,6 +436,14 @@ export const Storage = {
     return (p.count ?? 0) + (s.count ?? 0);
   },
 
+  // Só a coluna do código. Regravar o produto inteiro a partir do modal de
+  // etiqueta devolvia o estoque de quando o modal abriu, apagando as vendas
+  // feitas nesse meio tempo.
+  atualizarEanProduto: async (id: string, ean13: string): Promise<void> => {
+    const { error } = await supabase.from('products').update({ ean13 }).eq('id', id);
+    if (error) throw error;
+  },
+
   upsertProduct: async (product: Product): Promise<void> => {
     const { created_at, pdvMode, ...row } = product as any;
     (row as any).pdv_mode = pdvMode ?? 'supermax';

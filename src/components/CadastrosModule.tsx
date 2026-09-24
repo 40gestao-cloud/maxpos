@@ -518,12 +518,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setSavingEan(true);
     try {
       const updated = { ...barcodeModal.product, ean13: eanInput };
-      await Storage.upsertProduct(updated);
+      await Storage.atualizarEanProduto(updated.id, eanInput);
       setBarcodeModal({ isOpen: true, product: updated });
       // Sem isto o banco tinha o EAN novo e a tabela continuava mostrando o
       // produto sem código até o F5 — o operador salvava e parecia não ter
-      // salvado.
-      setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+      // salvado. Mescla só o EAN: o resto da linha pode ser mais novo que o
+      // produto que o modal guardou ao abrir.
+      setProducts(prev => prev.map(p => p.id === updated.id ? { ...p, ean13: eanInput } : p));
       toast.sucesso({
         titulo: `EAN gravado em ${updated.name}`,
         mensagem: `${eanInput} — já pode imprimir a etiqueta e bipar no PDV.`,
