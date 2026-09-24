@@ -346,6 +346,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [catForm, setCatForm] = useState<Category | null>(null);
   const [catSaving, setCatSaving] = useState(false);
   const [search, setSearch] = useState('');
+  // '' = todas. Só vale na lista de produtos.
+  const [categoriaFiltro, setCategoriaFiltro] = useState('');
   // Filtro de nicho (só relevante em produtos/serviços). 'todos' mostra tudo,
   // ou filtra por PDV: SuperMax (supermercado), MaxLook (boutique), TechMax
   // (eletrônicos/assistência). Coluna pdv_mode adicionada em 2026-07-20.
@@ -910,6 +912,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
   const filteredProducts = products.filter(p => {
     if ((p.pdvMode ?? 'supermax') !== nichoFilter) return false;
+    if (categoriaFiltro && (p.category || '') !== categoriaFiltro) return false;
     const q = search.toLowerCase();
     return (p.name?.toLowerCase() || '').includes(q) ||
       (p.ean13 || '').includes(search) ||
@@ -1985,8 +1988,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           (c.pdvMode ?? 'supermax') === nichoFilter &&
           c.name.toLowerCase().includes(search.toLowerCase()));
         return (
-          <table className="w-full text-left min-w-[720px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
+          <table className="tabela-lista w-full text-left min-w-[720px]">
+            <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-4">Categoria</th>
                 {/* A coluna PDV saiu junto com o FilialBadge: mostrava a
@@ -1999,7 +2002,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </thead>
             <tbody className="divide-y divide-gray-200">
               {lista.map(c => (
-                <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={c.id}>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2.5">
                       <span className="w-4 h-4 rounded-full border shrink-0"
@@ -2038,7 +2041,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       }
       case 'equipe':
         return (
-          <table className="w-full text-left min-w-[720px]">
+          <table className="tabela-lista w-full text-left min-w-[720px]">
             <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-3">Membro</th>
@@ -2049,7 +2052,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredUsers.map((u) => (
-                <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={u.id}>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <AvatarCadastro nome={u.name} size={36} />
@@ -2130,32 +2133,36 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         // container estreito). Estava em 1000 e forcava rolagem horizontal numa
         // tela de 1280 so pra sobrar espaco vazio.
         return (
-          <table className="w-full text-left min-w-[880px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
+          <table className="tabela-lista w-full text-left min-w-[880px]">
+            <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-3">Produto</th>
-                <th className="px-5 py-3">Categoria</th>
-                <th className="px-5 py-3 text-right">Custo</th>
-                <th className="px-5 py-3 text-right">Venda</th>
+                <th className="px-4 py-3">Categoria</th>
+                <th className="px-4 py-3 text-right">Custo</th>
+                <th className="px-4 py-3 text-right">Venda</th>
                 {/* Margem some quando a tabela tem menos de 1100px: e o unico
                     valor DERIVADO (sai de Custo x Venda), entao e o primeiro
                     que pode ceder quando a largura aperta. */}
                 <th className="px-5 py-3 text-right hidden @[1100px]:table-cell">Margem</th>
-                <th className="px-5 py-3 text-right">Estoque</th>
+                <th className="px-4 py-3 text-right">Estoque</th>
                 {/* A coluna "Cód. Barras" saiu: a coluna Produto ja mostra
                     "EAN 7896187755481" embaixo do nome, e esta repetia o mesmo
                     numero 140px adiante — 140px gastos pra dizer duas vezes a
                     mesma coisa numa tabela que ja nao cabia na tela. */}
-                <th className="px-5 py-3 text-center col-acoes-fixa">Ações</th>
+                <th className="px-3 py-3 text-center col-acoes-fixa">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 text-base">
               {filteredProducts.map((p) => {
                 const margem = p.price && p.costPrice ? (((p.price - p.costPrice) / p.price) * 100) : 0;
-                const stockBaixo = p.controlStock !== false && p.stock <= (p.minStock || 0);
+                // Mesma régua dos alertas da tela de Estoque; "perto" é até 50%
+                // acima do mínimo, para dar tempo de comprar antes de faltar.
+                const minimo = p.minStock ?? 5;
+                const stockBaixo = p.controlStock !== false && p.stock <= minimo;
+                const stockPerto = p.controlStock !== false && !stockBaixo && minimo > 0 && p.stock <= minimo * 1.5;
                 return (
-                <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-4">
+                <tr key={p.id}>
+                  <td className="px-4 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded border border-gray-300 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
                         {p.image ? (
@@ -2185,31 +2192,39 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </div>
                     </div>
                   </td>
-                  <td className="px-5 py-4">
-                    <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded text-sm font-bold">{p.category || '—'}</span>
+                  <td className="px-4 py-4">
+                    {/* Uma linha só: "Mercearia Seca e Despensa" quebrava em duas e cada
+                        produto ficava com o dobro da altura. O nome inteiro vai
+                        no tooltip. */}
+                    <span className="inline-block max-w-[8rem] @[1400px]:max-w-[12rem] truncate align-middle bg-slate-100 text-slate-800 border border-slate-200 px-2.5 py-1 rounded-md text-sm font-semibold" title={p.category || undefined}>{p.category || '—'}</span>
                   </td>
                   {/* whitespace-nowrap: formatBRL devolve "R$ 4,50" com espaco
                       normal, e na largura desta coluna o "R$" ficava numa linha
                       e o valor na de baixo — em TODAS as 59 linhas. */}
-                  <td className="px-5 py-4 text-right tabular-nums text-base text-gray-500 whitespace-nowrap">
+                  <td className="px-4 py-4 text-right tabular-nums text-base text-gray-500 whitespace-nowrap">
                     {formatBRL(p.costPrice)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums text-base font-bold whitespace-nowrap" style={{ color: 'var(--navy)' }}>
+                  <td className="px-4 py-4 text-right tabular-nums text-base font-bold whitespace-nowrap" style={{ color: 'var(--navy)' }}>
                     {formatBRL(p.price)}
                   </td>
                   <td className="px-5 py-4 text-right tabular-nums hidden @[1100px]:table-cell">
                     <div className="font-bold text-base" style={{ color: 'var(--navy)' }}>{margem.toFixed(1)}%</div>
                   </td>
-                  <td className="px-5 py-4 text-right">
+                  <td className="px-4 py-4 text-right">
                     {p.controlStock === false ? (
-                      <span className="text-sm bg-gray-100 text-gray-600 px-2.5 py-1 rounded font-bold">Sem Controle</span>
+                      <span className="text-sm bg-gray-100 text-gray-700 px-2.5 py-1 rounded font-semibold whitespace-nowrap">Sem controle</span>
                     ) : (
-                      <span className={`tabular-nums font-black text-lg ${stockBaixo ? 'text-red-600' : 'text-gray-900'}`}>
-                        {p.stock} <span className="text-xs text-gray-500 uppercase font-bold">{p.unit || 'un'}</span>
+                      <span
+                        className={`inline-flex items-baseline gap-1 tabular-nums font-black text-lg rounded-md px-2 py-0.5 ${
+                          stockBaixo ? 'bg-red-100 text-red-700' : stockPerto ? 'bg-amber-100 text-amber-800' : 'text-gray-900'
+                        }`}
+                        title={stockBaixo ? `Abaixo do mínimo (${minimo})` : stockPerto ? `Perto do mínimo (${minimo})` : undefined}
+                      >
+                        {p.stock} <span className="text-xs font-semibold opacity-70">{p.unit || 'un'}</span>
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-4 col-acoes-fixa">
+                  <td className="px-3 py-4 col-acoes-fixa">
                     {/* Quatro botoes solidos com gradiente e shimmer POR LINHA
                         somavam 236 pecas brilhantes numa lista de 59 produtos: a
                         tela inteira piscava e nada se destacava, porque tudo se
@@ -2255,8 +2270,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         );
       case 'servicos':
         return (
-          <table className="w-full text-left min-w-[900px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
+          <table className="tabela-lista w-full text-left min-w-[900px]">
+            <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="p-6">Serviço</th>
                 <th className="p-6">Categoria</th>
@@ -2268,7 +2283,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredServices.map((s) => (
-                <tr key={s.id} className="hover:bg-gray-50 transition-colors group">
+                <tr key={s.id} className="group">
                   <td className="p-6">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <div className="font-bold text-gray-900">{s.name}</div>
@@ -2392,6 +2407,19 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
           {subTab === 'produtos' && (
             <>
+              <select
+                value={categoriaFiltro}
+                onChange={e => setCategoriaFiltro(e.target.value)}
+                className="smart-input !w-auto !py-2 !text-sm max-w-[14rem]"
+                aria-label="Filtrar por categoria"
+              >
+                <option value="">Todas as categorias</option>
+                {[...new Set(products
+                  .filter(p => (p.pdvMode ?? 'supermax') === nichoFilter && p.category)
+                  .map(p => p.category as string))]
+                  .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+                  .map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
               <button
                 onClick={exportProductsPDF}
                 className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
@@ -3852,7 +3880,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             estado de pagina — eram desenho de paginacao, e a lista ja mostra
             todos os registros de uma vez. Controle que nao controla nada custa
             mais confianca do que economiza espaco. */}
-        <div className="mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-xs text-gray-500 font-bold uppercase tracking-widest border-t border-gray-200 bg-white">
+        <div className="mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-sm text-gray-600 font-medium border-t border-gray-200 bg-white">
           <span>{currentListLength} de {totalLength} registros</span>
         </div>
       </div>

@@ -251,31 +251,29 @@ export const ConfiguracoesModule: React.FC<ConfiguracoesProps> = ({ onUserUpdate
   ];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500">
       {alertHost}
-      <div className="flex items-center gap-4 mb-2">
-        <div className="p-3 bg-[var(--accent)]/10 rounded-2xl">
-          <Settings className="text-[var(--accent-text)]" size={24} />
+      {/* Mesmo cabeçalho de Marketing: o título já está na barra do topo, e as
+          abas usam o seletor segmentado com a ativa em amarelo sólido. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-gray-700 flex items-center gap-2">
+          <Settings size={18} className="text-[var(--accent-text)]" /> Seu perfil e a auditoria do sistema.
+        </p>
+        <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200" role="tablist">
+          {tabs.filter(t => t.show).map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={subTab === t.id}
+              onClick={() => setSubTab(t.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                subTab === t.id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <div>
-          <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Configurações</h2>
-          <p className="text-xs text-gray-600 font-bold uppercase tracking-widest">Gerencie seu perfil e auditoria</p>
-        </div>
-      </div>
-
-      <div className="flex gap-2 flex-wrap">
-        {tabs.filter(t => t.show).map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            className={`px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide border-2 transition-all text-white glass-blue shimmer ${
-              subTab === t.id ? 'ring-2 ring-offset-2 ring-[var(--accent)]' : 'opacity-80 hover:opacity-100'
-            }`}
-            style={{ borderColor: 'var(--accent)' }}
-          >
-            <span className="relative z-[2]">{t.label}</span>
-          </button>
-        ))}
       </div>
 
       {subTab === 'perfil' && (

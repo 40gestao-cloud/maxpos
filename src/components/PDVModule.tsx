@@ -4439,6 +4439,8 @@ Para não cobrar nada, cancele a venda (F9).`,
           )}
 
           {/* ============ Header laranja SuperMax (fluxo supermercado tradicional) ============ */}
+          {/* Etiquetas em text-sm, como o CabecalhoPdv do LogMax: em text-lg a
+              data e hora ficavam cortadas pelo overflow numa tela de 1280. */}
           {!isSimulationMode && (
           <div
             className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
@@ -4464,7 +4466,7 @@ Para não cobrar nada, cancele a venda (F9).`,
               {/* PDV Mode badge — identifica qual PDV o operador está.
                   Sem picker; troca é feita pela sidebar (aba). */}
               <span
-                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold border-2 flex items-center gap-2"
+                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2 flex items-center gap-2"
                 style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
                 title={`Você está operando o PDV ${modeMeta.label}`}
               >
@@ -4472,25 +4474,25 @@ Para não cobrar nada, cancele a venda (F9).`,
                 {modeMeta.label.toUpperCase()}
               </span>
               <span
-                className="shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
+                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
               >
                 CAIXA 01
               </span>
               <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border truncate max-w-[260px]"
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border truncate max-w-[260px]"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
               >
                 OP: {currentUser.name.toUpperCase()}
               </span>
               <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold backdrop-blur-sm border"
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
               >
                 CUPOM: {cupomSeq}
               </span>
               <span
-                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-lg font-bold tabular-nums backdrop-blur-sm border"
+                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
               >
                 {new Date().toLocaleString('pt-BR')}

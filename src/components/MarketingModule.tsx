@@ -32,32 +32,30 @@ export default function MarketingModule({ currentUser }: { currentUser: User }) 
   const [subTab, setSubTab] = useState<SubTab>('promocoes');
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex items-center gap-4 mb-2">
-        <div className="p-3 bg-[var(--accent)]/10 rounded-2xl">
-          <Megaphone className="text-[var(--accent-text)]" size={24} />
+    <div className="space-y-5 animate-in fade-in duration-500">
+      {/* O título "Marketing" já está na barra do topo; aqui ficam só a frase
+          do que se faz na tela e as abas, no mesmo seletor do Financeiro. A aba
+          ativa é amarela sólida — antes as duas eram azul-escuro e só um anel
+          fino dizia qual estava aberta. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-gray-700 flex items-center gap-2">
+          <Megaphone size={18} className="text-[var(--accent-text)]" /> Ofertas de preço e a vitrine da tela de login.
+        </p>
+        <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200" role="tablist">
+          {TABS.map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={subTab === t.id}
+              onClick={() => setSubTab(t.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                subTab === t.id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <div>
-          <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Marketing</h2>
-          <p className="text-xs text-gray-600 font-bold uppercase tracking-widest">
-            Configure as ofertas e a vitrine da loja
-          </p>
-        </div>
-      </div>
-
-      <div className="flex gap-2 flex-wrap">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            className={`px-5 py-2.5 rounded-lg text-sm md:text-base font-bold uppercase tracking-wide border-2 transition-all text-white glass-blue shimmer ${
-              subTab === t.id ? 'ring-2 ring-offset-2 ring-[var(--accent)]' : 'opacity-80 hover:opacity-100'
-            }`}
-            style={{ borderColor: 'var(--accent)' }}
-          >
-            <span className="relative z-[2]">{t.label}</span>
-          </button>
-        ))}
       </div>
 
       {/* Montagem condicional, não `hidden`: a Vitrine carrega os produtos da

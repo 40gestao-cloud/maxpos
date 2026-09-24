@@ -349,14 +349,38 @@ body {
 
   /* A cor é o único código: sem brilho, sem animação. Em lista de cinquenta
      linhas são duzentos botões na tela ao mesmo tempo, e qualquer movimento
-     repetido nesse volume vira letreiro — a lista passa a piscar em vez de
-     ser lida. Estático, o tom já basta para achar a lixeira sem ler o ícone. */
-  .row-action-btn.is-etiqueta { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
-  .row-action-btn.is-editar   { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
-  .row-action-btn.is-excluir  { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
-  .row-action-btn.is-detalhes { background: #ede9fe; border-color: #c4b5fd; color: #6d28d9; }
-  .row-action-btn.is-pago     { background: #d1fae5; border-color: #6ee7b7; color: #047857; }
-  .row-action-btn.is-ocultar  { background: #f1f5f9; border-color: #cbd5e1; color: #475569; }
+     repetido nesse volume vira letreiro.
+     Editar, a ação principal da linha, é sólido. As outras têm cor viva só no
+     contorno e no ícone, e enchem com a cor quando o ponteiro chega — viva o
+     bastante para achar de relance, sem transformar a lista num arco-íris. */
+  .row-action-btn { border-width: 1.5px; }
+  .row-action-btn.is-editar   { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+  .row-action-btn.is-editar:hover { filter: none; background: #1d4ed8; }
+  .row-action-btn.is-etiqueta { background: #fff; border-color: #f59e0b; color: #b45309; }
+  .row-action-btn.is-excluir  { background: #fff; border-color: #ef4444; color: #dc2626; }
+  .row-action-btn.is-detalhes { background: #fff; border-color: #8b5cf6; color: #7c3aed; }
+  .row-action-btn.is-pago     { background: #fff; border-color: #10b981; color: #047857; }
+  .row-action-btn.is-ocultar  { background: #fff; border-color: #94a3b8; color: #475569; }
+  .row-action-btn.is-etiqueta:hover { filter: none; background: #f59e0b; color: #fff; }
+  .row-action-btn.is-excluir:hover  { filter: none; background: #dc2626; color: #fff; }
+  .row-action-btn.is-detalhes:hover { filter: none; background: #7c3aed; color: #fff; }
+  .row-action-btn.is-pago:hover     { filter: none; background: #059669; color: #fff; }
+  .row-action-btn.is-ocultar:hover  { filter: none; background: #475569; color: #fff; }
+
+  /* ── Listas em tabela ──
+     Linhas alternadas e divisor entre colunas: com fundo todo branco e só um
+     fio cinza-claro entre as linhas, o olho perdia a linha no meio do caminho
+     entre o nome do produto e o estoque. */
+  .tabela-lista tbody tr { background: var(--bg-card); transition: background-color 120ms ease; }
+  .tabela-lista tbody tr:nth-child(even) { background: #f5f7fb; }
+  .tabela-lista tbody tr:hover { background: #e8f0fe; }
+  .tabela-lista tbody td + td { border-left: 1px solid #e5e9f0; }
+  .tabela-lista thead th + th { border-left: 1px solid rgb(0 0 0 / 0.12); }
+  .tabela-lista tbody { border-bottom: 1px solid #e5e9f0; }
+  /* A coluna de ações fica presa à direita e cobre o que rola por baixo: o
+     fundo dela precisa seguir o da linha, senão fica uma faixa branca. */
+  .tabela-lista tbody tr > .col-acoes-fixa,
+  .tabela-lista tbody tr:hover > .col-acoes-fixa { background: inherit; }
 
   /* ── Coluna de acoes presa a direita ──
      Tabela larga (Produtos tem 8 colunas e ~1.2k de largura) num container
