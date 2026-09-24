@@ -1,12 +1,12 @@
 -- ============================================================
 -- MaxPOS ERP/PDV — Schema completo (Supabase / PostgreSQL)
 -- ============================================================
--- GERADO A PARTIR DO BANCO DE PRODUCAO em 2026-09-19.
+-- GERADO A PARTIR DO BANCO DE PRODUCAO em 2026-09-19; atualizado em 2026-09-23.
 --
 -- Este arquivo e o estado REAL do banco naquela data, extraido do catalogo do
 -- proprio Postgres — nao e escrito a mao e nao e historico. Rodar so ele num
--- projeto Supabase novo chega ao mesmo lugar que a producao: 25 tabelas, 52
--- funcoes, 62 policies, RLS em todas as tabelas, 19 triggers, os indices, as
+-- projeto Supabase novo chega ao mesmo lugar que a producao: 26 tabelas, 52
+-- funcoes, 65 policies, RLS em todas as tabelas, 19 triggers, os indices, as
 -- permissoes e a publicacao de Realtime.
 --
 -- ─── Por que ele foi refeito ───
@@ -227,6 +227,19 @@ CREATE TABLE IF NOT EXISTS public.credit_installments (
   due_date date NOT NULL,
   status text DEFAULT 'pending'::text NOT NULL,
   paid_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.estoque_ajustes (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  product_id text NOT NULL,
+  product_name text NOT NULL,
+  pdv_mode text NOT NULL,
+  tipo text NOT NULL,
+  quantidade numeric(12,3) NOT NULL,
+  saldo_anterior numeric(12,3) NOT NULL,
+  saldo_novo numeric(12,3) NOT NULL,
+  user_id uuid DEFAULT auth.uid(),
   created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -568,6 +581,16 @@ ALTER TABLE public.credit_installments ADD COLUMN IF NOT EXISTS due_date date;
 ALTER TABLE public.credit_installments ADD COLUMN IF NOT EXISTS status text DEFAULT 'pending'::text;
 ALTER TABLE public.credit_installments ADD COLUMN IF NOT EXISTS paid_at timestamp with time zone;
 ALTER TABLE public.credit_installments ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid();
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS product_id text;
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS product_name text;
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS pdv_mode text;
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS tipo text;
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS quantidade numeric(12,3);
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS saldo_anterior numeric(12,3);
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS saldo_novo numeric(12,3);
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS user_id uuid DEFAULT auth.uid();
+ALTER TABLE public.estoque_ajustes ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
 ALTER TABLE public.event_fichas ADD COLUMN IF NOT EXISTS id text;
 ALTER TABLE public.event_fichas ADD COLUMN IF NOT EXISTS "eventId" text DEFAULT 'default'::text;
 ALTER TABLE public.event_fichas ADD COLUMN IF NOT EXISTS number integer DEFAULT 0;
@@ -791,6 +814,9 @@ DO $do$ BEGIN
   ALTER TABLE public.credit_installments ADD CONSTRAINT credit_installments_pkey PRIMARY KEY (id);
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
+  ALTER TABLE public.estoque_ajustes ADD CONSTRAINT estoque_ajustes_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
+DO $do$ BEGIN
   ALTER TABLE public.event_fichas ADD CONSTRAINT event_fichas_pkey PRIMARY KEY (id);
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
@@ -864,6 +890,12 @@ DO $do$ BEGIN
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
   ALTER TABLE public.clients ADD CONSTRAINT clients_pdv_mode_check CHECK ((pdv_mode = ANY (ARRAY['supermax'::text, 'maxlook'::text, 'techmax'::text])));
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
+DO $do$ BEGIN
+  ALTER TABLE public.estoque_ajustes ADD CONSTRAINT estoque_ajustes_pdv_mode_check CHECK ((pdv_mode = ANY (ARRAY['supermax'::text, 'maxlook'::text, 'techmax'::text])));
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
+DO $do$ BEGIN
+  ALTER TABLE public.estoque_ajustes ADD CONSTRAINT estoque_ajustes_tipo_check CHECK ((tipo = ANY (ARRAY['entrada'::text, 'saida'::text, 'correcao'::text])));
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $do$;
 DO $do$ BEGIN
   ALTER TABLE public.folha_pagamento ADD CONSTRAINT folha_pagamento_descontos_check CHECK ((descontos >= (0)::numeric));
@@ -1006,6 +1038,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS categories_nome_modo_uniq ON public.categories
 CREATE INDEX IF NOT EXISTS categories_pdv_mode_idx ON public.categories USING btree (pdv_mode);
 CREATE INDEX IF NOT EXISTS clients_pdv_mode_idx ON public.clients USING btree (pdv_mode);
 CREATE INDEX IF NOT EXISTS credit_installments_saleid_idx ON public.credit_installments USING btree (sale_id);
+CREATE INDEX IF NOT EXISTS estoque_ajustes_loja_data_idx ON public.estoque_ajustes USING btree (pdv_mode, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_beneficios_pendentes_status ON public.beneficios_pendentes USING btree (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_folha_pagamento_mes ON public.folha_pagamento USING btree (mes_ref, status);
 CREATE INDEX IF NOT EXISTS idx_maxbank_transacoes_conta_data ON public.maxbank_transacoes USING btree (conta_id, created_at DESC);
@@ -3255,6 +3288,7 @@ ALTER TABLE public.cash_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.credit_installments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.estoque_ajustes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_fichas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.folha_pagamento ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.maxbank_contas ENABLE ROW LEVEL SECURITY;
@@ -3374,6 +3408,16 @@ CREATE POLICY credit_installments_isolada_por_loja ON public.credit_installments
   WITH CHECK ((EXISTS ( SELECT 1
    FROM sales s
   WHERE ((s.id = credit_installments.sale_id) AND (( SELECT vejo_todas_as_lojas() AS vejo_todas_as_lojas) OR (( SELECT minhas_lojas() AS minhas_lojas) @> ARRAY[s.pdv_mode]) OR ((s.pdv_mode IS NULL) AND ( SELECT tenho_perfil() AS tenho_perfil)))))));
+DROP POLICY IF EXISTS estoque_ajustes_insert ON public.estoque_ajustes;
+CREATE POLICY estoque_ajustes_insert ON public.estoque_ajustes FOR INSERT TO authenticated
+  WITH CHECK (( SELECT tenho_perfil() AS tenho_perfil));
+DROP POLICY IF EXISTS estoque_ajustes_isolada_por_loja ON public.estoque_ajustes;
+CREATE POLICY estoque_ajustes_isolada_por_loja ON public.estoque_ajustes AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((( SELECT vejo_todas_as_lojas() AS vejo_todas_as_lojas) OR (( SELECT minhas_lojas() AS minhas_lojas) @> ARRAY[pdv_mode])))
+  WITH CHECK ((( SELECT vejo_todas_as_lojas() AS vejo_todas_as_lojas) OR (( SELECT minhas_lojas() AS minhas_lojas) @> ARRAY[pdv_mode])));
+DROP POLICY IF EXISTS estoque_ajustes_select ON public.estoque_ajustes;
+CREATE POLICY estoque_ajustes_select ON public.estoque_ajustes FOR SELECT TO authenticated
+  USING (true);
 DROP POLICY IF EXISTS auth_all ON public.event_fichas;
 CREATE POLICY auth_all ON public.event_fichas FOR ALL TO authenticated
   USING (true)
@@ -3546,6 +3590,9 @@ GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.credit_installments TO anon;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.credit_installments TO authenticated;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.credit_installments TO service_role;
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.estoque_ajustes TO anon;
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.estoque_ajustes TO authenticated;
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.estoque_ajustes TO service_role;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.event_fichas TO anon;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.event_fichas TO authenticated;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON public.event_fichas TO service_role;
@@ -3623,6 +3670,11 @@ END $do$;
 DO $do$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='credit_installments') THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.credit_installments;
+  END IF;
+END $do$;
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='estoque_ajustes') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.estoque_ajustes;
   END IF;
 END $do$;
 DO $do$ BEGIN
