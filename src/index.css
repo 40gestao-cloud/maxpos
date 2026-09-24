@@ -350,20 +350,15 @@ body {
   /* A cor é o único código: sem brilho, sem animação. Em lista de cinquenta
      linhas são duzentos botões na tela ao mesmo tempo, e qualquer movimento
      repetido nesse volume vira letreiro.
-     Editar, a ação principal da linha, é sólido. As outras têm cor viva só no
-     contorno e no ícone, e enchem com a cor quando o ponteiro chega — viva o
-     bastante para achar de relance, sem transformar a lista num arco-íris. */
+     Fundo sólido por ação (pedido 2026-09-23): editar azul-marinho, etiqueta
+     amarelo, excluir vermelho, detalhes verde — cada um se acha pela cor. */
   .row-action-btn { border-width: 1.5px; }
-  .row-action-btn.is-editar   { background: #2563eb; border-color: #1d4ed8; color: #fff; }
-  .row-action-btn.is-editar:hover { filter: none; background: #1d4ed8; }
-  .row-action-btn.is-etiqueta { background: #fff; border-color: #f59e0b; color: #b45309; }
-  .row-action-btn.is-excluir  { background: #fff; border-color: #ef4444; color: #dc2626; }
-  .row-action-btn.is-detalhes { background: #fff; border-color: #8b5cf6; color: #7c3aed; }
+  .row-action-btn.is-editar   { background: #172554; border-color: #0f1a3d; color: #fff; }
+  .row-action-btn.is-etiqueta { background: #FFC107; border-color: #B8860B; color: #172554; }
+  .row-action-btn.is-excluir  { background: #dc2626; border-color: #b91c1c; color: #fff; }
+  .row-action-btn.is-detalhes { background: #16a34a; border-color: #15803d; color: #fff; }
   .row-action-btn.is-pago     { background: #fff; border-color: #10b981; color: #047857; }
   .row-action-btn.is-ocultar  { background: #fff; border-color: #94a3b8; color: #475569; }
-  .row-action-btn.is-etiqueta:hover { filter: none; background: #f59e0b; color: #fff; }
-  .row-action-btn.is-excluir:hover  { filter: none; background: #dc2626; color: #fff; }
-  .row-action-btn.is-detalhes:hover { filter: none; background: #7c3aed; color: #fff; }
   .row-action-btn.is-pago:hover     { filter: none; background: #059669; color: #fff; }
   .row-action-btn.is-ocultar:hover  { filter: none; background: #475569; color: #fff; }
 

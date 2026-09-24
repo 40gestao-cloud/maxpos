@@ -1996,9 +1996,21 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               {lista.map(c => (
                 <tr key={c.id}>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-4 h-4 rounded-full border shrink-0"
-                        style={{ background: c.color ?? '#9ca3af', borderColor: 'rgba(0,0,0,0.2)' }} />
+                    <div className="flex items-center gap-3">
+                      {/* A foto era gravada no cadastro, mas a lista só
+                          desenhava a bolinha de cor — quem punha imagem não
+                          a via em lugar nenhum. Sem foto, a cor ocupa o lugar. */}
+                      {c.image ? (
+                        <img
+                          src={c.image}
+                          alt=""
+                          className="w-11 h-11 rounded-lg object-cover shrink-0 border-2"
+                          style={{ borderColor: c.color ?? '#d1d5db' }}
+                        />
+                      ) : (
+                        <span className="w-11 h-11 rounded-lg shrink-0 border"
+                          style={{ background: c.color ?? '#9ca3af', borderColor: 'rgba(0,0,0,0.2)' }} />
+                      )}
                       <span className="font-bold text-gray-900">{c.name}</span>
                       {!c.active && (
                         <span className="text-[10px] font-black uppercase tracking-wider text-gray-500 border rounded px-1.5 py-0.5">inativa</span>
@@ -2007,15 +2019,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                   </td>
                   <td className="px-5 py-4 text-right tabular-nums font-bold" style={{ color: 'var(--navy)' }}>{usos(c.name)}</td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => setCatForm(c)} title="Editar"
-                        className="p-2 rounded-lg border-2 hover:bg-yellow-50"
-                        style={{ borderColor: 'var(--navy)', color: 'var(--navy)' }}>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button onClick={() => setCatForm(c)} title="Editar" className="row-action-btn is-editar">
                         <Edit2 size={16} />
                       </button>
-                      <button onClick={() => excluirCategoria(c)} title="Excluir"
-                        className="p-2 rounded-lg border-2 hover:bg-red-50"
-                        style={{ borderColor: '#b91c1c', color: '#b91c1c' }}>
+                      <button onClick={() => excluirCategoria(c)} title="Excluir" className="row-action-btn is-excluir">
                         <Trash2 size={16} />
                       </button>
                     </div>
@@ -2423,12 +2431,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </button>
               <button
                 onClick={exportProductsExcel}
-                className="glass-blue shimmer-subtle px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2"
-                style={{ borderColor: 'var(--accent)' }}
+                // Verde do Excel: o botão se reconhece pela cor antes do texto.
+                className="px-4 py-2 rounded-xl flex items-center gap-2 text-xs tracking-widest uppercase font-black whitespace-nowrap border-2 text-white bg-[#16a34a] border-[#15803d] hover:bg-[#15803d] transition-colors"
                 title="Exportar lista filtrada em CSV/Excel"
               >
-                <FileSpreadsheet size={18} className="relative z-[2]" />
-                <span className="relative z-[2]">Excel</span>
+                <FileSpreadsheet size={18} />
+                <span>Excel</span>
               </button>
             </>
           )}

@@ -4,7 +4,9 @@
  */
 
 import { User } from '../types';
-import { getCompleted, ALL_SCENARIOS } from '../lib/trainingProgress';
+import { useState } from 'react';
+import { getCompleted, ALL_SCENARIOS, resetProgress } from '../lib/trainingProgress';
+import { useConfirmDialog } from './ConfirmDialog';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 
 interface InicioModuleProps {
@@ -17,6 +19,16 @@ const YELLOW_DARK = 'var(--accent-dark)';
 const NAVY_DARK = 'var(--navy)';
 
 export default function InicioModule({ currentUser, onStartTraining }: InicioModuleProps) {
+  const { askConfirm, host: confirmHost } = useConfirmDialog();
+  // O progresso mora no localStorage; este contador só força reler depois de zerar.
+  const [, setVersaoProgresso] = useState(0);
+  const recomecarTreino = () => askConfirm({
+    title: 'Recomeçar o treinamento?',
+    message: 'Os cenários concluídos voltam a ficar pendentes, como na primeira vez. Nenhuma venda ou cadastro é afetado.',
+    confirmLabel: 'Recomeçar do zero',
+    variant: 'primary',
+    onConfirm: () => { resetProgress(currentUser.id); setVersaoProgresso(v => v + 1); },
+  });
   const { filialAtiva } = useFilial();
   const empresa = FILIAL_META[filialAtiva ?? 'supermax'];
   const now = new Date();
@@ -28,6 +40,7 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
 
   return (
     <div className="min-h-full flex items-center justify-center px-6 py-8" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+      {confirmHost}
       <div className="w-full max-w-5xl">
         {/* Saudação ao operador */}
         <div className="text-center mb-8">
@@ -163,6 +176,14 @@ export default function InicioModule({ currentUser, onStartTraining }: InicioMod
                   </span>
                 )}
               </button>
+              {!isNew && (
+                <button
+                  onClick={recomecarTreino}
+                  className="text-sm font-semibold text-[var(--navy)] hover:underline"
+                >
+                  Recomeçar do zero
+                </button>
+              )}
             </div>
           );
         })()}

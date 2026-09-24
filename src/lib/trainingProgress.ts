@@ -63,6 +63,11 @@ export function markCompleted(userId: string, sid: ScenarioId): void {
   } catch { /* localStorage indisponível → silencia (uso é opcional) */ }
 }
 
+/** Zera o progresso: o operador refaz os cenários como se fosse a 1ª vez. */
+export function resetProgress(userId: string): void {
+  try { localStorage.removeItem(KEY(userId)); } catch { /* sem localStorage: nada a zerar */ }
+}
+
 export function hasCompletedAny(userId: string): boolean {
   return safeRead(userId).size > 0;
 }

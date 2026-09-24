@@ -15,7 +15,7 @@
  * cenários pendentes.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { markCompleted, getCompleted, ScenarioId, ALL_SCENARIOS } from '../lib/trainingProgress';
+import { markCompleted, getCompleted, resetProgress, ScenarioId, ALL_SCENARIOS } from '../lib/trainingProgress';
 
 export type CoachPDVState = {
   cashSession: unknown | null;
@@ -1465,7 +1465,14 @@ export default function TrainingCoach({ userId, state, onExit, onScenarioStart }
 
   // ─── Tela 1: menu de cenários ──────────────────────────────────
   if (!track) {
-    return <ScenarioMenu completedSet={completedSet} onPick={pickScenario} onExit={onExit} />;
+    return (
+      <ScenarioMenu
+        completedSet={completedSet}
+        onPick={pickScenario}
+        onExit={onExit}
+        onReset={() => { resetProgress(userId); setCompletedSet(new Set()); }}
+      />
+    );
   }
 
   // ─── Tela 3: cenário concluído ─────────────────────────────────
@@ -1703,11 +1710,16 @@ function ScenarioMenu({
   completedSet,
   onPick,
   onExit,
+  onReset,
 }: {
   completedSet: Set<ScenarioId>;
   onPick: (id: ScenarioId) => void;
   onExit: () => void;
+  onReset: () => void;
 }) {
+  // Zerar pede um segundo clique: é um botão ao lado de SAIR, e apagar o
+  // progresso inteiro por engano é pior do que um clique a mais.
+  const [confirmandoReset, setConfirmandoReset] = useState(false);
   const [focusedIdx, setFocusedIdx] = useState(() => {
     const first = ALL_SCENARIOS.findIndex(id => !completedSet.has(id));
     return first === -1 ? 0 : first;
@@ -1772,6 +1784,35 @@ function ScenarioMenu({
               Escolha um cenário para praticar
             </div>
           </div>
+          {completedSet.size > 0 && (
+            confirmandoReset ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold" style={{ color: NAVY_DARK }}>Zerar tudo?</span>
+                <button
+                  onClick={() => { onReset(); setConfirmandoReset(false); }}
+                  className="text-xs font-black px-3 py-1.5 rounded text-white bg-red-600 hover:bg-red-700"
+                >
+                  Sim, zerar
+                </button>
+                <button
+                  onClick={() => setConfirmandoReset(false)}
+                  className="text-xs font-black px-3 py-1.5 border-2 rounded hover:bg-black/10"
+                  style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                >
+                  Não
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmandoReset(true)}
+                className="text-xs font-black px-3 py-1.5 border-2 hover:bg-black/10 rounded"
+                style={{ borderColor: NAVY_DARK, color: NAVY_DARK }}
+                title="Os cenários concluídos voltam a ficar pendentes"
+              >
+                Recomeçar do zero
+              </button>
+            )
+          )}
           <button
             onClick={onExit}
             className="text-xs font-black px-3 py-1.5 border-2 hover:bg-black/10 uppercase tracking-wider rounded"
