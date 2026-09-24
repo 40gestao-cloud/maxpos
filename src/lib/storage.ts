@@ -444,13 +444,6 @@ export const Storage = {
     if (error) throw error;
   },
 
-  // Só a coluna do saldo — usado pelo "Editar estoque", que é aberto de dentro
-  // do formulário e não pode gravar junto o que ainda não foi salvo nele.
-  atualizarEstoqueProduto: async (id: string, stock: number): Promise<void> => {
-    const { error } = await supabase.from('products').update({ stock }).eq('id', id);
-    if (error) throw error;
-  },
-
   upsertProduct: async (product: Product): Promise<void> => {
     const { created_at, pdvMode, ...row } = product as any;
     (row as any).pdv_mode = pdvMode ?? 'supermax';
@@ -803,26 +796,20 @@ export const Storage = {
     return { total: Number(r.total ?? 0), quantidade: Number(r.quantidade ?? 0) };
   },
 
-  // "Movimentações" do Estoque contada no banco. `ocultas` são as chaves
-  // `<venda>-<posição>` que a tela guarda; volta quantas delas valem nesta
-  // empresa, que é o número do botão "restaurar".
-  // Histórico do "Editar estoque" (patch 2026-09-23). Antes o ajuste só
-  // sobrescrevia products.stock e não deixava rastro.
-  registrarAjusteEstoque: async (ajuste: {
-    productId: string; productName: string; pdvMode: string;
-    tipo: 'entrada' | 'saida' | 'correcao';
-    saldoAnterior: number; saldoNovo: number;
-  }): Promise<void> => {
-    const { error } = await supabase.from('estoque_ajustes').insert({
-      product_id: ajuste.productId,
-      product_name: ajuste.productName,
-      pdv_mode: ajuste.pdvMode,
-      tipo: ajuste.tipo,
-      quantidade: ajuste.saldoNovo - ajuste.saldoAnterior,
-      saldo_anterior: ajuste.saldoAnterior,
-      saldo_novo: ajuste.saldoNovo,
+  // Ajuste de estoque atômico (patch 2026-09-23b): trava o produto, calcula,
+  // grava o saldo e o histórico numa transação. Ler-somar-gravar no cliente
+  // perdia a venda que acontecesse no meio.
+  ajustarEstoque: async (
+    productId: string,
+    tipo: 'entrada' | 'saida' | 'correcao',
+    quantidade: number,
+  ): Promise<{ saldoAnterior: number; saldoNovo: number }> => {
+    const { data, error } = await supabase.rpc('ajustar_estoque', {
+      p_product_id: productId, p_tipo: tipo, p_quantidade: quantidade,
     });
     if (error) throw error;
+    const r = (data as any[])?.[0] ?? {};
+    return { saldoAnterior: Number(r.saldo_anterior ?? 0), saldoNovo: Number(r.saldo_novo ?? 0) };
   },
 
   getAjustesEstoque: async (pdvMode: string, limite: number): Promise<AjusteEstoque[]> => {
@@ -857,6 +844,9 @@ export const Storage = {
     return { total, visiveis: ocultos.length ? await contar(ocultos) : total };
   },
 
+  // "Movimentações" do Estoque contada no banco. `ocultas` são as chaves
+  // `<venda>-<posição>` que a tela guarda; volta quantas delas valem nesta
+  // empresa, que é o número do botão "restaurar".
   resumoSaidasEstoque: async (
     pdvMode: Sale['pdvMode'],
     ocultas: string[],

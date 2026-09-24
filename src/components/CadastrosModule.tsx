@@ -1178,69 +1178,40 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setDeleteConfirm(null);
   };
 
-  // Chamado DEPOIS que o saldo novo foi gravado. Se só o histórico falhar,
-  // avisa em vez de desfazer — o número certo no produto vale mais que a
-  // linha do registro.
-  const registrarAjuste = (
-    produto: any, antes: number, depois: number, tipo: 'entrada' | 'saida' | 'correcao',
-  ) => {
-    if (depois === antes) return;
-    Storage.registrarAjusteEstoque({
-      productId: produto.id,
-      productName: produto.name,
-      pdvMode: produto.pdvMode ?? 'supermax',
-      tipo,
-      saldoAnterior: antes,
-      saldoNovo: depois,
-    }).catch(err => showAlert(
-      `O estoque foi ajustado, mas o registro da movimentação não foi salvo: ${explicarErro(err, 'registrar o ajuste')}`,
-    ));
-  };
-
   const confirmStockAdjustment = async () => {
     if (!stockModal.product) return;
 
-    // Saldo da lista, que o Realtime mantém em dia: o `product` do modal é o
-    // formulário, e ele guarda o estoque de quando foi aberto.
-    const atual = Number(products.find(p => p.id === stockModal.product?.id)?.stock ?? stockModal.product.stock ?? 0);
     const amount = stockModal.amount;
-    let newStock = atual;
-    if (stockModal.action === 'sum') newStock += amount;
-    else if (stockModal.action === 'subtract') newStock -= amount;
-    else if (stockModal.action === 'correct') newStock = amount;
+    const tipo = stockModal.action === 'sum' ? 'entrada' : stockModal.action === 'subtract' ? 'saida' : 'correcao';
 
     // Estoque negativo trava a venda inteira daquele produto depois: o PDV
     // recusa no carrinho e a finalize_sale_atomic levanta "Estoque
-    // insuficiente". Melhor barrar aqui, dizendo quanto tem, do que gravar
-    // um saldo que ninguém consegue desfazer pelo caixa.
-    if (newStock < 0) {
+    // insuficiente". A função do banco recusa de novo com o saldo travado;
+    // esta checagem, com o saldo da lista, só dá a mensagem sem ir ao banco.
+    const saldoLista = Number(products.find(p => p.id === stockModal.product?.id)?.stock ?? stockModal.product.stock ?? 0);
+    if (tipo === 'saida' && saldoLista - amount < 0) {
       showAlert(
-        `Não dá para baixar ${amount} de "${stockModal.product.name}": o estoque atual é ${atual}. ` +
+        `Não dá para baixar ${amount} de "${stockModal.product.name}": o estoque atual é ${saldoLista}. ` +
         `Use "Corrigir" se o saldo do sistema estiver errado.`,
       );
       return;
     }
 
-    const updatedProduct = { ...stockModal.product, stock: newStock };
-
-    // O sucesso só é anunciado DEPOIS que o banco confirma. Antes, o catch
-    // mostrava o erro e as linhas seguintes o sobrescreviam com "atualizado
-    // com sucesso" — o operador via sucesso, a lista continuava com o número
-    // velho, e o ajuste tinha se perdido.
-    // Só o saldo vai ao banco. Gravar o produto inteiro levava junto o que
-    // ainda estava sem salvar no formulário (preço, nome...).
+    // Uma chamada só: o banco trava o produto, calcula a partir do saldo
+    // daquele instante e grava saldo + histórico juntos. Somar aqui no
+    // cliente perdia a venda que caísse entre a leitura e a gravação. E só
+    // o saldo muda — o formulário aberto não vai junto.
+    // O sucesso só é anunciado DEPOIS que o banco confirma.
+    let atual: number;
+    let newStock: number;
     try {
-      await Storage.atualizarEstoqueProduto(stockModal.product.id, newStock);
+      ({ saldoAnterior: atual, saldoNovo: newStock } = await Storage.ajustarEstoque(stockModal.product.id, tipo, amount));
     } catch (err: any) {
       showAlert(explicarErro(err, 'ajustar o estoque'));
       return;
     }
 
-    registrarAjuste(
-      stockModal.product, atual, newStock,
-      stockModal.action === 'sum' ? 'entrada' : stockModal.action === 'subtract' ? 'saida' : 'correcao',
-    );
-
+    const updatedProduct = { ...stockModal.product, stock: newStock };
     setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? { ...p, stock: newStock } : p));
     if (editingItem && editingItem.id === stockModal.product.id) {
       setFormData((prev: any) => ({ ...prev, stock: newStock }));
@@ -1493,21 +1464,26 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           ].join(' · ');
           try {
             if (editingItem) {
-              // Saldo atual vem da lista (o Realtime a mantém em dia), não de
-              // `editingItem`, que é a foto de quando o formulário abriu.
-              const saldoAtual = Number(products.find(p => p.id === editingItem.id)?.stock ?? editingItem.stock ?? 0);
-              // Só grava estoque se ele mudou no formulário (campo direto ou
-              // "Editar estoque"). Sem isso, uma venda feita com o formulário
-              // aberto era desfeita ao salvar uma troca de preço: o produto
-              // voltava ao saldo de quando abriu. Sem `stock` no payload, o
-              // upsert não toca a coluna.
+              // O estoque nunca vai no upsert do formulário: sem `stock` no
+              // payload o upsert não toca a coluna, e uma venda feita com o
+              // formulário aberto não é desfeita ao salvar uma troca de preço.
+              // Se o Admin Master mudou o saldo no campo, a correção vai pela
+              // função atômica, que também grava o histórico.
               const estoqueMexido = Number(formData.stock ?? 0) !== Number(editingItem.stock ?? 0);
-              const updated = { ...editingItem, ...productFields, stock: estoqueMexido ? finalStock : saldoAtual };
-              const { stock: _saldo, ...semEstoque } = updated;
-              await Storage.upsertProduct(estoqueMexido ? updated : semEstoque);
+              const { stock: _saldo, ...semEstoque } = { ...editingItem, ...productFields };
+              await Storage.upsertProduct(semEstoque as any);
+              let saldo = Number(products.find(p => p.id === editingItem.id)?.stock ?? editingItem.stock ?? 0);
+              if (estoqueMexido) {
+                try {
+                  saldo = (await Storage.ajustarEstoque(editingItem.id, 'correcao', Number(finalStock))).saldoNovo;
+                } catch (err: any) {
+                  const e = explicarErro(err, 'corrigir o estoque');
+                  showAlert({ ...e, message: `Os dados do produto foram salvos, mas o estoque não. ${e.message}` });
+                }
+              }
+              const updated = { ...editingItem, ...productFields, stock: saldo };
               setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
-              if (estoqueMexido) registrarAjuste(updated, saldoAtual, Number(finalStock), 'correcao');
-              toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto(Number(updated.stock)) });
+              toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto(saldo) });
             } else {
               const newProduct = {
                 unit: 'UN', stock: finalStock, minStock: 0, costPrice: 0, price: 0, controlStock: true,

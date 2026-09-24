@@ -5,7 +5,7 @@
 --
 -- Este arquivo e o estado REAL do banco naquela data, extraido do catalogo do
 -- proprio Postgres — nao e escrito a mao e nao e historico. Rodar so ele num
--- projeto Supabase novo chega ao mesmo lugar que a producao: 26 tabelas, 52
+-- projeto Supabase novo chega ao mesmo lugar que a producao: 26 tabelas, 53
 -- funcoes, 65 policies, RLS em todas as tabelas, 19 triggers, os indices, as
 -- permissoes e a publicacao de Realtime.
 --
@@ -68,7 +68,7 @@
 -- Tambem foi conferido: nenhuma chamada `public.X()` sem a funcao
 -- correspondente no arquivo; as unicas referencias a outros schemas sao
 -- built-ins do Supabase (auth.uid, auth.users, storage.*); nenhum tipo ou
--- extensao propria; as 52 funcoes com `search_path` explicito; dollar-quotes
+-- extensao propria; as 53 funcoes com `search_path` explicito; dollar-quotes
 -- balanceados.
 --
 -- O padrao dos quatro defeitos e o mesmo — ORDEM e SCHEMA, coisas que so o
@@ -1117,6 +1117,55 @@ BEGIN
      SET lojas = lojas || ARRAY[p_loja]
    WHERE id = p_user_id
      AND NOT (p_loja = ANY (lojas));
+END;
+$function$
+;
+CREATE OR REPLACE FUNCTION public.ajustar_estoque(p_product_id text, p_tipo text, p_quantidade numeric)
+ RETURNS TABLE(saldo_anterior numeric, saldo_novo numeric)
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+DECLARE
+  v_antes numeric(12,3);
+  v_novo  numeric(12,3);
+  v_nome  text;
+  v_loja  text;
+BEGIN
+  IF p_tipo IS NULL OR p_tipo NOT IN ('entrada', 'saida', 'correcao') THEN
+    RAISE EXCEPTION 'Tipo de ajuste invalido: %', coalesce(p_tipo, '(nenhum)')
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_quantidade IS NULL OR p_quantidade < 0 THEN
+    RAISE EXCEPTION 'Informe uma quantidade de zero para cima.';
+  END IF;
+
+  SELECT p.stock, p.name, p.pdv_mode INTO v_antes, v_nome, v_loja
+    FROM public.products p
+   WHERE p.id = p_product_id
+     FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Produto nao encontrado: ele pode ter sido excluido por outra pessoa.';
+  END IF;
+
+  v_novo := CASE p_tipo
+    WHEN 'entrada' THEN v_antes + p_quantidade
+    WHEN 'saida'   THEN v_antes - p_quantidade
+    ELSE p_quantidade
+  END;
+
+  IF v_novo < 0 THEN
+    RAISE EXCEPTION 'Estoque insuficiente de "%": o saldo agora e %. Use Corrigir se o saldo do sistema estiver errado.', v_nome, trim_scale(v_antes);
+  END IF;
+
+  IF v_novo <> v_antes THEN
+    UPDATE public.products SET stock = v_novo WHERE id = p_product_id;
+    INSERT INTO public.estoque_ajustes
+      (product_id, product_name, pdv_mode, tipo, quantidade, saldo_anterior, saldo_novo)
+    VALUES
+      (p_product_id, v_nome, v_loja, p_tipo, v_novo - v_antes, v_antes, v_novo);
+  END IF;
+
+  RETURN QUERY SELECT v_antes::numeric, v_novo::numeric;
 END;
 $function$
 ;
@@ -3063,6 +3112,10 @@ $function$
 REVOKE EXECUTE ON FUNCTION public.adicionar_usuario_na_empresa(p_user_id uuid, p_loja text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.adicionar_usuario_na_empresa(p_user_id uuid, p_loja text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.adicionar_usuario_na_empresa(p_user_id uuid, p_loja text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.ajustar_estoque(p_product_id text, p_tipo text, p_quantidade numeric) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.ajustar_estoque(p_product_id text, p_tipo text, p_quantidade numeric) FROM anon;
+GRANT EXECUTE ON FUNCTION public.ajustar_estoque(p_product_id text, p_tipo text, p_quantidade numeric) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.ajustar_estoque(p_product_id text, p_tipo text, p_quantidade numeric) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.analisar_promocao(p_id text, p_parecer text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.analisar_promocao(p_id text, p_parecer text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.analisar_promocao(p_id text, p_parecer text) TO service_role;
