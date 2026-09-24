@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { exigirSenhaSegura } from './senhaSegura';
-import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao, Promocao, OfertaVigente } from '../types';
+import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao, Promocao, OfertaVigente, AjusteEstoque } from '../types';
 
 /**
  * Restringe uma query à empresa informada. Sem `pdvMode` a query passa
@@ -791,6 +791,57 @@ export const Storage = {
   // "Movimentações" do Estoque contada no banco. `ocultas` são as chaves
   // `<venda>-<posição>` que a tela guarda; volta quantas delas valem nesta
   // empresa, que é o número do botão "restaurar".
+  // Histórico do "Editar estoque" (patch 2026-09-23). Antes o ajuste só
+  // sobrescrevia products.stock e não deixava rastro.
+  registrarAjusteEstoque: async (ajuste: {
+    productId: string; productName: string; pdvMode: string;
+    tipo: 'entrada' | 'saida' | 'correcao';
+    saldoAnterior: number; saldoNovo: number;
+  }): Promise<void> => {
+    const { error } = await supabase.from('estoque_ajustes').insert({
+      product_id: ajuste.productId,
+      product_name: ajuste.productName,
+      pdv_mode: ajuste.pdvMode,
+      tipo: ajuste.tipo,
+      quantidade: ajuste.saldoNovo - ajuste.saldoAnterior,
+      saldo_anterior: ajuste.saldoAnterior,
+      saldo_novo: ajuste.saldoNovo,
+    });
+    if (error) throw error;
+  },
+
+  getAjustesEstoque: async (pdvMode: string, limite: number): Promise<AjusteEstoque[]> => {
+    const { data, error } = await supabase.from('estoque_ajustes')
+      .select('id, product_name, tipo, quantidade, created_at')
+      .eq('pdv_mode', pdvMode)
+      .order('created_at', { ascending: false })
+      .limit(limite);
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      id: r.id,
+      productName: r.product_name,
+      tipo: r.tipo,
+      quantidade: Number(r.quantidade),
+      criadoEm: r.created_at,
+    }));
+  },
+
+  /** Ajustes da empresa: o total e quantos sobram tirando os que a pessoa
+   *  ocultou (os ids ocultos podem ser de outra empresa, daí a subtração). */
+  contarAjustesEstoque: async (pdvMode: string, ocultos: string[]): Promise<{ total: number; visiveis: number }> => {
+    const contar = async (excluir: string[]) => {
+      let q = supabase.from('estoque_ajustes')
+        .select('id', { count: 'exact', head: true })
+        .eq('pdv_mode', pdvMode);
+      if (excluir.length) q = q.not('id', 'in', `(${excluir.join(',')})`);
+      const { count, error } = await q;
+      if (error) throw error;
+      return count ?? 0;
+    };
+    const total = await contar([]);
+    return { total, visiveis: ocultos.length ? await contar(ocultos) : total };
+  },
+
   resumoSaidasEstoque: async (
     pdvMode: Sale['pdvMode'],
     ocultas: string[],

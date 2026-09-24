@@ -494,11 +494,11 @@ body {
     color: #000;
   }
 
-  /* Header de seção dentro de uma view (h2): navy + bold + grande */
+  /* Header de seção dentro de uma view (h2): navy + bold */
   .section-header {
     color: var(--navy);
-    font-size: 1.5rem;       /* text-2xl */
-    line-height: 2rem;
+    font-size: 1.25rem;      /* text-xl */
+    line-height: 1.75rem;
     font-weight: 800;
     letter-spacing: -0.01em;
     display: flex;
@@ -522,11 +522,9 @@ body {
   }
 
   .smart-stat-label {
-    color: var(--text-muted);
+    color: #374151;
     font-size: 0.875rem;     /* text-sm */
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-weight: 600;
   }
 
   /* ── Skeleton de carregamento ──
@@ -754,3 +752,121 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .fs-card-shimmer::before { animation: none; }
 }
+
+/* ============================================================
+   Formularios de cadastro (.form-cadastro no card do modal).
+   Painel na cor escura da marca, campos brancos com borda no acento.
+   Fica FORA de @layer de proposito: regra sem camada vence as utilities do
+   Tailwind, e e isso que deixa o tema anular `bg-transparent`, `uppercase`
+   e os cinzas pensados para fundo branco sem reescrever cada campo.
+   ============================================================ */
+/* Base em camada para que utilities (flex, text-xs...) ainda possam ajustar. */
+@layer components {
+  .fc-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .fc-hint {
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+}
+
+.form-cadastro {
+  --fc-text: #ffffff;
+  /* Branco com transparencia sobre o azul vira cinza. Rotulo e branco puro;
+     dica e um creme tirado do acento, que se distingue sem apagar. */
+  --fc-soft: #ffffff;
+  --fc-faint: color-mix(in srgb, var(--accent) 22%, #ffffff);
+  --fc-line: rgb(255 255 255 / 0.12);
+  background: var(--navy);
+  border: 1px solid var(--fc-line);
+  border-radius: 1.25rem;
+  color: var(--fc-text);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.45);
+}
+
+.form-cadastro .fc-label { color: var(--fc-soft); }
+.form-cadastro .fc-hint { color: var(--fc-faint); }
+
+.form-cadastro .fc-section {
+  background: rgb(255 255 255 / 0.05);
+  border: 1px solid var(--fc-line);
+  border-radius: 1rem;
+  padding: 1.25rem;
+}
+.form-cadastro .fc-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--fc-text);
+  margin-bottom: 1rem;
+}
+.form-cadastro .fc-section-title svg { color: var(--accent); }
+
+/* Campos */
+.form-cadastro .neumorphic-inset {
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  border-radius: 0.625rem;
+  color: var(--text-main);
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+.form-cadastro .neumorphic-inset:focus,
+.form-cadastro .neumorphic-inset:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.form-cadastro .neumorphic-inset:disabled,
+.form-cadastro .neumorphic-inset[aria-disabled='true'] {
+  background: #ffffff;
+  border-style: dashed;
+}
+.form-cadastro .neumorphic-inset::placeholder { color: #9ca3af; font-weight: 400; }
+/* `appearance-none` tirava a seta do select; sem ela ninguem sabe que abre. */
+.form-cadastro select.neumorphic-inset {
+  padding-right: 2.25rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+}
+.form-cadastro input[type='checkbox'] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent);
+}
+
+/* Nada de caixa-alta: formulario de app le como frase. */
+.form-cadastro .uppercase { text-transform: none; }
+.form-cadastro .neumorphic-inset.uppercase { text-transform: uppercase; }
+.form-cadastro :is(.tracking-widest, .tracking-wider, .tracking-wide, .tracking-tight, .tracking-\[0\.2em\]) { letter-spacing: normal; }
+
+/* Cinzas e navy pensados para fundo branco, fora dos campos, viram claros. */
+.form-cadastro :is(.text-gray-900, .text-\[var\(--navy\)\]):not(.neumorphic-inset, .neumorphic-inset *) { color: var(--fc-text); }
+.form-cadastro :is(.text-gray-600, .text-gray-700):not(.neumorphic-inset, .neumorphic-inset *) { color: var(--fc-soft); }
+.form-cadastro :is(.text-gray-400, .text-gray-500):not(.neumorphic-inset, .neumorphic-inset *) { color: var(--fc-faint); }
+.form-cadastro .text-\[var\(--accent-text\)\] { color: var(--accent); }
+.form-cadastro .text-red-600:not(.neumorphic-inset, .neumorphic-inset *) { color: #fca5a5; }
+.form-cadastro :is(.text-emerald-700):not(.neumorphic-inset, .neumorphic-inset *) { color: #6ee7b7; }
+.form-cadastro .text-amber-600 { color: #fcd34d; }
+.form-cadastro .hover\:text-gray-900:not(.neumorphic-inset *):hover { color: var(--fc-text); }
+.form-cadastro .border-gray-200 { border-color: var(--fc-line); }
+.form-cadastro .bg-gray-50 { background: rgb(255 255 255 / 0.05); }
+.form-cadastro .border-gray-300 { border-color: rgb(255 255 255 / 0.3); }
+
+.fc-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 9999px;
+  color: var(--fc-soft, var(--text-muted));
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.fc-close:hover { background: rgb(255 255 255 / 0.1); color: #fff; }

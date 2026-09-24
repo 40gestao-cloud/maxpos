@@ -364,3 +364,12 @@ export interface MaxbankTransacao {
   origem_id?: string | null;
   created_at: string;
 }
+
+/** Linha de `estoque_ajustes`: um uso do "Editar estoque". `quantidade` tem sinal. */
+export interface AjusteEstoque {
+  id: string;
+  productName: string;
+  tipo: 'entrada' | 'saida' | 'correcao';
+  quantidade: number;
+  criadoEm: string;
+}

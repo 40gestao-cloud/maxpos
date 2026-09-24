@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, MapPin, ClipboardPaste } from 'lucide-react';
+import { Plus, ChevronRight, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -15,6 +15,8 @@ import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurre
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
+import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
+import { AvatarCadastro } from './AvatarCadastro';
 import { useToast } from './Toast';
 import { ATRIBUTOS_PRODUTO, atributosPadrao } from '../lib/atributosProduto';
 import { formatarEnderecoLinha, formatarCEP, parseEnderecoColado, ROTULO_ENDERECO, type EnderecoCampos } from '../lib/endereco';
@@ -36,24 +38,6 @@ const IMAGEM_PRODUTO_MAX_BYTES = 120 * 1024;
 // (e ensina que documento é enfeite). Mesmo botão do LogMax, para que quem
 // treina nos dois sistemas encontre a ferramenta no mesmo lugar.
 const MAXID_URL = 'https://max-id.vercel.app';
-
-// Monograma: sem foto, o card mostra as iniciais sobre uma cor derivada do
-// nome. Cor fixa por nome (e não aleatória) porque o mesmo fornecedor precisa
-// ter sempre a mesma cor — é isso que faz o olho reencontrá-lo na lista.
-const CORES_MONOGRAMA = ['#1e3a8a', '#7c2d12', '#14532d', '#581c87', '#7f1d1d', '#134e4a', '#713f12', '#312e81'];
-
-function corDoNome(nome: string): string {
-  let h = 0;
-  for (let i = 0; i < nome.length; i++) h = (h * 31 + nome.charCodeAt(i)) >>> 0;
-  return CORES_MONOGRAMA[h % CORES_MONOGRAMA.length];
-}
-
-function iniciais(nome: string): string {
-  const partes = String(nome ?? '').trim().split(/\s+/).filter(Boolean);
-  if (!partes.length) return '?';
-  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
-}
 
 // Colar o endereço do MaxID em vez de redigitar.
 //
@@ -83,11 +67,11 @@ function ColarEnderecoMaxID({ onPreencher }: { onPreencher: (campos: EnderecoCam
   };
 
   return (
-    <div className="mb-4 p-3 rounded-xl border border-dashed border-[var(--navy)]/25 bg-[var(--navy)]/[0.03]">
-      <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1.5">
-        <ClipboardPaste size={12} /> Colar endereço do MaxID
+    <div className="mb-5 space-y-1.5">
+      <label className="fc-label flex items-center gap-1.5">
+        <ClipboardPaste size={14} /> Colar endereço do MaxID
       </label>
-      <div className="flex flex-wrap gap-2 mt-1.5">
+      <div className="flex gap-2">
         <input
           value={texto}
           onChange={e => { setTexto(e.target.value); setAviso(null); setOk(null); }}
@@ -98,19 +82,17 @@ function ColarEnderecoMaxID({ onPreencher }: { onPreencher: (campos: EnderecoCam
             if (colado.trim()) { e.preventDefault(); setTexto(colado); aplicar(colado); }
           }}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); aplicar(texto); } }}
-          className="flex-1 min-w-[16rem] neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs"
-          placeholder="Cole aqui: Rua das Flores, 123 — Centro, São Paulo/SP — CEP 01234-567"
+          className={`${CAMPO} flex-1 min-w-0`}
+          placeholder="Rua das Flores, 123 — Centro, São Paulo/SP — CEP 01234-567"
         />
-        <button type="button" onClick={() => aplicar(texto)} className="smart-btn-secondary !py-1.5 !px-3 text-xs uppercase tracking-widest">
+        <button type="button" onClick={() => aplicar(texto)} className="smart-btn-secondary !py-2 !px-4 !text-sm shrink-0">
           Preencher
         </button>
       </div>
-      {ok && <p className="text-[11px] text-emerald-700 font-bold mt-1.5 ml-1">{ok}</p>}
-      {aviso && <p className="text-[11px] text-red-600 font-bold mt-1.5 ml-1">{aviso}</p>}
+      {ok && <p className="text-xs font-semibold text-emerald-700">{ok}</p>}
+      {aviso && <p className="text-xs font-semibold text-red-600">{aviso}</p>}
       {!ok && !aviso && (
-        <p className="text-[10px] text-gray-500 mt-1.5 ml-1">
-          Os campos abaixo continuam editáveis — isto só evita redigitar.
-        </p>
+        <p className="fc-hint">Preenche os campos abaixo, que continuam editáveis.</p>
       )}
     </div>
   );
@@ -154,7 +136,11 @@ function CampoFoto({
 
   return (
     <div className="flex items-center gap-4">
-      <AvatarCadastro nome={nome || '?'} image={image} size={72} />
+      {/* Anel no acento: sem ele o avatar "?" (cor do nome, escura) sumia no
+          fundo azul do formulário. */}
+      <div className="rounded-xl ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-transparent shrink-0">
+        <AvatarCadastro nome={nome || '?'} image={image} size={72} />
+      </div>
       <div className="space-y-1.5">
         <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={escolher} className="hidden" />
         <div className="flex flex-wrap gap-2">
@@ -162,7 +148,7 @@ function CampoFoto({
             type="button"
             onClick={() => inputRef.current?.click()}
             disabled={processando}
-            className="smart-btn-secondary !py-1.5 !px-3 text-xs uppercase tracking-widest disabled:opacity-60 disabled:cursor-wait"
+            className="smart-btn-secondary !py-1.5 !px-3 !text-sm disabled:opacity-60 disabled:cursor-wait"
           >
             <Upload size={14} /> {processando ? 'Otimizando…' : image ? 'Trocar foto' : 'Escolher foto'}
           </button>
@@ -171,13 +157,13 @@ function CampoFoto({
             <button
               type="button"
               onClick={() => onChange(undefined)}
-              className="smart-btn-danger !py-1.5 !px-3 text-xs uppercase tracking-widest"
+              className="smart-btn-danger !py-1.5 !px-3 !text-sm inline-flex items-center gap-1.5"
             >
               <CloseIcon size={14} /> Remover
             </button>
           )}
         </div>
-        <p className="text-[10px] text-gray-500">
+        <p className="fc-hint">
           Opcional — sem foto, o card usa as iniciais. Aceita até {IMAGEM_MAX_ENTRADA_LABEL}; o sistema reduz sozinho.
         </p>
       </div>
@@ -310,51 +296,30 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
   );
 }
 
-function AvatarCadastro({ nome, image, size = 48 }: { nome: string; image?: string; size?: number }) {
-  if (image) {
-    return (
-      <img
-        src={image}
-        alt=""
-        className="rounded-xl object-cover shrink-0 border border-gray-300"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
-  return (
-    <div
-      className="rounded-xl shrink-0 flex items-center justify-center font-black text-white tracking-wider"
-      style={{ width: size, height: size, background: corDoNome(nome), fontSize: size * 0.34 }}
-    >
-      {iniciais(nome)}
-    </div>
-  );
-}
-
 /** Botão do MaxID no alto do formulário — vale para as três empresas, já que
  *  documento e celular não mudam de regra entre SuperMax, MaxLook e TechMax. */
 function BotaoMaxID({ pj }: { pj: boolean }) {
   return (
-    <div className="flex flex-col items-end gap-1.5 shrink-0">
+    <div className="flex flex-col items-start sm:items-end gap-1 shrink-0">
       <button
         type="button"
         onClick={() => window.open(MAXID_URL, '_blank', 'noopener,noreferrer')}
-        className="smart-btn-secondary !py-1.5 !px-3 uppercase text-xs tracking-widest"
+        className="smart-btn-secondary !py-1 !pl-1 !pr-3 !text-sm"
       >
         {/* O PNG tem fundo preto próprio, daí o canto arredondado em vez de
             tentar dissolvê-lo no fundo claro do tema. */}
-        <img src="/icon-maxid.png" alt="" className="h-8 w-auto rounded-md" />
+        <img src="/icon-maxid.png" alt="" className="h-7 w-auto rounded-md" />
         Gerar no MaxID <ExternalLink size={13} />
       </button>
       {/* Dizer o que o botão faz vale mais que o tooltip: em tablet não há
           hover, e é justamente ali que a turma preenche. */}
-      <p className="text-[10px] text-gray-500 leading-relaxed text-right max-w-[15rem] normal-case">
-        Precisa de {pj ? 'CNPJ' : 'CPF'} e celular para preencher? Gere no MaxID e volte para colar
-        aqui — abre em outra aba, o que você já digitou continua nesta.
+      <p className="fc-hint sm:text-right">
+        Gera {pj ? 'CNPJ' : 'CPF'} e celular em outra aba; o que já foi digitado fica aqui.
       </p>
     </div>
   );
 }
+
 
 interface CadastrosModuleProps {
   currentUser: User;
@@ -923,6 +888,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   // loja), então isto organiza o fluxo e não é barreira de segurança.
   const podeEditarEstoqueDireto = currentUser?.role === 'admin_master';
 
+  const COR_CARGO: Record<UserRole, string> = {
+    admin_master: 'bg-[var(--navy)] text-white',
+    ceo: 'bg-amber-100 text-amber-900',
+    operador_caixa: 'bg-sky-100 text-sky-900',
+  };
+
   const ROLE_LABELS: Record<UserRole, string> = {
     admin_master: 'Admin Master',
     ceo: 'CEO',
@@ -1200,6 +1171,25 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     setDeleteConfirm(null);
   };
 
+  // Chamado DEPOIS que o saldo novo foi gravado. Se só o histórico falhar,
+  // avisa em vez de desfazer — o número certo no produto vale mais que a
+  // linha do registro.
+  const registrarAjuste = (
+    produto: any, antes: number, depois: number, tipo: 'entrada' | 'saida' | 'correcao',
+  ) => {
+    if (depois === antes) return;
+    Storage.registrarAjusteEstoque({
+      productId: produto.id,
+      productName: produto.name,
+      pdvMode: produto.pdvMode ?? 'supermax',
+      tipo,
+      saldoAnterior: antes,
+      saldoNovo: depois,
+    }).catch(err => showAlert(
+      `O estoque foi ajustado, mas o registro da movimentação não foi salvo: ${explicarErro(err, 'registrar o ajuste')}`,
+    ));
+  };
+
   const confirmStockAdjustment = async () => {
     if (!stockModal.product) return;
 
@@ -1234,6 +1224,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       showAlert(explicarErro(err, 'ajustar o estoque'));
       return;
     }
+
+    registrarAjuste(
+      stockModal.product, atual, newStock,
+      stockModal.action === 'sum' ? 'entrada' : stockModal.action === 'subtract' ? 'saida' : 'correcao',
+    );
 
     setProducts(prev => prev.map(p => p.id === stockModal.product?.id ? updatedProduct : p));
     if (editingItem && editingItem.id === stockModal.product.id) {
@@ -1485,8 +1480,13 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           try {
             if (editingItem) {
               const updated = { ...editingItem, ...productFields, stock: finalStock };
+              // Saldo de antes vem da lista, não de `editingItem`: se o
+              // "Editar estoque" foi usado com o formulário aberto, ele já
+              // registrou aquele ajuste e atualizou a lista.
+              const saldoAntes = Number(products.find(p => p.id === editingItem.id)?.stock ?? editingItem.stock ?? 0);
               await Storage.upsertProduct(updated);
               setProducts(prev => prev.map(p => p.id === editingItem.id ? updated : p));
+              registrarAjuste(updated, saldoAntes, Number(finalStock), 'correcao');
               toast.sucesso({ titulo: `${nome} atualizado`, mensagem: resumoProduto });
             } else {
               const newProduct = {
@@ -1693,6 +1693,287 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
     return categories.filter(c => c.active && (c.pdvMode ?? 'supermax') === alvo);
   };
 
+  // Cliente e fornecedor tinham o mesmo formulário copiado duas vezes; o que
+  // muda é só o que o cliente tem a mais (aniversário e limite de crédito).
+  const renderFormPessoa = (kind: 'cliente' | 'fornecedor') => {
+    const ehPJ = formData.type === 'PJ';
+    const ehCliente = kind === 'cliente';
+    const set = (campo: string, valor: any) => setFormData((prev: any) => ({ ...prev, [campo]: valor }));
+    const fechar = () => {
+      if (ehCliente) setShowAddClient(false); else setShowAddSupplier(false);
+      setEditingItem(null);
+      setFormData({});
+    };
+    const docInvalido = (() => {
+      const d = String(formData.document ?? '').replace(/\D/g, '');
+      return d.length === (ehPJ ? 14 : 11) && !isValidCpfCnpj(d);
+    })();
+
+    return (
+      <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
+        <div className="form-cadastro p-5 md:p-8 animate-in slide-in-from-top duration-300 max-w-5xl w-full my-8">
+          <CabecalhoForm titulo={`${editingItem ? 'Editar' : 'Novo'} ${kind}`} onFechar={fechar} />
+
+          <div className="space-y-5">
+            <section className="fc-section">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-5">
+                <h4 className="fc-section-title !mb-0">
+                  <UserIcon size={18} /> {ehPJ ? 'Dados da empresa' : 'Dados pessoais'}
+                </h4>
+                <BotaoMaxID pj={ehPJ} />
+              </div>
+
+              <div className="flex flex-col md:flex-row md:items-center gap-5 mb-5">
+                <Segmentado
+                  rotulo="Tipo de pessoa"
+                  valor={ehPJ ? 'PJ' : 'PF'}
+                  opcoes={[{ valor: 'PF', rotulo: 'Pessoa física' }, { valor: 'PJ', rotulo: 'Pessoa jurídica' }]}
+                  onChange={trocarTipoPessoa}
+                />
+                {/* Foto antes dos campos: é a primeira coisa que identifica o
+                    cadastro no card da lista. */}
+                <CampoFoto
+                  nome={formData.name || ''}
+                  image={formData.image}
+                  onChange={img => set('image', img)}
+                  onErro={msg => showAlert(msg)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">{ehPJ ? 'Razão social' : 'Nome completo'}<Obrigatorio /></label>
+                  <input
+                    value={formData.name || ''}
+                    onChange={e => set('name', e.target.value)}
+                    className={CAMPO}
+                    placeholder={ehPJ ? (ehCliente ? 'Ex.: Empresa LTDA' : 'Ex.: Fornecedor LTDA') : (ehCliente ? 'Ex.: João Silva' : 'Ex.: José Silva')}
+                  />
+                </div>
+
+                {ehPJ && (
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Nome fantasia</label>
+                    <input
+                      value={formData.tradeName || ''}
+                      onChange={e => set('tradeName', e.target.value)}
+                      className={CAMPO}
+                      placeholder="Como a empresa é conhecida"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="fc-label">{ehPJ ? 'CNPJ' : 'CPF'}</label>
+                  <input
+                    value={formData.document || ''}
+                    onChange={e => set('document', ehPJ ? maskCNPJ(e.target.value) : maskCPF(e.target.value))}
+                    inputMode="numeric"
+                    className={`${CAMPO} font-mono`}
+                    placeholder={ehPJ ? '00.000.000/0000-00' : '000.000.000-00'}
+                  />
+                  {/* Erro ao DIGITAR, não só ao salvar: descobrir um dígito errado
+                      depois de preencher a ficha inteira é o pior momento.
+                      Só reclama com o documento completo — senão acusaria enquanto
+                      o operador ainda está no meio da digitação. */}
+                  {docInvalido && (
+                    <p className="text-xs font-semibold text-red-600">
+                      {ehPJ ? 'CNPJ' : 'CPF'} inválido — confira os dígitos.
+                    </p>
+                  )}
+                </div>
+
+                {ehPJ ? (
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Inscrição estadual (IE)</label>
+                    <input
+                      value={formData.ie || ''}
+                      onChange={e => set('ie', e.target.value)}
+                      className={`${CAMPO} font-mono`}
+                      placeholder="Somente números"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <label className="fc-label">RG</label>
+                    <input
+                      value={formData.rg || ''}
+                      onChange={e => set('rg', maskRG(e.target.value))}
+                      className={`${CAMPO} font-mono`}
+                      placeholder="00.000.000-0"
+                    />
+                  </div>
+                )}
+
+                {ehCliente && (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="fc-label">{ehPJ ? 'Data de fundação' : 'Data de aniversário'}</label>
+                      <input
+                        type="date"
+                        value={formData.birthDate || ''}
+                        onChange={e => set('birthDate', e.target.value)}
+                        className={CAMPO}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="fc-label">Limite de crédito (R$)</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={maskCurrency(Math.round((formData.creditLimit || 0) * 100))}
+                        onChange={e => set('creditLimit', parseCurrencyToNumber(e.target.value))}
+                        className={`${CAMPO} !font-bold`}
+                      />
+                      <p className="fc-hint">Quanto o cliente pode comprar fiado.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+
+            <section className="fc-section">
+              <h4 className="fc-section-title"><Phone size={18} /> Contato</h4>
+              <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${ehCliente ? 'lg:grid-cols-3' : ''}`}>
+                {/* Com empresa, quem atende não é a razão social: é esse nome
+                    que aparece no rodapé do card do fornecedor. */}
+                {!ehCliente && (
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Pessoa de contato</label>
+                    <input
+                      value={formData.contact || ''}
+                      onChange={e => set('contact', e.target.value)}
+                      className={CAMPO}
+                      placeholder="Ex.: Carlos (representante comercial)"
+                    />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <label className="fc-label">Celular</label>
+                  <input
+                    value={formData.cellphone || ''}
+                    onChange={e => set('cellphone', maskCellphone(e.target.value))}
+                    inputMode="tel"
+                    className={CAMPO}
+                    placeholder="(00) 00000-0000"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="fc-label">Telefone fixo</label>
+                  <input
+                    value={formData.phone || ''}
+                    onChange={e => set('phone', maskPhone(e.target.value))}
+                    inputMode="tel"
+                    className={CAMPO}
+                    placeholder="(00) 0000-0000"
+                  />
+                </div>
+                <div className={`space-y-1.5 ${ehCliente ? 'md:col-span-2 lg:col-span-1' : ''}`}>
+                  <label className="fc-label">E-mail</label>
+                  <input
+                    type="email"
+                    value={formData.email || ''}
+                    onChange={e => set('email', e.target.value)}
+                    className={CAMPO}
+                    placeholder="email@exemplo.com"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="fc-section">
+              <h4 className="fc-section-title"><MapPin size={18} /> Endereço</h4>
+              <ColarEnderecoMaxID onPreencher={campos => setFormData((prev: any) => ({ ...prev, ...campos }))} />
+              {/* 12 colunas para cada campo ter a largura do que recebe: UF
+                  tinha a largura do bairro para guardar duas letras. */}
+              <div className="grid grid-cols-2 md:grid-cols-12 gap-4">
+                <div className="space-y-1.5 col-span-2 md:col-span-3">
+                  <label className="fc-label">CEP</label>
+                  <input
+                    value={formData.zipCode || ''}
+                    onChange={e => set('zipCode', maskCEP(e.target.value))}
+                    inputMode="numeric"
+                    className={CAMPO}
+                    placeholder="00000-000"
+                  />
+                </div>
+                <div className="space-y-1.5 col-span-2 md:col-span-7">
+                  <label className="fc-label">Endereço</label>
+                  <input
+                    value={formData.address || ''}
+                    onChange={e => set('address', e.target.value)}
+                    className={CAMPO}
+                    placeholder="Rua, avenida..."
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">Número</label>
+                  <input
+                    value={formData.number || ''}
+                    onChange={e => set('number', e.target.value)}
+                    className={CAMPO}
+                    placeholder="123"
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-4">
+                  <label className="fc-label">Bairro</label>
+                  <input
+                    value={formData.neighborhood || ''}
+                    onChange={e => set('neighborhood', e.target.value)}
+                    className={CAMPO}
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-6">
+                  <label className="fc-label">Cidade</label>
+                  <input
+                    value={formData.city || ''}
+                    onChange={e => set('city', e.target.value)}
+                    className={CAMPO}
+                  />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">UF</label>
+                  <input
+                    value={formData.state || ''}
+                    onChange={e => set('state', e.target.value)}
+                    className={`${CAMPO} uppercase`}
+                    maxLength={2}
+                    placeholder="SP"
+                  />
+                </div>
+                <div className="space-y-1.5 col-span-2 md:col-span-12">
+                  <label className="fc-label">Complemento</label>
+                  <input
+                    value={formData.complement || ''}
+                    onChange={e => set('complement', e.target.value)}
+                    className={CAMPO}
+                    placeholder="Apto, sala, ponto de referência"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="fc-section">
+              <h4 className="fc-section-title"><FileText size={18} /> Observações</h4>
+              <textarea
+                value={formData.observations || ''}
+                onChange={e => set('observations', e.target.value)}
+                className={`${CAMPO} min-h-[88px]`}
+                placeholder={`Observações importantes sobre o ${kind}...`}
+              />
+            </section>
+          </div>
+
+          <RodapeForm
+            rotulo={editingItem ? 'Salvar alterações' : `Salvar ${kind}`}
+            onCancelar={fechar}
+            onSalvar={() => handleSave(kind)}
+          />
+        </div>
+      </div>
+    );
+  };
+
   const renderTable = () => {
     switch (subTab) {
       case 'categorias': {
@@ -1756,35 +2037,54 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       }
       case 'equipe':
         return (
-          <table className="w-full text-left min-w-[800px]">
-            <thead className="text-black uppercase text-sm font-bold tracking-wide sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
+          <table className="w-full text-left min-w-[720px]">
+            <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
-                <th className="p-6">Membro</th>
-                <th className="p-6">Cargo</th>
-                <th className="p-6">E-mail</th>
-                <th className="p-6">ID</th>
-                <th className="p-6">Ações</th>
+                <th className="px-5 py-3">Membro</th>
+                <th className="px-5 py-3">Cargo</th>
+                <th className="px-5 py-3">Empresas</th>
+                <th className="px-5 py-3 w-28">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredUsers.map((u) => (
                 <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="p-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-[var(--navy)] font-black text-xs">
-                        {u.name.charAt(0)}
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <AvatarCadastro nome={u.name} size={36} />
+                      <div className="min-w-0">
+                        <p className="font-bold text-gray-900 flex items-center gap-2">
+                          <span className="truncate">{u.name}</span>
+                          {u.id === currentUser?.id && (
+                            <span className="text-[11px] font-semibold px-1.5 py-px rounded bg-[var(--accent)] text-[var(--accent-fg)] shrink-0">você</span>
+                          )}
+                        </p>
+                        <p className="text-sm text-gray-600 truncate">{u.email}</p>
                       </div>
-                      <span className="font-bold text-gray-900">{u.name}</span>
                     </div>
                   </td>
-                  <td className="p-6">
-                    <span className="bg-gray-100 px-3 py-1 rounded text-sm font-black text-gray-600 uppercase tracking-widest">
+                  <td className="px-5 py-3">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${COR_CARGO[u.role] ?? 'bg-gray-100 text-gray-800'}`}>
                       {ROLE_LABELS[u.role] ?? u.role.replace('_', ' ')}
                     </span>
                   </td>
-                  <td className="p-6 text-sm text-gray-600">{u.email}</td>
-                  <td className="p-6 text-sm font-mono text-gray-600/60">{u.id}</td>
-                  <td className="p-6">
+                  <td className="px-5 py-3">
+                    {/* Operador de caixa pode atender só uma parte das lojas —
+                        antes isso só se via abrindo o cadastro. */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {(['supermax', 'maxlook', 'techmax'] as const)
+                        .filter(f => (u.lojas ?? []).includes(f))
+                        .map(f => {
+                          const m = FILIAL_META[f];
+                          return (
+                            <span key={f} className="px-2 py-0.5 rounded-full text-xs font-semibold border" style={{ background: m.color, color: m.fg, borderColor: m.dark }}>
+                              {m.label}
+                            </span>
+                          );
+                        })}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3">
                     {/* A tela nao oferece o que o banco vai negar: quem esta no
                         seu nivel ou acima (o Admin Master, para todo mundo)
                         aparece como somente leitura. Antes bastava ter algum
@@ -1814,8 +2114,8 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         )}
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400 italic">
-                        {u.role === 'admin_master' ? 'Admin Master — intocável' : 'somente leitura'}
+                      <span className="text-xs text-gray-600">
+                        {u.role === 'admin_master' ? 'Não editável' : 'Somente leitura'}
                       </span>
                     )}
                   </td>
@@ -2158,399 +2458,146 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         </div>
       </div>
 
-      {showAddUser && subTab === 'equipe' && (
+      {showAddUser && subTab === 'equipe' && (() => {
+        const fechar = () => {
+          setShowAddUser(false);
+          setEditingItem(null);
+          setFormData({});
+          setNewUser({ name: '', email: '', password: '', role: '' as UserRole });
+        };
+        return (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
-          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2">
-              <UserPlus /> {editingItem ? 'EDITAR MEMBRO' : 'CADASTRAR NOVO MEMBRO'}
-            </h3>
-            <button onClick={() => { setShowAddUser(false); setEditingItem(null); setFormData({}); setNewUser({ name: '', email: '', password: '', role: '' as UserRole }); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
-          </div>
-          
-          <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Completo</label>
-              <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <UserIcon size={16} className="text-gray-600" />
-                <input 
-                  type="text" required value={newUser.name}
-                  onChange={e => setNewUser({...newUser, name: e.target.value})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold" 
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail de Acesso</label>
-              <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <Mail size={16} className="text-gray-600" />
-                <input 
-                  type="email" required value={newUser.email}
-                  onChange={e => setNewUser({...newUser, email: e.target.value})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold" 
-                />
-              </div>
-            </div>
-            {!editingItem && (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Senha Temporária</label>
-                <div className="neumorphic-inset p-3 flex items-center gap-2">
-                  <Lock size={16} className="text-gray-600 shrink-0" />
-                  <input
-                    type={senhaVisivel ? 'text' : 'password'} required value={newUser.password}
-                    onChange={e => setNewUser({...newUser, password: e.target.value})}
-                    className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-bold"
-                    style={senhaVisivel ? { fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.05em' } : undefined}
-                  />
-                  {/* Quem cadastra esta INVENTANDO a senha e vai dita-la ao
-                      operador — ver o que digitou nao e conveniencia, e o que
-                      evita entregar uma senha com typo que ninguem consegue
-                      usar depois. Monoespacado ao revelar, porque a duvida
-                      costuma ser entre l/I/1 e O/0. */}
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => setSenhaVisivel(v => !v)}
-                    className="text-gray-500 hover:text-gray-900 transition-colors shrink-0"
-                    title={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
-                    aria-label={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
-                  >
-                    {senhaVisivel ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+          <div className="form-cadastro p-5 md:p-8 animate-in slide-in-from-top duration-300 max-w-2xl w-full my-8">
+          <CabecalhoForm titulo={editingItem ? 'Editar membro' : 'Novo membro da equipe'} onFechar={fechar} />
+
+          <form onSubmit={handleAddUser}>
+            <section className="fc-section">
+              <h4 className="fc-section-title"><Shield size={18} /> Acesso ao sistema</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">Nome completo<Obrigatorio /></label>
+                  <div className="neumorphic-inset px-3 py-2.5 flex items-center gap-2">
+                    <UserIcon size={16} className="text-gray-500 shrink-0" />
+                    <input
+                      type="text" required value={newUser.name}
+                      onChange={e => setNewUser({...newUser, name: e.target.value})}
+                      placeholder="Ex.: Maria Souza"
+                      className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium"
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Cargo / Permissão</label>
-              <div className="neumorphic-inset p-3 flex items-center gap-2">
-                <Shield size={16} className="text-gray-600" />
-                <select 
-                  required value={newUser.role}
-                  onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}
-                  className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium appearance-none"
-                >
-                  <option value="" className="bg-card text-gray-900">Selecione...</option>
-                  {availableRoles.map(role => (
-                    <option key={role} value={role} className="bg-card text-gray-900">{(ROLE_LABELS[role] ?? role.replace('_', ' ')).toUpperCase()}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {/* Empresas — so na EDICAO e so para Operador de Caixa.
-                No cadastro nao aparece porque a empresa e a que esta aberta na
-                tela; e para gestao nao faz sentido, ja que admin_master e ceo
-                operam as tres por definicao do cargo (o trigger
-                aplica_lojas_por_cargo sobrescreveria qualquer escolha). */}
-            {editingItem && newUser.role === 'operador_caixa' && (
-              <div className="space-y-2 lg:col-span-4">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                  Empresas em que opera
-                </label>
-                <div className="flex flex-wrap gap-3">
-                  {(['supermax', 'maxlook', 'techmax'] as const).map(f => {
-                    const m = FILIAL_META[f];
-                    const marcada = lojasForm.includes(f);
-                    return (
+                <div className={`space-y-1.5 ${editingItem ? 'md:col-span-2' : ''}`}>
+                  <label className="fc-label">E-mail de acesso<Obrigatorio /></label>
+                  <div className="neumorphic-inset px-3 py-2.5 flex items-center gap-2">
+                    <Mail size={16} className="text-gray-500 shrink-0" />
+                    <input
+                      type="email" required value={newUser.email}
+                      onChange={e => setNewUser({...newUser, email: e.target.value})}
+                      placeholder="nome@empresa.com"
+                      className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium"
+                    />
+                  </div>
+                </div>
+                {!editingItem && (
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Senha temporária<Obrigatorio /></label>
+                    <div className="neumorphic-inset px-3 py-2.5 flex items-center gap-2">
+                      <Lock size={16} className="text-gray-500 shrink-0" />
+                      <input
+                        type={senhaVisivel ? 'text' : 'password'} required value={newUser.password}
+                        onChange={e => setNewUser({...newUser, password: e.target.value})}
+                        className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium"
+                        style={senhaVisivel ? { fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.05em' } : undefined}
+                      />
+                      {/* Quem cadastra esta INVENTANDO a senha e vai dita-la ao
+                          operador — ver o que digitou nao e conveniencia, e o que
+                          evita entregar uma senha com typo que ninguem consegue
+                          usar depois. Monoespacado ao revelar, porque a duvida
+                          costuma ser entre l/I/1 e O/0. */}
                       <button
-                        key={f}
                         type="button"
-                        onClick={() => setLojasForm(prev =>
-                          prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f],
-                        )}
-                        className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border-2 transition-all active:scale-95"
-                        style={{
-                          borderColor: marcada ? m.dark : '#d1d5db',
-                          background: marcada ? `${m.color}22` : 'transparent',
-                        }}
-                        aria-pressed={marcada}
+                        tabIndex={-1}
+                        onClick={() => setSenhaVisivel(v => !v)}
+                        className="text-gray-500 hover:text-gray-900 transition-colors shrink-0"
+                        title={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
+                        aria-label={senhaVisivel ? 'Ocultar senha' : 'Mostrar senha'}
                       >
-                        <span
-                          className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden shrink-0"
-                          style={{ background: m.plate, opacity: marcada ? 1 : 0.4 }}
-                        >
-                          <img src={m.logo} alt="" className="w-6 h-6 object-contain" />
-                        </span>
-                        <span
-                          className="text-xs font-black uppercase tracking-wider"
-                          style={{ color: marcada ? m.dark : '#9ca3af' }}
-                        >
-                          {m.label}
-                        </span>
+                        {senhaVisivel ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
-                    );
-                  })}
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">Cargo<Obrigatorio /></label>
+                  <div className="neumorphic-inset px-3 py-2.5 flex items-center gap-2 relative">
+                    <Shield size={16} className="text-gray-500 shrink-0" />
+                    <select
+                      required value={newUser.role}
+                      onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}
+                      className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium appearance-none pr-6 cursor-pointer"
+                    >
+                      <option value="">Selecione o cargo</option>
+                      {availableRoles.map(role => (
+                        <option key={role} value={role}>{ROLE_LABELS[role] ?? role.replace('_', ' ')}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={16} className="text-gray-500 absolute right-3 pointer-events-none" />
+                  </div>
                 </div>
-                <p className="text-[11px] text-gray-500 ml-1">
-                  A mesma pessoa pode atender mais de uma empresa. Ao entrar, quem tem
-                  uma só vai direto para ela; quem tem mais escolhe no login.
-                </p>
+                {/* Empresas — so na EDICAO e so para Operador de Caixa.
+                    No cadastro nao aparece porque a empresa e a que esta aberta na
+                    tela; e para gestao nao faz sentido, ja que admin_master e ceo
+                    operam as tres por definicao do cargo (o trigger
+                    aplica_lojas_por_cargo sobrescreveria qualquer escolha). */}
+                {editingItem && newUser.role === 'operador_caixa' && (
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="fc-label">Empresas em que opera</label>
+                    <div className="flex flex-wrap gap-3">
+                      {(['supermax', 'maxlook', 'techmax'] as const).map(f => {
+                        const m = FILIAL_META[f];
+                        const marcada = lojasForm.includes(f);
+                        return (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setLojasForm(prev =>
+                              prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f],
+                            )}
+                            className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border-2 transition-all active:scale-95"
+                            style={{
+                              borderColor: marcada ? 'var(--accent)' : 'rgb(255 255 255 / 0.3)',
+                              background: marcada ? 'rgb(255 255 255 / 0.12)' : 'transparent',
+                            }}
+                            aria-pressed={marcada}
+                          >
+                            <span
+                              className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden shrink-0"
+                              style={{ background: m.plate }}
+                            >
+                              <img src={m.logo} alt="" className="w-6 h-6 object-contain" />
+                            </span>
+                            <span className="text-sm font-semibold text-white">{m.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="fc-hint">
+                      A mesma pessoa pode atender mais de uma empresa. Ao entrar, quem tem
+                      uma só vai direto para ela; quem tem mais escolhe no login.
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
-            <div className="lg:col-span-4 flex justify-end">
-              <button type="submit" className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
-                {editingItem ? 'SALVAR ALTERAÇÕES' : 'CONFIRMAR CADASTRO'}
-              </button>
-            </div>
+            </section>
+
+            <RodapeForm rotulo={editingItem ? 'Salvar alterações' : 'Cadastrar membro'} onCancelar={fechar} />
           </form>
           </div>
         </div>
-      )}
+        );
+      })()}
 
-      {showAddClient && subTab === 'clientes' && (
-        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
-          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-start gap-4 mb-6">
-            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
-              <Plus /> {editingItem ? 'EDITAR CLIENTE' : 'CADASTRAR NOVO CLIENTE'}
-            </h3>
-            <div className="flex items-start gap-4">
-              <BotaoMaxID pj={formData.type === 'PJ'} />
-              <button onClick={() => { setShowAddClient(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest pt-2">FECHAR</button>
-            </div>
-          </div>
-
-          <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
-            <button 
-              onClick={() => trocarTipoPessoa('PF')}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              Pessoa Física
-            </button>
-            <button 
-              onClick={() => trocarTipoPessoa('PJ')}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              Pessoa Jurídica
-            </button>
-          </div>
-
-          {/* Foto antes dos campos: é a primeira coisa que identifica o
-              cadastro no card da lista, e leva dois cliques. */}
-          <div className="mb-8">
-            <CampoFoto
-              nome={formData.name || ''}
-              image={formData.image}
-              onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
-              onErro={msg => showAlert(msg)}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Common Fields or Type Specific Labels */}
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                {formData.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
-              </label>
-              <input 
-                value={formData.name || ''}
-                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                placeholder={formData.type === 'PJ' ? 'Ex: Empresa LTDA' : 'Ex: João Silva'}
-              />
-            </div>
-
-            {formData.type === 'PJ' && (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Fantasia</label>
-                <input 
-                  value={formData.tradeName || ''}
-                  onChange={e => setFormData({ ...formData, tradeName: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                  placeholder="Nome Fantasia"
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                {formData.type === 'PJ' ? 'CNPJ' : 'CPF'}
-              </label>
-              <input 
-                value={formData.document || ''}
-                onChange={e => setFormData({ ...formData, document: formData.type === 'PJ' ? maskCNPJ(e.target.value) : maskCPF(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
-              />
-              {/* Erro ao DIGITAR, não só ao salvar: descobrir um dígito errado
-                  depois de preencher a ficha inteira é o pior momento.
-                  Só reclama com o documento completo — senão acusaria enquanto
-                  o operador ainda está no meio da digitação. */}
-              {(() => {
-                const d = String(formData.document ?? '').replace(/\D/g, '');
-                const cheio = formData.type === 'PJ' ? 14 : 11;
-                if (d.length !== cheio || isValidCpfCnpj(d)) return null;
-                return (
-                  <p className="text-[11px] font-bold text-red-600">
-                    {formData.type === 'PJ' ? 'CNPJ' : 'CPF'} inválido — confira os dígitos.
-                  </p>
-                );
-              })()}
-            </div>
-
-            {formData.type === 'PF' ? (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">RG</label>
-                <input 
-                  value={formData.rg || ''}
-                  onChange={e => setFormData({ ...formData, rg: maskRG(e.target.value) })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                  placeholder="00.000.000-0"
-                />
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
-                <input 
-                  value={formData.ie || ''}
-                  onChange={e => setFormData({ ...formData, ie: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                  placeholder="Inscrição Estadual"
-                />
-              </div>
-            )}
-
-            {/* Contacts */}
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Telefone Fixo</label>
-              <input 
-                value={formData.phone || ''}
-                onChange={e => setFormData({ ...formData, phone: maskPhone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
-                placeholder="(00) 0000-0000"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Celular</label>
-              <input 
-                value={formData.cellphone || ''}
-                onChange={e => setFormData({ ...formData, cellphone: maskCellphone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                placeholder="(00) 00000-0000"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail</label>
-              <input 
-                type="email"
-                value={formData.email || ''}
-                onChange={e => setFormData({ ...formData, email: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
-                placeholder="email@exemplo.com"
-              />
-            </div>
-
-            {/* Financial and other */}
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Limite de Crédito</label>
-              <input 
-                type="text"
-                value={maskCurrency(Math.round((formData.creditLimit || 0) * 100))}
-                onChange={e => setFormData({ ...formData, creditLimit: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-[var(--navy)] text-sm font-black" 
-                placeholder="0,00"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                {formData.type === 'PJ' ? 'Data de Fundação' : 'Data de Aniversário'}
-              </label>
-              <input 
-                type="date"
-                value={formData.birthDate || ''}
-                onChange={e => setFormData({ ...formData, birthDate: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm uppercase font-bold" 
-              />
-            </div>
-
-            {/* Address Section */}
-            <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
-              <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
-              <ColarEnderecoMaxID onPreencher={campos => setFormData((prev: any) => ({ ...prev, ...campos }))} />
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
-                  <input 
-                    value={formData.zipCode || ''}
-                    onChange={e => setFormData({ ...formData, zipCode: maskCEP(e.target.value) })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="00000-000"
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Endereço</label>
-                  <input 
-                    value={formData.address || ''}
-                    onChange={e => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="Rua / Avenida"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Número</label>
-                  <input 
-                    value={formData.number || ''}
-                    onChange={e => setFormData({ ...formData, number: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="123"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Bairro</label>
-                  <input 
-                    value={formData.neighborhood || ''}
-                    onChange={e => setFormData({ ...formData, neighborhood: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Estado (UF)</label>
-                  <input 
-                    value={formData.state || ''}
-                    onChange={e => setFormData({ ...formData, state: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs uppercase" 
-                    maxLength={2}
-                    placeholder="UF"
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Cidade</label>
-                  <input 
-                    value={formData.city || ''}
-                    onChange={e => setFormData({ ...formData, city: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-4">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Complemento</label>
-                  <input 
-                    value={formData.complement || ''}
-                    onChange={e => setFormData({ ...formData, complement: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="Apto, Sala, Ponto de Referência"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-3 space-y-2 mt-4">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Observações</label>
-              <textarea 
-                value={formData.observations || ''}
-                onChange={e => setFormData({ ...formData, observations: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm min-h-[80px]" 
-                placeholder="Observações importantes sobre o cliente..."
-              />
-            </div>
-
-            <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('cliente')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
-                {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR CLIENTE'}
-              </button>
-            </div>
-          </div>
-          </div>
-        </div>
-      )}
+      {showAddClient && subTab === 'clientes' && renderFormPessoa('cliente')}
 
       {showAddProduct && subTab === 'produtos' && (() => {
         // Empresa e a da SESSAO, nao uma escolha do formulario: escolher aqui
@@ -2563,523 +2610,496 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         const fichaDefs = ATRIBUTOS_PRODUTO[pdvAlvo] ?? [];
         const setAtributo = (key: string, valor: string) =>
           setFormData({ ...formData, atributos: { ...(formData.atributos ?? {}), [key]: valor } });
+        const fechar = () => { setShowAddProduct(false); setEditingItem(null); setFormData({}); };
         return (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
-          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
-                <Plus /> {editingItem ? 'EDITAR PRODUTO' : 'CADASTRAR NOVO PRODUTO'}
-              </h3>
-              <span
-                className="px-3 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
-                style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
-                title={editingItem ? 'O produto pertence a esta empresa.' : 'Cadastrado na empresa em que você está operando.'}
-              >
-                {meta.label}
-              </span>
-            </div>
-            <button onClick={() => { setShowAddProduct(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                Nome do Produto <span className="text-red-600">*</span>
-              </label>
-              <input
-                value={formData.name || ''}
-                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Ex.: Arroz Branco Camil 5kg"
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                autoFocus
-              />
-            </div>
+          <div className="form-cadastro p-5 md:p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
+          <CabecalhoForm titulo={editingItem ? 'Editar produto' : 'Novo produto'} filial={pdvAlvo} onFechar={fechar} />
 
-            {/* REF: o codigo curto que o operador digita no caixa. Nao existia
-                campo nenhum, entao todo produto novo nascia sem ele e so podia
-                ser chamado pelo nome ou pelo EAN. */}
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Código / REF</label>
-              <input
-                value={formData.ref || ''}
-                onChange={e => setFormData({ ...formData, ref: e.target.value })}
-                placeholder="Ex.: arroz, 4011, CX-102"
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-              />
-              <p className="text-[11px] text-gray-500 leading-relaxed">
-                Código curto digitado no PDV para chamar o produto sem leitor —
-                usado em hortifrúti e padaria, onde a etiqueta não tem barras.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
-              <select
-                value={formData.category || ''}
-                onChange={e => setFormData({ ...formData, category: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
-              >
-                <option value="">— sem categoria —</option>
-                {opcoesCategoria(pdvAlvo).map(c => (
-                  <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
-                ))}
-                {/* Valor antigo que não existe mais no cadastro continua
-                    selecionável, senão editar o produto o apagaria em silêncio. */}
-                {formData.category && !opcoesCategoria(pdvAlvo).some(c => c.name === formData.category) && (
-                  <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
-                )}
-              </select>
-              {opcoesCategoria(pdvAlvo).length === 0 && (
-                <p className="text-xs text-gray-500 ml-1">
-                  Nenhuma categoria cadastrada — crie em <b>Cadastros → Categorias</b>.
-                </p>
-              )}
-            </div>
-
-            {/* Marca so faz sentido em quem revende grife/fabricante — no
-                SuperMax o card do PDV nem desenha esse badge. */}
-            {temMarca && (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                  Marca <span className="text-gray-400 normal-case font-medium">(opcional)</span>
-                </label>
-                <input
-                  value={formData.marca || ''}
-                  onChange={e => setFormData({ ...formData, marca: e.target.value })}
-                  placeholder={pdvAlvo === 'maxlook' ? 'Ex.: Hering, Colcci, Vans...' : 'Ex.: Samsung, Lenovo, JBL...'}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                />
-                <p className="text-[11px] text-gray-500 leading-relaxed">Aparece como badge de destaque no card do produto no PDV.</p>
-              </div>
-            )}
-
-            {/* Ficha do nicho (JSONB em products.atributos) — só MaxLook e
-                TechMax têm. SuperMax não desenha nada aqui. */}
-            {fichaDefs.length > 0 && (
-              <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
-                <div className="flex items-center gap-2 mb-2">
-                  <ChevronRight size={18} className="text-[var(--accent-text)] rotate-90" />
-                  <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">
-                    Ficha {meta.label}
-                  </h4>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {fichaDefs.map(d => {
-                    const valor = String((formData.atributos as any)?.[d.key] ?? '');
-                    const wideCls = d.wide ? 'lg:col-span-3' : '';
-                    if (d.type === 'select' && d.options) {
-                      const naLista = (d.options as readonly string[]).includes(valor);
-                      const OUTRO = '__outro__';
-                      // O modo "Outro" mora no Set `fichaOutro`, não no valor
-                      // do campo: se dependesse só de "valor não vazio e fora
-                      // da lista", escolher Outro e ainda não ter digitado
-                      // nada devolvia o select pra "— Selecione —" sozinho.
-                      const emOutro = !!d.livre && (fichaOutro.has(d.key) || (valor !== '' && !naLista));
-                      return (
-                        <div key={d.key} className={`space-y-2 ${wideCls}`}>
-                          <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                            {d.label} {d.req && <span className="text-red-600">*</span>}
-                          </label>
-                          <select
-                            value={emOutro ? OUTRO : valor}
-                            onChange={e => {
-                              if (e.target.value === OUTRO) {
-                                setFichaOutro(prev => new Set(prev).add(d.key));
-                                setAtributo(d.key, '');
-                                return;
-                              }
-                              setFichaOutro(prev => {
-                                if (!prev.has(d.key)) return prev;
-                                const n = new Set(prev); n.delete(d.key); return n;
-                              });
-                              setAtributo(d.key, e.target.value);
-                            }}
-                            className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
-                          >
-                            <option value="">— Selecione —</option>
-                            {d.options.map(o => <option key={o} value={o} className="bg-card">{o}</option>)}
-                            {d.livre && <option value={OUTRO} className="bg-card">Outro…</option>}
-                          </select>
-                          {emOutro && (
-                            <input
-                              autoFocus
-                              value={valor}
-                              onChange={e => setAtributo(d.key, e.target.value)}
-                              placeholder="Digite o valor"
-                              className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                            />
-                          )}
-                          {d.dica && <p className="text-[11px] text-gray-500 leading-relaxed">{d.dica}</p>}
-                        </div>
-                      );
-                    }
-                    if (d.type === 'textarea') {
-                      return (
-                        <div key={d.key} className={`space-y-2 ${wideCls}`}>
-                          <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">{d.label}</label>
-                          <textarea
-                            rows={3}
-                            value={valor}
-                            onChange={e => setAtributo(d.key, e.target.value)}
-                            placeholder={d.placeholder}
-                            className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm resize-none"
-                          />
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={d.key} className={`space-y-2 ${wideCls}`}>
-                        <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                          {d.label} {d.req && <span className="text-red-600">*</span>}
-                        </label>
-                        <input
-                          value={valor}
-                          inputMode={d.soDigitos ? 'numeric' : undefined}
-                          onChange={e => setAtributo(d.key, d.soDigitos ? e.target.value.replace(/\D/g, '') : e.target.value)}
-                          placeholder={d.placeholder}
-                          className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                        />
-                        {d.dica && <p className="text-[11px] text-gray-500 leading-relaxed">{d.dica}</p>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 pt-4 border-t border-gray-200 mt-2">
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
-                <input
-                  type="text"
-                  value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
-                  onChange={e => {
-                    const custo = parseCurrencyToNumber(e.target.value);
-                    // Preenche a venda sozinho SÓ quando ela ainda está vazia.
-                    // Sugestão não sobrescreve decisão: quem já digitou um preço
-                    // tem um motivo, e ver o número mudar sob os dedos é a pior
-                    // forma de "ajudar". Com preço já posto, a sugestão vira o
-                    // aviso abaixo do campo, que a pessoa aplica se quiser.
-                    const alvo = markupAlvoDaCategoria;
-                    const precoAtual = Number(formData.price || 0);
-                    const price = (alvo != null && custo > 0 && precoAtual === 0)
-                      ? Math.round(custo * (1 + alvo / 100) * 100) / 100
-                      : formData.price;
-                    setFormData({ ...formData, costPrice: custo, price });
-                  }}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80"
-                />
-                {markupAlvoDaCategoria != null && (
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    Categoria com markup-alvo de <strong>{markupAlvoDaCategoria}%</strong> — a venda é sugerida a partir do custo.
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                  Preço de Venda (R$) <span className="text-red-600">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={maskCurrency(Math.round((formData.price || 0) * 100))}
-                  onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-emerald-500 text-sm font-black"
-                />
-                {/* Só aparece quando a sugestão DIVERGE do que está no campo —
-                    repetir um número igual ao que já está ali é ruído. */}
-                {precoSugerido != null && precoSugerido !== Number(formData.price || 0) && (
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, price: precoSugerido })}
-                    className="text-[11px] font-bold underline underline-offset-2 hover:opacity-80"
-                    style={{ color: 'var(--navy)' }}
-                  >
-                    Aplicar sugestão da categoria: R$ {precoSugerido.toFixed(2).replace('.', ',')}
-                  </button>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
-                {(() => {
-                  const custo = Number(formData.costPrice || 0);
-                  const preco = Number(formData.price || 0);
-                  const calculada = preco && custo ? (((preco - custo) / preco) * 100).toFixed(2) : '';
-                  return (
+          {/* Coluna lateral com a foto só no desktop; no celular ela desce
+              para o fim, que é onde já ficava — é o campo mais raro de mudar. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem] gap-5 items-start">
+            <div className="space-y-5 min-w-0">
+              <section className="fc-section">
+                <h4 className="fc-section-title"><Tag size={18} /> Identificação</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="fc-label">
+                      Nome do produto <span className="text-red-600">*</span>
+                    </label>
                     <input
-                      type="text"
-                      inputMode="decimal"
-                      disabled={!custo}
-                      value={marginDraft ?? calculada}
-                      onFocus={() => setMarginDraft(calculada)}
-                      onChange={e => setMarginDraft(e.target.value)}
-                      onBlur={() => {
-                        const margem = parseFloat((marginDraft ?? '').replace(',', '.'));
-                        // Margem >= 100 pediria preço infinito ou negativo —
-                        // ignora e volta pro valor calculado a partir do preço.
-                        if (Number.isFinite(margem) && custo > 0 && margem < 100) {
-                          const novoPreco = Math.round((custo / (1 - margem / 100)) * 100) / 100;
-                          setFormData({ ...formData, price: novoPreco });
-                        }
-                        setMarginDraft(null);
-                      }}
-                      placeholder={custo ? '0.00' : 'Informe o custo'}
-                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black disabled:opacity-50 disabled:cursor-not-allowed"
+                      value={formData.name || ''}
+                      onChange={e => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="Ex.: Arroz Branco Camil 5kg"
+                      className={CAMPO}
+                      autoFocus
                     />
-                  );
-                })()}
-                <p className="text-[11px] text-gray-500 leading-relaxed">
-                  Quanto da VENDA é lucro. Editável — digitar recalcula o Preço de Venda.
-                </p>
-              </div>
+                  </div>
 
-              {/* Markup andava faltando: margem e markup respondem perguntas
-                  diferentes e o pessoal de compra raciocina em markup ("multiplico
-                  o custo por quanto?"), não em margem. Custo 10 / venda 20 é 50%
-                  de margem E 100% de markup — sem os dois lado a lado, era fácil
-                  digitar um no campo do outro e errar o preço pra baixo. */}
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Markup (%)</label>
-                {(() => {
-                  const custo = Number(formData.costPrice || 0);
-                  const preco = Number(formData.price || 0);
-                  const calculado = preco && custo ? (((preco - custo) / custo) * 100).toFixed(2) : '';
-                  return (
+                  {/* REF: o codigo curto que o operador digita no caixa. Nao existia
+                      campo nenhum, entao todo produto novo nascia sem ele e so podia
+                      ser chamado pelo nome ou pelo EAN. */}
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Código / REF</label>
                     <input
-                      type="text"
-                      inputMode="decimal"
-                      disabled={!custo}
-                      value={markupDraft ?? calculado}
-                      onFocus={() => setMarkupDraft(calculado)}
-                      onChange={e => setMarkupDraft(e.target.value)}
-                      onBlur={() => {
-                        const markup = parseFloat((markupDraft ?? '').replace(',', '.'));
-                        // Markup <= -100 daria preço zero ou negativo — ignora e
-                        // volta pro valor calculado a partir do preço atual.
-                        if (Number.isFinite(markup) && custo > 0 && markup > -100) {
-                          const novoPreco = Math.round(custo * (1 + markup / 100) * 100) / 100;
-                          setFormData({ ...formData, price: novoPreco });
-                        }
-                        setMarkupDraft(null);
-                      }}
-                      placeholder={custo ? '0.00' : 'Informe o custo'}
-                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black disabled:opacity-50 disabled:cursor-not-allowed"
+                      value={formData.ref || ''}
+                      onChange={e => setFormData({ ...formData, ref: e.target.value })}
+                      placeholder="Ex.: arroz, 4011, CX-102"
+                      className={CAMPO}
                     />
-                  );
-                })()}
-                <p className="text-[11px] text-gray-500 leading-relaxed">
-                  Quanto se soma ao CUSTO. Editável — digitar recalcula o Preço de Venda.
-                </p>
-              </div>
-            </div>
-
-            <div className="lg:col-span-3 space-y-4 pt-4 border-t border-gray-200 mt-2">
-              <div className="flex items-center gap-2 mb-2">
-                <ChevronRight size={18} className="text-[var(--accent-text)] rotate-90" />
-                <h4 className="text-lg font-black text-gray-900 tracking-tight uppercase">Estoque</h4>
-              </div>
-
-              {/* items-start, não items-end: a dica embaixo do "Estoque atual"
-                  deixa aquela célula mais alta, e alinhando pelo fim os campos
-                  vizinhos desciam junto — os três inputs paravam em alturas
-                  diferentes. Alinhados pelo topo, o texto cresce pra baixo sem
-                  arrastar ninguém. */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start">
-                {/* Uma entrada só pra estoque: cadastro novo digita o saldo
-                    inicial; produto existente mostra o saldo — editável só pelo
-                    Admin Master, que corrige o número direto; para os demais
-                    qualquer ajuste passa por "Editar estoque" (soma/subtrai/
-                    corrige) em vez de escrever em cima do saldo. Antes eram DOIS
-                    campos que somavam entre si ("Estoque atual" + "Quantidade
-                    Comprada") sem nenhuma das duas telas dizer qual usar. */}
-                {editingItem ? (
-                  <div className="space-y-2">
-                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque atual</label>
-                    <input
-                      type="number"
-                      min={0}
-                      disabled={!podeEditarEstoqueDireto}
-                      value={formData.stock ?? 0}
-                      onChange={e => {
-                        if (!podeEditarEstoqueDireto) return;
-                        // Saldo negativo trava a venda no PDV e na
-                        // finalize_sale_atomic — mesmo piso do modal de ajuste.
-                        const n = parseInt(e.target.value, 10);
-                        setFormData({ ...formData, stock: Number.isFinite(n) ? Math.max(0, n) : 0 });
-                      }}
-                      className={`w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold ${
-                        podeEditarEstoqueDireto ? '' : 'opacity-50 cursor-not-allowed'
-                      }`}
-                    />
-                    <p className="text-[11px] text-gray-500 leading-relaxed">
-                      {podeEditarEstoqueDireto
-                        ? 'Corrige o saldo direto. Para entrada de mercadoria, prefira "Editar estoque" — ele soma ao que já existe.'
-                        : 'Somente leitura. Use "Editar estoque" para somar, subtrair ou corrigir.'}
+                    <p className="fc-hint">
+                      Código curto digitado no PDV para chamar o produto sem leitor.
                     </p>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque inicial</label>
+
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Categoria</label>
+                    <select
+                      value={formData.category || ''}
+                      onChange={e => setFormData({ ...formData, category: e.target.value })}
+                      className={`${CAMPO} appearance-none`}
+                    >
+                      <option value="">Sem categoria</option>
+                      {opcoesCategoria(pdvAlvo).map(c => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                      {/* Valor antigo que não existe mais no cadastro continua
+                          selecionável, senão editar o produto o apagaria em silêncio. */}
+                      {formData.category && !opcoesCategoria(pdvAlvo).some(c => c.name === formData.category) && (
+                        <option value={formData.category}>{String(formData.category)} (fora do cadastro)</option>
+                      )}
+                    </select>
+                    {opcoesCategoria(pdvAlvo).length === 0 && (
+                      <p className="fc-hint">
+                        Nenhuma categoria cadastrada — crie em <b>Cadastros → Categorias</b>.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Marca so faz sentido em quem revende grife/fabricante — no
+                      SuperMax o card do PDV nem desenha esse badge. */}
+                  {temMarca && (
+                    <div className="space-y-1.5">
+                      <label className="fc-label">
+                        Marca <span className="font-normal">(opcional)</span>
+                      </label>
+                      <input
+                        value={formData.marca || ''}
+                        onChange={e => setFormData({ ...formData, marca: e.target.value })}
+                        placeholder={pdvAlvo === 'maxlook' ? 'Ex.: Hering, Colcci, Vans...' : 'Ex.: Samsung, Lenovo, JBL...'}
+                        className={CAMPO}
+                      />
+                      <p className="fc-hint">Aparece como destaque no card do produto no PDV.</p>
+                    </div>
+                  )}
+
+                  <div className={`space-y-1.5 ${temMarca ? '' : 'md:col-span-2'}`}>
+                    <label className="fc-label">Código de barras (EAN-13)</label>
+                    <div className="flex gap-2">
+                      <input
+                        value={formData.ean13 || ''}
+                        onChange={e => setFormData({ ...formData, ean13: e.target.value.replace(/\D/g, '').slice(0, 13) })}
+                        placeholder="13 dígitos"
+                        inputMode="numeric"
+                        className={`${CAMPO} flex-1 min-w-0 font-mono`}
+                      />
+                      {/* Gerar existia só dentro do modal de etiqueta; aqui o
+                          operador digitava à mão e um dígito verificador errado só
+                          aparecia depois, ao imprimir. */}
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, ean13: generateEAN13() })}
+                        className="smart-btn-secondary !py-2 !px-3 !text-sm shrink-0"
+                      >
+                        <Barcode size={16} /> Gerar
+                      </button>
+                    </div>
+                    {formData.ean13 && !isValidEAN13(String(formData.ean13)) && (
+                      <p className="text-xs font-semibold text-red-600">
+                        EAN-13 inválido — confira os 13 dígitos e o verificador, ou use Gerar.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {/* Ficha do nicho (JSONB em products.atributos) — só MaxLook e
+                  TechMax têm. SuperMax não desenha nada aqui. */}
+              {fichaDefs.length > 0 && (
+                <section className="fc-section">
+                  <h4 className="fc-section-title"><ListChecks size={18} /> Ficha {meta.label}</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {fichaDefs.map(d => {
+                      const valor = String((formData.atributos as any)?.[d.key] ?? '');
+                      const wideCls = d.wide ? 'md:col-span-2' : '';
+                      if (d.type === 'select' && d.options) {
+                        const naLista = (d.options as readonly string[]).includes(valor);
+                        const OUTRO = '__outro__';
+                        // O modo "Outro" mora no Set `fichaOutro`, não no valor
+                        // do campo: se dependesse só de "valor não vazio e fora
+                        // da lista", escolher Outro e ainda não ter digitado
+                        // nada devolvia o select pra "Selecione" sozinho.
+                        const emOutro = !!d.livre && (fichaOutro.has(d.key) || (valor !== '' && !naLista));
+                        return (
+                          <div key={d.key} className={`space-y-1.5 ${wideCls}`}>
+                            <label className="fc-label">
+                              {d.label} {d.req && <span className="text-red-600">*</span>}
+                            </label>
+                            <select
+                              value={emOutro ? OUTRO : valor}
+                              onChange={e => {
+                                if (e.target.value === OUTRO) {
+                                  setFichaOutro(prev => new Set(prev).add(d.key));
+                                  setAtributo(d.key, '');
+                                  return;
+                                }
+                                setFichaOutro(prev => {
+                                  if (!prev.has(d.key)) return prev;
+                                  const n = new Set(prev); n.delete(d.key); return n;
+                                });
+                                setAtributo(d.key, e.target.value);
+                              }}
+                              className={`${CAMPO} appearance-none`}
+                            >
+                              <option value="">Selecione</option>
+                              {d.options.map(o => <option key={o} value={o}>{o}</option>)}
+                              {d.livre && <option value={OUTRO}>Outro…</option>}
+                            </select>
+                            {emOutro && (
+                              <input
+                                autoFocus
+                                value={valor}
+                                onChange={e => setAtributo(d.key, e.target.value)}
+                                placeholder="Digite o valor"
+                                className={CAMPO}
+                              />
+                            )}
+                            {d.dica && <p className="fc-hint">{d.dica}</p>}
+                          </div>
+                        );
+                      }
+                      if (d.type === 'textarea') {
+                        return (
+                          <div key={d.key} className={`space-y-1.5 ${wideCls}`}>
+                            <label className="fc-label">{d.label}</label>
+                            <textarea
+                              rows={3}
+                              value={valor}
+                              onChange={e => setAtributo(d.key, e.target.value)}
+                              placeholder={d.placeholder}
+                              className={`${CAMPO} resize-none`}
+                            />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={d.key} className={`space-y-1.5 ${wideCls}`}>
+                          <label className="fc-label">
+                            {d.label} {d.req && <span className="text-red-600">*</span>}
+                          </label>
+                          <input
+                            value={valor}
+                            inputMode={d.soDigitos ? 'numeric' : undefined}
+                            onChange={e => setAtributo(d.key, d.soDigitos ? e.target.value.replace(/\D/g, '') : e.target.value)}
+                            placeholder={d.placeholder}
+                            className={CAMPO}
+                          />
+                          {d.dica && <p className="fc-hint">{d.dica}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              <section className="fc-section">
+                <h4 className="fc-section-title"><CircleDollarSign size={18} /> Preço</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Preço de custo (R$)</label>
                     <input
-                      type="number"
-                      value={formData.stock || ''}
-                      onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
-                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                      placeholder="0"
+                      type="text"
+                      inputMode="decimal"
+                      value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
+                      onChange={e => {
+                        const custo = parseCurrencyToNumber(e.target.value);
+                        // Preenche a venda sozinho SÓ quando ela ainda está vazia.
+                        // Sugestão não sobrescreve decisão: quem já digitou um preço
+                        // tem um motivo, e ver o número mudar sob os dedos é a pior
+                        // forma de "ajudar". Com preço já posto, a sugestão vira o
+                        // aviso abaixo do campo, que a pessoa aplica se quiser.
+                        const alvo = markupAlvoDaCategoria;
+                        const precoAtual = Number(formData.price || 0);
+                        const price = (alvo != null && custo > 0 && precoAtual === 0)
+                          ? Math.round(custo * (1 + alvo / 100) * 100) / 100
+                          : formData.price;
+                        setFormData({ ...formData, costPrice: custo, price });
+                      }}
+                      className={`${CAMPO} !font-bold !text-red-700`}
                     />
                   </div>
-                )}
 
-                <div className="space-y-2">
-                  <div className="grid grid-cols-1 gap-4 items-end">
-                    <div className="space-y-2">
-                      <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Estoque mínimo</label>
-                      <input
-                        type="number"
-                        value={formData.minStock || ''}
-                        onChange={e => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
-                        className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-                      />
-                    </div>
+                  <div className="space-y-1.5">
+                    <label className="fc-label">
+                      Preço de venda (R$) <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={maskCurrency(Math.round((formData.price || 0) * 100))}
+                      onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
+                      className={`${CAMPO} !font-bold !text-[var(--money)]`}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="fc-label" title="Quanto da VENDA é lucro. Digitar recalcula o preço de venda.">Margem (%)</label>
+                    {(() => {
+                      const custo = Number(formData.costPrice || 0);
+                      const preco = Number(formData.price || 0);
+                      const calculada = preco && custo ? (((preco - custo) / preco) * 100).toFixed(2) : '';
+                      return (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          disabled={!custo}
+                          value={marginDraft ?? calculada}
+                          onFocus={() => setMarginDraft(calculada)}
+                          onChange={e => setMarginDraft(e.target.value)}
+                          onBlur={() => {
+                            const margem = parseFloat((marginDraft ?? '').replace(',', '.'));
+                            // Margem >= 100 pediria preço infinito ou negativo —
+                            // ignora e volta pro valor calculado a partir do preço.
+                            if (Number.isFinite(margem) && custo > 0 && margem < 100) {
+                              const novoPreco = Math.round((custo / (1 - margem / 100)) * 100) / 100;
+                              setFormData({ ...formData, price: novoPreco });
+                            }
+                            setMarginDraft(null);
+                          }}
+                          placeholder={custo ? '0.00' : 'Informe o custo'}
+                          className={`${CAMPO} disabled:cursor-not-allowed`}
+                        />
+                      );
+                    })()}
+                  </div>
+
+                  {/* Markup andava faltando: margem e markup respondem perguntas
+                      diferentes e o pessoal de compra raciocina em markup ("multiplico
+                      o custo por quanto?"), não em margem. Custo 10 / venda 20 é 50%
+                      de margem E 100% de markup — sem os dois lado a lado, era fácil
+                      digitar um no campo do outro e errar o preço pra baixo. */}
+                  <div className="space-y-1.5">
+                    <label className="fc-label" title="Quanto se soma ao CUSTO. Digitar recalcula o preço de venda.">Markup (%)</label>
+                    {(() => {
+                      const custo = Number(formData.costPrice || 0);
+                      const preco = Number(formData.price || 0);
+                      const calculado = preco && custo ? (((preco - custo) / custo) * 100).toFixed(2) : '';
+                      return (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          disabled={!custo}
+                          value={markupDraft ?? calculado}
+                          onFocus={() => setMarkupDraft(calculado)}
+                          onChange={e => setMarkupDraft(e.target.value)}
+                          onBlur={() => {
+                            const markup = parseFloat((markupDraft ?? '').replace(',', '.'));
+                            // Markup <= -100 daria preço zero ou negativo — ignora e
+                            // volta pro valor calculado a partir do preço atual.
+                            if (Number.isFinite(markup) && custo > 0 && markup > -100) {
+                              const novoPreco = Math.round(custo * (1 + markup / 100) * 100) / 100;
+                              setFormData({ ...formData, price: novoPreco });
+                            }
+                            setMarkupDraft(null);
+                          }}
+                          placeholder={custo ? '0.00' : 'Informe o custo'}
+                          className={`${CAMPO} disabled:cursor-not-allowed`}
+                        />
+                      );
+                    })()}
                   </div>
                 </div>
 
-                {/* pt-9 põe o link na altura dos inputs, agora que a linha
-                    alinha pelo topo (label 20px + gap 8px + meio do input). */}
-                <div className="pt-9 flex justify-between items-center">
+                <div className="mt-3 space-y-1">
+                  <p className="fc-hint">
+                    Margem é quanto da <b>venda</b> é lucro; markup é quanto se soma ao <b>custo</b>. Os dois são editáveis e recalculam o preço de venda.
+                  </p>
+                  {markupAlvoDaCategoria != null && (
+                    <p className="fc-hint">
+                      Categoria com markup-alvo de <strong>{markupAlvoDaCategoria}%</strong> — a venda é sugerida a partir do custo.
+                    </p>
+                  )}
+                  {/* Só aparece quando a sugestão DIVERGE do que está no campo —
+                      repetir um número igual ao que já está ali é ruído. */}
+                  {precoSugerido != null && precoSugerido !== Number(formData.price || 0) && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, price: precoSugerido })}
+                      className="text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      Aplicar sugestão da categoria: R$ {precoSugerido.toFixed(2).replace('.', ',')}
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              <section className="fc-section">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <h4 className="fc-section-title !mb-0"><Boxes size={18} /> Estoque</h4>
                   {editingItem && (
                     <button
                       type="button"
                       onClick={() => setStockModal({ isOpen: true, product: formData, action: 'sum', amount: 0 })}
-                      className="text-[var(--navy)] font-black uppercase text-sm hover:underline tracking-widest"
+                      className="text-sm font-semibold underline underline-offset-2 hover:opacity-80"
+                      style={{ color: 'var(--accent)' }}
                     >
                       Editar estoque
                     </button>
                   )}
-                  <div className="lg:hidden"></div>
                 </div>
 
-                {/* Unidade so e uma escolha real no SuperMax — hortifruti pesa,
-                    bebida mede em litro. MaxLook e TechMax vendem sempre por
-                    unidade, e o select de KG/M²/CX so confundia quem cadastra
-                    tênis ou celular. */}
-                {unidadeLivre ? (
-                  <div className="space-y-2 lg:col-span-2">
-                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida (cm, kg, m², etc)</label>
-                    <select
-                      value={formData.unit || 'UN'}
-                      onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                      className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
-                    >
-                      <option value="UN" className="bg-card">UNIDADE (UN)</option>
-                      <option value="KG" className="bg-card">QUILOGRAMA (KG)</option>
-                      <option value="LT" className="bg-card">LITRO (LT)</option>
-                      <option value="MT" className="bg-card">METRO (MT)</option>
-                      <option value="M2" className="bg-card">METRO QUADRADO (M²)</option>
-                      <option value="CM" className="bg-card">CENTÍMETRO (CM)</option>
-                      <option value="CX" className="bg-card">CAIXA (CX)</option>
-                      <option value="PCT" className="bg-card">PACOTE (PCT)</option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="space-y-2 lg:col-span-2">
-                    <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Unidade de medida</label>
-                    <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-500 text-sm font-bold opacity-70">
-                      UNIDADE (UN)
+                {/* items-start: a dica embaixo do "Estoque atual" deixa aquela
+                    célula mais alta, e alinhando pelo fim os campos vizinhos
+                    desciam junto. */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                  {/* Uma entrada só pra estoque: cadastro novo digita o saldo
+                      inicial; produto existente mostra o saldo — editável só pelo
+                      Admin Master, que corrige o número direto; para os demais
+                      qualquer ajuste passa por "Editar estoque" (soma/subtrai/
+                      corrige) em vez de escrever em cima do saldo. */}
+                  {editingItem ? (
+                    <div className="space-y-1.5">
+                      <label className="fc-label">Estoque atual</label>
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={!podeEditarEstoqueDireto}
+                        value={formData.stock ?? 0}
+                        onChange={e => {
+                          if (!podeEditarEstoqueDireto) return;
+                          // Saldo negativo trava a venda no PDV e na
+                          // finalize_sale_atomic — mesmo piso do modal de ajuste.
+                          const n = parseInt(e.target.value, 10);
+                          setFormData({ ...formData, stock: Number.isFinite(n) ? Math.max(0, n) : 0 });
+                        }}
+                        className={`${CAMPO} ${podeEditarEstoqueDireto ? '' : 'cursor-not-allowed'}`}
+                      />
+                      <p className="fc-hint">
+                        {podeEditarEstoqueDireto
+                          ? 'Corrige o saldo direto. Para entrada de mercadoria, prefira "Editar estoque".'
+                          : 'Somente leitura. Use "Editar estoque" para somar, subtrair ou corrigir.'}
+                      </p>
                     </div>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-3 pb-3">
-                  <input
-                    type="checkbox"
-                    id="controlStock"
-                    checked={formData.controlStock === false}
-                    onChange={e => setFormData({ ...formData, controlStock: !e.target.checked })}
-                    className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[var(--accent)] transition-all"
-                  />
-                  <label htmlFor="controlStock" className="text-xs font-black text-gray-600 uppercase tracking-widest cursor-pointer select-none">
-                    Não controlar estoque
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Código EAN-13 (Barcode)</label>
-              <div className="flex gap-2 flex-wrap">
-                <input
-                  value={formData.ean13 || ''}
-                  onChange={e => setFormData({ ...formData, ean13: e.target.value.replace(/\D/g, '').slice(0, 13) })}
-                  placeholder="13 dígitos"
-                  inputMode="numeric"
-                  className="flex-1 min-w-[200px] neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono"
-                />
-                {/* Gerar existia só dentro do modal de etiqueta; aqui o
-                    operador digitava à mão e um dígito verificador errado só
-                    aparecia depois, ao imprimir. */}
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, ean13: generateEAN13() })}
-                  className="smart-btn-secondary"
-                >
-                  <Barcode size={16} /> GERAR
-                </button>
-              </div>
-              {formData.ean13 && !isValidEAN13(String(formData.ean13)) && (
-                <p className="text-[11px] font-bold text-red-600">
-                  EAN-13 inválido — confira os 13 dígitos e o verificador, ou use Gerar.
-                </p>
-              )}
-            </div>
-
-            {/* Imagem por último: é o campo mais raro de mudar depois de
-                cadastrado, e não precisa ser a primeira decisão do formulário. */}
-            <div className="lg:col-span-3 space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Imagem do Produto</label>
-              <div className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
-                <div className="w-24 h-24 border-2 border-gray-300 rounded bg-white flex items-center justify-center overflow-hidden shrink-0">
-                  {formData.image ? (
-                    <img src={formData.image} alt="" className="w-full h-full object-cover" />
                   ) : (
-                    <Package size={40} className="text-gray-400" />
+                    <div className="space-y-1.5">
+                      <label className="fc-label">Estoque inicial</label>
+                      <input
+                        type="number"
+                        value={formData.stock || ''}
+                        onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
+                        className={CAMPO}
+                        placeholder="0"
+                      />
+                    </div>
                   )}
-                </div>
-                <div className="flex-1 space-y-2 min-w-0">
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleProductImage}
-                    className="hidden"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => imageInputRef.current?.click()}
-                      disabled={processandoImagem}
-                      className="smart-btn-secondary disabled:opacity-60 disabled:cursor-wait"
-                    >
-                      <Upload size={16} />
-                      {processandoImagem ? 'OTIMIZANDO…' : formData.image ? 'TROCAR IMAGEM' : 'ESCOLHER IMAGEM'}
-                    </button>
-                    <ColarImagem onImagem={processarImagemProduto} disabled={processandoImagem} />
-                    {formData.image && (
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, image: undefined, vitrine: false })}
-                        className="smart-btn-danger"
+
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Estoque mínimo</label>
+                    <input
+                      type="number"
+                      value={formData.minStock || ''}
+                      onChange={e => setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })}
+                      className={CAMPO}
+                      placeholder="0"
+                    />
+                  </div>
+
+                  {/* Unidade so e uma escolha real no SuperMax — hortifruti pesa,
+                      bebida mede em litro. MaxLook e TechMax vendem sempre por
+                      unidade, e o select de KG/M²/CX so confundia quem cadastra
+                      tênis ou celular. */}
+                  <div className="space-y-1.5">
+                    <label className="fc-label">Unidade de medida</label>
+                    {unidadeLivre ? (
+                      <select
+                        value={formData.unit || 'UN'}
+                        onChange={e => setFormData({ ...formData, unit: e.target.value })}
+                        className={`${CAMPO} appearance-none`}
                       >
-                        <CloseIcon size={16} /> REMOVER
-                      </button>
+                        <option value="UN">Unidade (UN)</option>
+                        <option value="KG">Quilograma (KG)</option>
+                        <option value="LT">Litro (LT)</option>
+                        <option value="MT">Metro (MT)</option>
+                        <option value="M2">Metro quadrado (M²)</option>
+                        <option value="CM">Centímetro (CM)</option>
+                        <option value="CX">Caixa (CX)</option>
+                        <option value="PCT">Pacote (PCT)</option>
+                      </select>
+                    ) : (
+                      <div className={CAMPO} aria-disabled="true">Unidade (UN)</div>
                     )}
                   </div>
-                  <p className="text-xs text-gray-600">
-                    JPG, PNG ou WEBP de até <b>{IMAGEM_MAX_ENTRADA_LABEL}</b> — pode mandar a foto em boa qualidade,
-                    o sistema reduz sozinho antes de salvar. Também dá para colar: no Google, abra a imagem, botão direito → <b>Copiar imagem</b> e Ctrl+V aqui. Sem imagem, o produto exibe um ícone padrão.
-                  </p>
                 </div>
+
+                <label className="mt-4 inline-flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formData.controlStock === false}
+                    onChange={e => setFormData({ ...formData, controlStock: !e.target.checked })}
+                  />
+                  <span className="text-sm font-medium text-white">Não controlar estoque deste produto</span>
+                </label>
+              </section>
+            </div>
+
+            <aside className="fc-section space-y-3">
+              <h4 className="fc-section-title !mb-1"><ImageIcon size={18} /> Imagem</h4>
+              <div className="flex flex-col sm:flex-row lg:flex-col gap-4 items-center sm:items-start lg:items-stretch">
+              <div className="aspect-square w-40 sm:w-32 lg:w-full lg:max-w-[14rem] lg:mx-auto shrink-0 rounded-xl bg-white flex items-center justify-center overflow-hidden border-2" style={{ borderColor: 'var(--accent)' }}>
+                {formData.image ? (
+                  <img src={formData.image} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Package size={48} className="text-gray-300" />
+                )}
               </div>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleProductImage}
+                className="hidden"
+              />
+              <div className="flex flex-col gap-2 w-full sm:flex-1 lg:flex-none">
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={processandoImagem}
+                  className="smart-btn-secondary !py-2 !text-sm w-full disabled:opacity-60 disabled:cursor-wait"
+                >
+                  <Upload size={16} />
+                  {processandoImagem ? 'Otimizando…' : formData.image ? 'Trocar imagem' : 'Escolher imagem'}
+                </button>
+                <ColarImagem
+                  onImagem={processarImagemProduto}
+                  disabled={processandoImagem}
+                  className="justify-center w-full !py-2"
+                />
+                {formData.image && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, image: undefined, vitrine: false })}
+                    className="smart-btn-danger !py-2 !text-sm w-full inline-flex items-center justify-center gap-2"
+                  >
+                    <CloseIcon size={16} /> Remover
+                  </button>
+                )}
+              </div>
+              </div>
+              <p className="fc-hint">
+                JPG, PNG ou WEBP de até <b>{IMAGEM_MAX_ENTRADA_LABEL}</b>; o sistema reduz sozinho antes de salvar.
+                Também dá para copiar uma imagem e colar com Ctrl+V. Sem imagem, o produto exibe um ícone padrão.
+              </p>
               {(() => {
                 // Mesma régua da tela Vitrine: só produto COM FOTO entra (o
                 // carrossel não tem o que desenhar sem imagem), e o teto de
@@ -3090,381 +3110,142 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                 const vitrineCheia = !formData.vitrine && naVitrineCount >= LIMITE_VITRINE;
                 const bloqueado = semFoto || vitrineCheia;
                 return (
-                  <>
-                    <label className={`mt-3 flex items-center gap-3 ${bloqueado ? 'opacity-50' : 'cursor-pointer'}`}>
+                  <div className="pt-3 border-t border-gray-200">
+                    <label className={`flex items-start gap-3 ${bloqueado ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                       <input
                         type="checkbox"
                         checked={!!formData.vitrine}
                         disabled={bloqueado}
                         onChange={e => setFormData({ ...formData, vitrine: e.target.checked })}
-                        className="w-5 h-5 rounded neumorphic-inset bg-transparent border-none checked:bg-[var(--accent)] transition-all"
+                        className="mt-0.5 shrink-0"
                       />
-                      <span className="text-xs font-black text-gray-600 uppercase tracking-widest select-none">
-                        Exibir na vitrine (carrossel da tela de login)
+                      <span className="text-sm font-medium text-white select-none">
+                        Exibir na vitrine
+                        <span className="block fc-hint">Carrossel da tela de login</span>
                       </span>
                     </label>
                     {semFoto && (
-                      <p className="text-[11px] text-gray-500 ml-1 mt-1">Precisa de imagem para entrar na vitrine.</p>
+                      <p className="fc-hint mt-1.5">Precisa de imagem para entrar na vitrine.</p>
                     )}
                     {vitrineCheia && (
-                      <p className="text-[11px] text-amber-600 ml-1 mt-1">Vitrine cheia ({LIMITE_VITRINE}) nesta empresa — tire um produto em Vitrine antes de adicionar outro.</p>
+                      <p className="text-xs text-amber-600 mt-1.5">Vitrine cheia ({LIMITE_VITRINE}) nesta empresa — tire um produto em Vitrine antes de adicionar outro.</p>
                     )}
-                  </>
+                  </div>
                 );
               })()}
-            </div>
-
-            <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('produto')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
-                {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR PRODUTO'}
-              </button>
-            </div>
+            </aside>
           </div>
+
+          <RodapeForm
+            rotulo={editingItem ? 'Salvar alterações' : 'Salvar produto'}
+            onCancelar={fechar}
+            onSalvar={() => handleSave('produto')}
+          />
           </div>
         </div>
         );
       })()}
 
-      {showAddService && subTab === 'servicos' && (
+      {showAddService && subTab === 'servicos' && (() => {
+        // Empresa da sessao — ver a mesma nota no formulario de produto.
+        const pdvAlvo = (editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META;
+        const fechar = () => { setShowAddService(false); setEditingItem(null); setFormData({}); };
+        const custo = Number(formData.costPrice || 0);
+        const preco = Number(formData.price || 0);
+        const margem = preco && custo ? (((preco - custo) / preco) * 100).toFixed(1).replace('.', ',') + '%' : '—';
+        return (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
-          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
-              <Plus /> {editingItem ? 'EDITAR SERVIÇO' : 'CADASTRAR NOVO SERVIÇO'}
-            </h3>
-            <button onClick={() => { setShowAddService(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest">FECHAR</button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Empresa da sessao — ver a mesma nota no formulario de produto. */}
-            <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Empresa</label>
-              <div className="flex items-center gap-3 flex-wrap">
-                {(() => {
-                  const meta = FILIAL_META[(editingItem?.pdvMode ?? nichoFilter) as keyof typeof FILIAL_META];
-                  return (
-                    <span
-                      className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border-2 inline-flex items-center gap-2"
-                      style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
-                    >
-                      {meta.label}
-                    </span>
-                  );
-                })()}
-                <span className="text-xs text-gray-500">
-                  {editingItem
-                    ? 'O serviço pertence a esta empresa.'
-                    : 'O serviço será cadastrado na empresa em que você está operando.'}
-                </span>
+          <div className="form-cadastro p-5 md:p-8 animate-in slide-in-from-top duration-300 max-w-4xl w-full my-8">
+          <CabecalhoForm titulo={editingItem ? 'Editar serviço' : 'Novo serviço'} filial={pdvAlvo} onFechar={fechar} />
+
+          <div className="space-y-5">
+            <section className="fc-section">
+              <h4 className="fc-section-title"><Tag size={18} /> Identificação</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="fc-label">Nome do serviço<Obrigatorio /></label>
+                  <input
+                    value={formData.name || ''}
+                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="Ex.: Troca de tela, instalação..."
+                    className={CAMPO}
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="fc-label">Categoria</label>
+                  <select
+                    value={formData.category || ''}
+                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                    className={`${CAMPO} appearance-none`}
+                  >
+                    <option value="">Sem categoria</option>
+                    {opcoesCategoria(pdvAlvo).map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                    {formData.category && !opcoesCategoria(pdvAlvo).some(c => c.name === formData.category) && (
+                      <option value={formData.category}>{String(formData.category)} (fora do cadastro)</option>
+                    )}
+                  </select>
+                </div>
               </div>
-            </div>
-            <div className="space-y-2 lg:col-span-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome do Serviço</label>
-              <input
-                value={formData.name || ''}
-                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Categoria</label>
-              <select
-                value={formData.category || ''}
-                onChange={e => setFormData({ ...formData, category: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold appearance-none"
-              >
-                <option value="">— sem categoria —</option>
-                {opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).map(c => (
-                  <option key={c.id} value={c.name} className="bg-card">{c.name.toUpperCase()}</option>
-                ))}
-                {formData.category && !opcoesCategoria(editingItem?.pdvMode ?? nichoFilter).some(c => c.name === formData.category) && (
-                  <option value={formData.category} className="bg-card">{String(formData.category).toUpperCase()} (fora do cadastro)</option>
-                )}
-              </select>
-            </div>
+            </section>
 
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Custo (R$)</label>
-              <input 
-                type="text"
-                value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
-                onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-black text-red-500/80" 
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Preço de Venda (R$)</label>
-              <input 
-                type="text"
-                value={maskCurrency(Math.round((formData.price || 0) * 100))}
-                onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-emerald-500 text-sm font-black" 
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Margem de Lucro (%)</label>
-              <div className="w-full neumorphic-inset p-3 bg-transparent text-gray-900 text-sm font-black flex items-center justify-between">
-                <span>
-                  {formData.price && formData.costPrice 
-                    ? (((formData.price - formData.costPrice) / formData.price) * 100).toFixed(2)
-                    : '0.00'}
-                </span>
-                <span className="text-sm text-gray-600">AUTO</span>
+            <section className="fc-section">
+              <h4 className="fc-section-title"><CircleDollarSign size={18} /> Preço</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                <div className="space-y-1.5">
+                  <label className="fc-label">Preço de custo (R$)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={maskCurrency(Math.round((formData.costPrice || 0) * 100))}
+                    onChange={e => setFormData({ ...formData, costPrice: parseCurrencyToNumber(e.target.value) })}
+                    className={`${CAMPO} !font-bold !text-red-700`}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="fc-label">Preço de venda (R$)<Obrigatorio /></label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={maskCurrency(Math.round((formData.price || 0) * 100))}
+                    onChange={e => setFormData({ ...formData, price: parseCurrencyToNumber(e.target.value) })}
+                    className={`${CAMPO} !font-bold !text-[var(--money)]`}
+                  />
+                </div>
+                {/* Calculada, nao digitada: aparece como resultado, nao como
+                    campo — um input branco igual aos outros convidava a clicar. */}
+                <div className="space-y-1.5">
+                  <span className="fc-label">Margem de lucro</span>
+                  <p className="text-2xl font-bold text-white leading-[2.75rem] tabular-nums">{margem}</p>
+                </div>
               </div>
-            </div>
+            </section>
 
-            <div className="space-y-2 lg:col-span-3">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Informações Adicionais</label>
-              <textarea 
+            <section className="fc-section">
+              <h4 className="fc-section-title"><FileText size={18} /> Informações adicionais</h4>
+              <textarea
                 value={formData.additionalInfo || ''}
                 onChange={e => setFormData({ ...formData, additionalInfo: e.target.value })}
                 rows={3}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-medium resize-none" 
-                placeholder="Detalhes sobre o serviço, prazos, etc..."
+                className={`${CAMPO} resize-none`}
+                placeholder="Detalhes sobre o serviço, prazos etc."
               />
-            </div>
-
-            <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('servico')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
-                {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR SERVIÇO'}
-              </button>
-            </div>
-          </div>
-          </div>
-        </div>
-      )}
-
-      {showAddSupplier && subTab === 'fornecedores' && (
-        <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
-          <div className="neumorphic p-8 animate-in slide-in-from-top duration-300 max-w-6xl w-full my-8">
-          <div className="flex justify-between items-start gap-4 mb-6">
-            <h3 className="text-xl font-black text-[var(--navy)] flex items-center gap-2 uppercase tracking-widest">
-              <Plus /> {editingItem ? 'EDITAR FORNECEDOR' : 'CADASTRAR NOVO FORNECEDOR'}
-            </h3>
-            <div className="flex items-start gap-4">
-              <BotaoMaxID pj={formData.type === 'PJ'} />
-              <button onClick={() => { setShowAddSupplier(false); setEditingItem(null); setFormData({}); }} className="text-gray-600 font-bold hover:text-gray-900 uppercase text-xs tracking-widest pt-2">FECHAR</button>
-            </div>
+            </section>
           </div>
 
-          <div className="mb-8 p-1 neumorphic-inset flex w-fit gap-1 rounded-xl">
-            <button 
-              onClick={() => trocarTipoPessoa('PF')}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${(!formData.type || formData.type === 'PF') ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              Pessoa Física
-            </button>
-            <button 
-              onClick={() => trocarTipoPessoa('PJ')}
-              className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${formData.type === 'PJ' ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-lg' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              Pessoa Jurídica
-            </button>
-          </div>
-
-          {/* Foto antes dos campos: é a primeira coisa que identifica o
-              cadastro no card da lista, e leva dois cliques. */}
-          <div className="mb-8">
-            <CampoFoto
-              nome={formData.name || ''}
-              image={formData.image}
-              onChange={img => setFormData((prev: any) => ({ ...prev, image: img }))}
-              onErro={msg => showAlert(msg)}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                {formData.type === 'PJ' ? 'Razão Social' : 'Nome Completo'}
-              </label>
-              <input 
-                value={formData.name || ''}
-                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                placeholder={formData.type === 'PJ' ? 'Ex: Fornecedor LTDA' : 'Ex: José Silva'}
-              />
-            </div>
-
-            {formData.type === 'PJ' && (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Nome Fantasia</label>
-                <input 
-                  value={formData.tradeName || ''}
-                  onChange={e => setFormData({ ...formData, tradeName: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                  placeholder="Nome Fantasia"
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                {formData.type === 'PJ' ? 'CNPJ' : 'CPF'}
-              </label>
-              <input 
-                value={formData.document || ''}
-                onChange={e => setFormData({ ...formData, document: formData.type === 'PJ' ? maskCNPJ(e.target.value) : maskCPF(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                placeholder={formData.type === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
-              />
-              {/* Erro ao DIGITAR, não só ao salvar: descobrir um dígito errado
-                  depois de preencher a ficha inteira é o pior momento.
-                  Só reclama com o documento completo — senão acusaria enquanto
-                  o operador ainda está no meio da digitação. */}
-              {(() => {
-                const d = String(formData.document ?? '').replace(/\D/g, '');
-                const cheio = formData.type === 'PJ' ? 14 : 11;
-                if (d.length !== cheio || isValidCpfCnpj(d)) return null;
-                return (
-                  <p className="text-[11px] font-bold text-red-600">
-                    {formData.type === 'PJ' ? 'CNPJ' : 'CPF'} inválido — confira os dígitos.
-                  </p>
-                );
-              })()}
-            </div>
-
-            {formData.type === 'PF' ? (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">RG</label>
-                <input 
-                  value={formData.rg || ''}
-                  onChange={e => setFormData({ ...formData, rg: maskRG(e.target.value) })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                  placeholder="00.000.000-0"
-                />
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Inscrição Estadual (IE)</label>
-                <input 
-                  value={formData.ie || ''}
-                  onChange={e => setFormData({ ...formData, ie: e.target.value })}
-                  className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-mono" 
-                  placeholder="Inscrição Estadual"
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Telefone Fixo</label>
-              <input 
-                value={formData.phone || ''}
-                onChange={e => setFormData({ ...formData, phone: maskPhone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                placeholder="(00) 0000-0000"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Celular</label>
-              <input 
-                value={formData.cellphone || ''}
-                onChange={e => setFormData({ ...formData, cellphone: maskCellphone(e.target.value) })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold" 
-                placeholder="(00) 00000-0000"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail</label>
-              <input 
-                type="email"
-                value={formData.email || ''}
-                onChange={e => setFormData({ ...formData, email: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm" 
-                placeholder="email@exemplo.com"
-              />
-            </div>
-
-            {/* Address Section */}
-            <div className="lg:col-span-3 pt-4 border-t border-gray-200 mt-4">
-              <h4 className="text-sm font-black text-[var(--navy)] uppercase tracking-[0.2em] mb-4">Endereço e Localização</h4>
-              <ColarEnderecoMaxID onPreencher={campos => setFormData((prev: any) => ({ ...prev, ...campos }))} />
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">CEP</label>
-                  <input 
-                    value={formData.zipCode || ''}
-                    onChange={e => setFormData({ ...formData, zipCode: maskCEP(e.target.value) })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="00000-000"
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Endereço</label>
-                  <input 
-                    value={formData.address || ''}
-                    onChange={e => setFormData({ ...formData, address: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="Rua / Avenida"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Número</label>
-                  <input 
-                    value={formData.number || ''}
-                    onChange={e => setFormData({ ...formData, number: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="123"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Bairro</label>
-                  <input 
-                    value={formData.neighborhood || ''}
-                    onChange={e => setFormData({ ...formData, neighborhood: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Estado (UF)</label>
-                  <input 
-                    value={formData.state || ''}
-                    onChange={e => setFormData({ ...formData, state: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs uppercase" 
-                    maxLength={2}
-                    placeholder="UF"
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-2">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Cidade</label>
-                  <input 
-                    value={formData.city || ''}
-                    onChange={e => setFormData({ ...formData, city: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                  />
-                </div>
-                <div className="space-y-1 lg:col-span-4">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Complemento</label>
-                  <input 
-                    value={formData.complement || ''}
-                    onChange={e => setFormData({ ...formData, complement: e.target.value })}
-                    className="w-full neumorphic-inset p-2 bg-transparent outline-none text-gray-900 text-xs" 
-                    placeholder="Apto, Sala, Ponto de Referência"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-3 space-y-2 mt-4">
-              <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Observações</label>
-              <textarea 
-                value={formData.observations || ''}
-                onChange={e => setFormData({ ...formData, observations: e.target.value })}
-                className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm min-h-[80px]" 
-                placeholder="Observações importantes sobre o fornecedor..."
-              />
-            </div>
-
-            <div className="lg:col-span-3 flex justify-end">
-              <button onClick={() => handleSave('fornecedor')} className="bg-[var(--accent)] text-[var(--accent-fg)] font-black px-10 py-3 rounded-xl shadow-lg active:scale-95 transition-transform uppercase text-xs tracking-widest">
-                {editingItem ? 'SALVAR ALTERAÇÕES' : 'SALVAR FORNECEDOR'}
-              </button>
-            </div>
-          </div>
+          <RodapeForm
+            rotulo={editingItem ? 'Salvar alterações' : 'Salvar serviço'}
+            onCancelar={fechar}
+            onSalvar={() => handleSave('servico')}
+          />
           </div>
         </div>
-      )}
+        );
+      })()}
+
+      {showAddSupplier && subTab === 'fornecedores' && renderFormPessoa('fornecedor')}
 
       {/* Formulário de categoria — inline, acima da lista. Cadastro de três
           campos não justifica um modal por cima da tela. */}

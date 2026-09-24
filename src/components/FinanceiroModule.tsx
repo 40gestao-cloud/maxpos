@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   DollarSign, ArrowUpCircle, ArrowDownCircle, CreditCard, History,
-  Printer, Plus, X, Search, Filter, Calendar, Trash2, CheckCircle2,
+  Printer, Plus, Filter, Calendar, Trash2, CheckCircle2,
   ChevronDown, ChevronUp, EyeOff,
 } from 'lucide-react';
 import { Storage } from '../lib/storage';
@@ -14,7 +14,8 @@ import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { assinarTabelas, semRemovidos } from '../lib/realtime';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
-import { maskCurrency, parseCurrencyToNumber } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
+import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
 
@@ -42,6 +43,27 @@ function buildInstallments(sale: Sale, credit: Payment): CreditInstallment[] {
       due_date: due.toISOString().split('T')[0],
       status: 'pending' as const,
     };
+  });
+}
+
+const ROTULO_PAGAMENTO: Record<string, string> = {
+  dinheiro: 'Dinheiro', pix: 'Pix', credito: 'Crédito', debito: 'Débito', fiado: 'Fiado', vale: 'Vale',
+};
+
+type Lancamento =
+  | { tipo: 'conta'; quando: Date; conta: Account }
+  | { tipo: 'venda'; quando: Date; venda: Sale };
+
+function rotuloDia(d: Date): string {
+  const dia = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const diff = Math.round((dia.getTime() - hoje.getTime()) / 86_400_000);
+  if (diff === 0) return 'Hoje';
+  if (diff === -1) return 'Ontem';
+  if (diff === 1) return 'Amanhã';
+  return d.toLocaleDateString('pt-BR', {
+    day: 'numeric', month: 'long',
+    ...(d.getFullYear() !== hoje.getFullYear() ? { year: 'numeric' } : {}),
   });
 }
 
@@ -344,7 +366,7 @@ export default function FinanceiroModule() {
     }
     const newAccount: Account = {
       id: crypto.randomUUID(),
-      description: formData.description.toUpperCase(),
+      description: formData.description.trim(),
       amount: parseCurrencyToNumber(formData.amount),
       dueDate: formData.dueDate,
       type: accountType,
@@ -367,13 +389,17 @@ export default function FinanceiroModule() {
   // ~1.7:1 de contraste. O número simplesmente não se lia; agora usa o dourado
   // escuro de --accent-text.
   const stats = [
-    { label: 'Total Vendas (PDV)', value: `R$ ${totalSales.toFixed(2)}`, cor: 'var(--money)', icon: DollarSign },
-    { label: 'Contas a Receber', value: `R$ ${totalReceivable.toFixed(2)}`, cor: '#2563eb', icon: ArrowUpCircle },
-    { label: 'Contas a Pagar', value: `R$ ${totalPayable.toFixed(2)}`, cor: 'var(--danger)', icon: ArrowDownCircle },
-    { label: 'Ticket Médio', value: `R$ ${resumo?.quantidade ? (totalSales / resumo.quantidade).toFixed(2) : '0.00'}`, cor: 'var(--accent-text)', icon: CreditCard },
+    { label: 'Total de vendas (PDV)', value: formatBRL(totalSales), cor: 'var(--money)', icon: DollarSign },
+    { label: 'Contas a receber', value: formatBRL(totalReceivable), cor: '#2563eb', icon: ArrowUpCircle },
+    { label: 'Contas a pagar', value: formatBRL(totalPayable), cor: 'var(--danger)', icon: ArrowDownCircle },
+    { label: 'Ticket médio', value: formatBRL(resumo?.quantidade ? totalSales / resumo.quantidade : 0), cor: 'var(--accent-text)', icon: CreditCard },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
+  const fecharModal = () => {
+    setShowAddModal(false);
+    setFormData({ description: '', amount: '', dueDate: new Date().toISOString().split('T')[0], status: 'pending' });
+  };
 
   const handleToggleAccountStatus = async (id: string) => {
     const account = accounts.find(a => a.id === id);
@@ -391,7 +417,7 @@ export default function FinanceiroModule() {
     askConfirm({
       title: 'Excluir lançamento',
       message: 'Excluir este lançamento? A ação não pode ser desfeita.',
-      confirmLabel: 'EXCLUIR',
+      confirmLabel: 'Excluir',
       variant: 'danger',
       onConfirm: async () => {
         try {
@@ -423,7 +449,27 @@ export default function FinanceiroModule() {
     return matchesType && matchesStatus && matchesDate;
   });
 
+  // Contas e vendas numa lista só, por dia. Antes vinham em dois blocos — todas
+  // as contas e depois todas as vendas —, e uma conta de ontem aparecia acima
+  // da venda de hoje.
+  const lancamentos: Lancamento[] = [
+    ...[...filteredAccounts]
+      .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
+      .slice(0, 20)
+      .map(a => ({ tipo: 'conta' as const, quando: new Date(a.dueDate + 'T12:00:00'), conta: a })),
+    ...filteredSales.slice(0, 20).map(s => ({ tipo: 'venda' as const, quando: new Date(s.date), venda: s })),
+  ].sort((a, b) => b.quando.getTime() - a.quando.getTime());
+
+  const porDia: { dia: string; itens: Lancamento[] }[] = [];
+  for (const l of lancamentos) {
+    const dia = rotuloDia(l.quando);
+    const ultimo = porDia[porDia.length - 1];
+    if (ultimo?.dia === dia) ultimo.itens.push(l);
+    else porDia.push({ dia, itens: [l] });
+  }
+
   const dismissedFlowCount = dismissedFlow.size;
+  const filtrosAtivos = !!(filters.startDate || filters.endDate || filters.status !== 'all');
 
   const [fiadoClients, setFiadoClients] = useState<any[]>([]);
   useEffect(() => {
@@ -433,35 +479,186 @@ export default function FinanceiroModule() {
 
   // ─── render ────────────────────────────────────────────────
 
+  const renderConta = (a: Account) => {
+    const pagar = a.type === 'payable';
+    return (
+      <div key={`acc-${a.id}`} className="flex items-center justify-between gap-3 px-4 py-3 neumorphic-inset border-l-4" style={{ borderLeftColor: pagar ? '#ef4444' : '#3b82f6' }}>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`p-2 rounded-lg shrink-0 ${pagar ? 'bg-red-500/10 text-red-600' : 'bg-blue-500/10 text-blue-600'}`}>
+            {pagar ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-sm text-gray-900 truncate">{a.description}</p>
+            <p className="text-xs text-gray-600 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              {pagar ? 'Conta a pagar' : 'Conta a receber'}
+              <span className={`px-1.5 py-px rounded font-semibold ${a.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {a.status === 'paid' ? 'Pago' : 'Pendente'}
+              </span>
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <span className={`font-bold tabular-nums whitespace-nowrap ${pagar ? 'text-red-600' : 'text-blue-600'}`}>
+            {pagar ? '−' : '+'} {formatBRL(a.amount)}
+          </span>
+          <div className="flex gap-1">
+            <button onClick={() => handleToggleAccountStatus(a.id)} className="row-action-btn is-pago" title={a.status === 'paid' ? 'Marcar como pendente' : 'Marcar como pago'}>
+              <CheckCircle2 size={16} />
+            </button>
+            {/* Este SIM apaga o lançamento — por isso é a variante
+                destrutiva. Fica cinza até o ponteiro chegar. */}
+            <button onClick={() => handleDeleteAccount(a.id)} className="row-action-btn is-excluir" title="Excluir lançamento">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderVenda = (s: Sale) => {
+    const credit = getCreditPayment(s);
+    const isExpanded = expandedSaleId === s.id;
+    const saleInstallments = installmentsMap[s.id] ?? [];
+    const isLoadingInst = loadingInst[s.id] ?? false;
+    // A forma de pagamento diz mais que o código da venda, que ninguém usa
+    // para nada na tela — ele fica no tooltip para quem precisar conferir.
+    const formas = [...new Set((s.payments ?? []).map(p => ROTULO_PAGAMENTO[p.method] ?? p.method))].join(' + ') || 'PDV';
+
+    return (
+      <div key={`sale-${s.id}`} className="neumorphic-inset overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`p-2 rounded-lg shrink-0 ${credit ? 'bg-violet-500/10 text-violet-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
+              {credit ? <CreditCard size={18} /> : <ArrowUpCircle size={18} />}
+            </div>
+            <div className="min-w-0" title={`Venda ${s.id.slice(0, 8)}`}>
+              <p className="font-semibold text-sm text-gray-900 flex flex-wrap items-center gap-2">
+                Venda · {formas}
+                {credit && (
+                  <span className="text-[11px] font-semibold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full whitespace-nowrap">
+                    {credit.installments}x
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-gray-600 mt-0.5 tabular-nums">
+                {s.date ? new Date(s.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="font-bold tabular-nums text-emerald-700 whitespace-nowrap">
+              + {formatBRL(s.total)}
+            </span>
+            <div className="flex gap-1">
+              {credit && (
+                <button
+                  onClick={() => handleExpandSale(s)}
+                  className="row-action-btn is-detalhes"
+                  title={isExpanded ? 'Ocultar parcelas' : 'Ver parcelas'}
+                >
+                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              )}
+              <button
+                onClick={() => dismissFlow(`sale-${s.id}`)}
+                className="row-action-btn is-ocultar"
+                title="Ocultar da lista (reversível em 'Mostrar ocultas')"
+              >
+                {/* Era uma lixeira vermelha com shimmer — o botão mais
+                    gritante da tela para a ação MENOS grave que ela tem:
+                    isto some da lista e volta em 'Mostrar ocultas', não
+                    apaga venda nenhuma. Olho de riscado diz a verdade. */}
+                <EyeOff size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {credit && isExpanded && (
+          <div className="border-t border-gray-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
+            <p className="text-xs font-semibold text-gray-700 mb-2">
+              {credit.installments} parcelas de {formatBRL(credit.amount / (credit.installments ?? 1))}
+            </p>
+
+            {isLoadingInst ? (
+              <div className="flex justify-center py-4">
+                <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : saleInstallments.length === 0 ? (
+              <p className="text-center text-xs text-gray-600 py-2">Nenhuma parcela encontrada.</p>
+            ) : (
+              saleInstallments.map(inst => (
+                <div
+                  key={inst.id}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${
+                    inst.status === 'paid' ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-sm font-bold w-10 shrink-0 tabular-nums ${inst.status === 'paid' ? 'text-emerald-700' : 'text-gray-700'}`}>
+                      {inst.installment_number}/{inst.total_installments}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatBRL(inst.amount)}</p>
+                      <p className="text-xs text-gray-600">
+                        Vence em {new Date(inst.due_date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                      inst.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {inst.status === 'paid' ? 'Paga' : 'Pendente'}
+                    </span>
+                    {inst.status === 'pending' && (
+                      <button
+                        onClick={() => handlePayInstallment(inst.id, s.id)}
+                        className="row-action-btn is-pago"
+                        title="Dar baixa"
+                      >
+                        <CheckCircle2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
-      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. */}
-      {/* Era um parágrafo de três linhas explicando o que o botão de empresa no
-          topo já mostra. Uma frase basta: o que o operador precisa saber é de
-          QUEM são estes números. */}
+      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. Uma frase
+          basta: o que o operador precisa saber é de QUEM são estes números. */}
       <div className="neumorphic neumorphic-accent px-4 py-2.5">
-        <p className="text-xs font-semibold text-gray-600">
+        <p className="text-sm text-gray-700">
           Números de <b className="text-gray-900">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.
         </p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => {
           const Icon = stat.icon;
           return (
             <div
               key={i}
-              className="neumorphic kpi-card p-4 md:p-5 cursor-default"
+              className="neumorphic kpi-card p-4 md:p-5 cursor-default min-w-0"
               style={{ ['--kpi-cor' as string]: stat.cor }}
             >
               <div className="flex justify-between items-start gap-2 mb-1.5">
-                <span className="text-[9px] md:text-[11px] text-gray-500 font-bold uppercase tracking-[0.12em] leading-tight">{stat.label}</span>
-                <Icon size={15} style={{ color: stat.cor }} className="opacity-70 shrink-0" />
+                <span className="text-xs md:text-sm text-gray-700 font-semibold leading-tight">{stat.label}</span>
+                <Icon size={16} style={{ color: stat.cor }} className="shrink-0" />
               </div>
-              <h3 className="text-lg md:text-3xl font-black tabular-nums tracking-tight" style={{ color: stat.cor }}>
+              <h3 className="text-lg md:text-2xl font-black tabular-nums tracking-tight whitespace-nowrap" style={{ color: stat.cor }}>
                 {loading
                   ? <span className="skeleton" style={{ width: '5.5rem', height: '1.75rem' }} aria-hidden="true">&nbsp;</span>
                   : stat.value}
@@ -471,11 +668,6 @@ export default function FinanceiroModule() {
         })}
       </div>
 
-      {/* Ações de lançamento.
-          O subtítulo saiu: "Registrar nova saída financeira" era o título dito
-          de novo com outras palavras, em CAPS, do mesmo tamanho — dois textos
-          concorrendo onde bastava um. Sem ele os dois cartões também param de
-          ter alturas diferentes (o da direita quebrava em duas linhas). */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <button
           onClick={() => openAddModal('payable')}
@@ -485,7 +677,7 @@ export default function FinanceiroModule() {
           <span className="action-chip"><ArrowDownCircle size={22} /></span>
           <span className="min-w-0">
             <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a pagar</span>
-            <span className="block text-xs text-gray-500 font-medium">Uma saída que ainda vai acontecer</span>
+            <span className="block text-xs text-gray-600 font-medium">Uma saída que ainda vai acontecer</span>
           </span>
           <Plus size={20} className="action-plus" strokeWidth={3} />
         </button>
@@ -498,372 +690,189 @@ export default function FinanceiroModule() {
           <span className="action-chip"><ArrowUpCircle size={22} /></span>
           <span className="min-w-0">
             <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a receber</span>
-            <span className="block text-xs text-gray-500 font-medium">Uma entrada que ainda vai acontecer</span>
+            <span className="block text-xs text-gray-600 font-medium">Uma entrada que ainda vai acontecer</span>
           </span>
           <Plus size={20} className="action-plus" strokeWidth={3} />
         </button>
       </div>
 
-      {/* Add Account Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="neumorphic p-8 max-w-md w-full space-y-6 relative bg-card animate-in zoom-in duration-300 border-t-4 border-[var(--accent)]">
-            <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-gray-600 hover:text-red-500 transition-colors">
-              <X size={24} />
-            </button>
-            <div className="space-y-1">
-              <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">
-                {accountType === 'payable' ? 'Nova Conta a Pagar' : 'Nova Conta a Receber'}
-              </h3>
-              <p className="text-sm text-gray-600 font-black uppercase tracking-widest">Preencha os dados do lançamento financeiro</p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">
-                  {accountType === 'payable' ? 'Fornecedor / Descrição' : 'Cliente / Descrição'}
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 opacity-40"><Search size={14} /></span>
+        <div className="fixed inset-0 min-h-screen z-[100] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
+          <div className="form-cadastro p-5 md:p-8 animate-in slide-in-from-top duration-300 max-w-xl w-full my-8">
+            <CabecalhoForm
+              titulo={accountType === 'payable' ? 'Nova conta a pagar' : 'Nova conta a receber'}
+              filial={(filialAtiva ?? 'supermax') as keyof typeof FILIAL_META}
+              onFechar={fecharModal}
+            />
+            <section className="fc-section">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="fc-label">Descrição<Obrigatorio /></label>
                   <input
                     value={formData.description}
                     onChange={e => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="EX: ALUGUEL, FORNECEDOR X..."
-                    className="w-full neumorphic-inset p-3 pl-10 bg-transparent outline-none text-gray-900 text-sm font-bold placeholder:text-gray-400 uppercase"
+                    placeholder={accountType === 'payable' ? 'Ex.: Aluguel de outubro, Fornecedor X' : 'Ex.: Pedido do cliente Y'}
+                    className={CAMPO}
+                    autoFocus
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Valor (R$)</label>
+                <div className="space-y-1.5">
+                  <label className="fc-label">Valor (R$)<Obrigatorio /></label>
                   <input
                     type="text"
+                    inputMode="decimal"
                     value={maskCurrency(formData.amount)}
                     onChange={e => setFormData({ ...formData, amount: maskCurrency(e.target.value) })}
                     placeholder="0,00"
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold placeholder:text-gray-400"
+                    className={`${CAMPO} !font-bold`}
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Vencimento</label>
+                <div className="space-y-1.5">
+                  <label className="fc-label">Vencimento<Obrigatorio /></label>
                   <input
                     type="date"
                     value={formData.dueDate}
                     onChange={e => setFormData({ ...formData, dueDate: e.target.value })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-sm font-bold"
+                    className={CAMPO}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <span className="fc-label">Situação</span>
+                  <Segmentado
+                    rotulo="Situação"
+                    valor={formData.status}
+                    opcoes={[{ valor: 'pending', rotulo: 'Pendente' }, { valor: 'paid', rotulo: accountType === 'payable' ? 'Já pago' : 'Já recebido' }]}
+                    onChange={status => setFormData({ ...formData, status })}
                   />
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Status</label>
-                <div className="flex gap-2">
-                  {(['pending', 'paid'] as const).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setFormData({ ...formData, status: s })}
-                      className={`flex-1 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all ${
-                        formData.status === s ? 'bg-[var(--accent)] text-black' : 'neumorphic-inset text-gray-600'
-                      }`}
-                    >
-                      {s === 'pending' ? 'Pendente' : 'Pago'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleAddAccount}
-              className="w-full bg-[var(--accent)] text-black font-black py-4 rounded-xl shadow-lg active:scale-95 transition-all uppercase text-xs tracking-widest hover:opacity-90"
-            >
-              Lançar no Sistema
-            </button>
+            </section>
+            <RodapeForm rotulo="Lançar conta" onCancelar={fecharModal} onSalvar={handleAddAccount} />
           </div>
         </div>
       )}
 
-      {/* Cash Flow + Fiado */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 neumorphic p-4 md:p-8">
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-            <h3 className="text-base md:text-lg font-bold flex items-center gap-2 text-gray-900">
-              <History className="text-[var(--accent-text)]" /> Fluxo de Caixa Recente
-              {dismissedFlowCount > 0 && (
-                <button
-                  onClick={restoreAllFlow}
-                  className="ml-2 text-xs font-bold text-[var(--navy)] hover:underline"
-                  title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} apagado${dismissedFlowCount === 1 ? '' : 's'} da visualização`}
-                >
-                  Mostrar todas
-                </button>
-              )}
+      {/* items-start: sem ele o Fiado esticava até a altura do fluxo inteiro,
+          uma coluna vazia do tamanho da página. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        <div className="lg:col-span-2 neumorphic p-4 md:p-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-bold flex items-center gap-2 text-gray-900">
+              <History size={20} className="text-[var(--accent-text)]" /> Fluxo de caixa
             </h3>
-            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-              <div className="flex neumorphic-inset p-1 rounded-xl overflow-x-auto min-w-0 flex-1 sm:flex-none">
-                {(['all', 'payable', 'receivable'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-3 py-2 sm:py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-1 sm:flex-none ${
-                      activeTab === tab ? 'bg-[var(--accent)] text-black shadow-lg' : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    {tab === 'all' ? 'Tudo' : tab === 'payable' ? 'Pagar' : 'Receber'}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowFilters(!showFilters)}
-                  className={`p-3 sm:p-2 neumorphic-inset transition-colors ${showFilters ? 'text-[var(--accent)] border border-[var(--accent)]/30' : 'text-gray-600 hover:text-gray-900'}`}
-                >
-                  <Filter size={14} />
-                </button>
-                <button
-                  onClick={handlePrintReport}
-                  className="flex items-center justify-center gap-2 text-sm font-black text-[var(--navy)] uppercase tracking-widest bg-[var(--accent)]/5 px-4 py-3 sm:py-2 rounded-lg hover:bg-[var(--accent)]/10 transition-colors flex-1 sm:flex-none"
-                >
-                  <Printer size={14} /> <span className="sm:inline">Gerar PDF</span>
-                </button>
-              </div>
-            </div>
+            {dismissedFlowCount > 0 && (
+              <button
+                onClick={restoreAllFlow}
+                className="text-sm font-semibold text-[var(--navy)] hover:underline"
+                title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} ocultado${dismissedFlowCount === 1 ? '' : 's'}`}
+              >
+                Mostrar ocultas ({dismissedFlowCount})
+              </button>
+            )}
           </div>
 
-          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-2 mb-5">
+            <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200">
+              {(['all', 'payable', 'receivable'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
+                    activeTab === tab ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+                  }`}
+                >
+                  {tab === 'all' ? 'Tudo' : tab === 'payable' ? 'A pagar' : 'A receber'}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`smart-btn-secondary !py-1.5 !px-3 !text-sm ${filtrosAtivos || showFilters ? '!border-[var(--navy)]' : ''}`}
+              aria-expanded={showFilters}
+            >
+              <Filter size={15} /> Filtros{filtrosAtivos ? ' •' : ''}
+            </button>
+            <button onClick={handlePrintReport} className="smart-btn-secondary !py-1.5 !px-3 !text-sm sm:ml-auto">
+              <Printer size={15} /> Gerar PDF
+            </button>
+          </div>
+
           {showFilters && (
-            <div className="mb-6 p-4 md:p-6 neumorphic-inset rounded-2xl animate-in slide-in-from-top-4 duration-300">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="mb-5 p-4 rounded-xl bg-gray-50 border border-gray-200 animate-in slide-in-from-top-2 duration-200">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
-                    <Calendar size={10} /> Início
-                  </label>
-                  <input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold" />
+                  <label className="fc-label flex items-center gap-1.5"><Calendar size={14} /> De</label>
+                  <input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} className="smart-input !py-2 !text-sm" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
-                    <Calendar size={10} /> Fim
-                  </label>
-                  <input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold" />
+                  <label className="fc-label flex items-center gap-1.5"><Calendar size={14} /> Até</label>
+                  <input type="date" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="smart-input !py-2 !text-sm" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1 flex items-center gap-1">
-                    <CheckCircle2 size={10} /> Status
-                  </label>
-                  <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value as any })} className="w-full bg-transparent border-none outline-none text-gray-900 text-xs font-bold">
-                    <option value="all" className="bg-[#1A1A1A]">TODOS OS STATUS</option>
-                    <option value="pending" className="bg-[#1A1A1A]">SOMENTE PENDENTES</option>
-                    <option value="paid" className="bg-[#1A1A1A]">SOMENTE PAGOS</option>
+                  <label className="fc-label flex items-center gap-1.5"><CheckCircle2 size={14} /> Situação</label>
+                  <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value as any })} className="smart-input !py-2 !text-sm">
+                    <option value="all">Todas</option>
+                    <option value="pending">Só pendentes</option>
+                    <option value="paid">Só pagas</option>
                   </select>
                 </div>
               </div>
-              <div className="mt-4 flex justify-end">
-                <button onClick={() => setFilters({ startDate: '', endDate: '', status: 'all' })} className="text-[9px] font-black text-red-500 uppercase tracking-widest hover:underline">
-                  Limpar Filtros
-                </button>
-              </div>
+              {filtrosAtivos && (
+                <div className="mt-3 flex justify-end">
+                  <button onClick={() => setFilters({ startDate: '', endDate: '', status: 'all' })} className="text-sm font-semibold text-red-700 hover:underline">
+                    Limpar filtros
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Lista. Era `space-y-4`: cada linha já é um bloco com borda, e com
-              16px entre elas o fluxo virava uma pilha de cartões soltos em vez
-              de uma lista que se lê de cima a baixo. */}
-          <div className="space-y-2">
-            {loading && (
-              <div className="flex justify-center py-10 opacity-40">
-                <div className="w-8 h-8 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
-              </div>
-            )}
+          {loading && (
+            <div className="flex justify-center py-10">
+              <div className="w-8 h-8 border-4 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
 
-            {/* Accounts */}
-            {filteredAccounts
-              .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())
-              .slice(0, 20).map((a, i) => (
-                <div key={`acc-${i}`} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 neumorphic-inset border-l-4 border-current gap-4" style={{ color: a.type === 'payable' ? '#ef4444' : '#3b82f6' }}>
-                  <div className="flex items-center gap-4 w-full sm:w-auto">
-                    <div className={`p-2 rounded-lg ${a.type === 'payable' ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'} shrink-0`}>
-                      {a.type === 'payable' ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-sm text-gray-900 truncate">{a.description}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{new Date(a.dueDate + 'T12:00:00').toLocaleDateString()} • {a.status === 'paid' ? 'Pago' : 'Pendente'}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
-                    <span className={`font-black tabular-nums whitespace-nowrap ${a.type === 'payable' ? 'text-red-600' : 'text-blue-600'}`}>
-                      {a.type === 'payable' ? '-' : '+'} R$ {a.amount.toFixed(2)}
-                    </span>
-                    <div className="flex gap-1">
-                      <button onClick={() => handleToggleAccountStatus(a.id)} className="row-action-btn is-pago" title={a.status === 'paid' ? 'Marcar como Pendente' : 'Marcar como Pago'}>
-                        <CheckCircle2 size={16} />
-                      </button>
-                      {/* Este SIM apaga o lançamento — por isso é a variante
-                          destrutiva. Fica cinza até o ponteiro chegar. */}
-                      <button onClick={() => handleDeleteAccount(a.id)} className="row-action-btn is-excluir" title="Excluir lançamento">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
+          <div className="space-y-5">
+            {porDia.map(grupo => (
+              <div key={grupo.dia}>
+                <h4 className="text-sm font-bold text-gray-700 mb-2">{grupo.dia}</h4>
+                <div className="space-y-2">
+                  {grupo.itens.map(l => l.tipo === 'conta' ? renderConta(l.conta) : renderVenda(l.venda))}
                 </div>
-              ))}
-
-            {/* Sales — with credit installment accordion */}
-            {filteredSales.slice(0, 20).map((s, i) => {
-              const credit = getCreditPayment(s);
-              const isExpanded = expandedSaleId === s.id;
-              const saleInstallments = installmentsMap[s.id] ?? [];
-              const isLoadingInst = loadingInst[s.id] ?? false;
-
-              return (
-                <div key={`sale-${i}`} className="neumorphic-inset overflow-hidden">
-                  {/* Row principal */}
-                  <div className="flex items-center justify-between p-4">
-                    <div className="flex items-center gap-4 min-w-0">
-                      <div className={`p-2 rounded-lg shrink-0 ${credit ? 'bg-violet-500/10 text-violet-400' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                        {credit ? <CreditCard size={18} /> : <ArrowUpCircle size={18} />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-sm text-gray-900 flex flex-wrap items-center gap-2">
-                          Venda PDV #{s.id.slice(0, 8)}
-                          {credit && (
-                            <span className="text-[9px] font-black bg-violet-500/15 text-violet-400 px-2 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap">
-                              Crédito {credit.installments}x
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5 tabular-nums">
-                          {new Date(s.date).toLocaleDateString()} • {new Date(s.date).toLocaleTimeString()}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 shrink-0 ml-2">
-                      <span className="font-black tabular-nums text-emerald-600 whitespace-nowrap">
-                        + R$ {s.total.toFixed(2)}
-                      </span>
-                      {credit && (
-                        <button
-                          onClick={() => handleExpandSale(s)}
-                          className="row-action-btn is-detalhes"
-                          title={isExpanded ? 'Ocultar Parcelas' : 'Ver Parcelas'}
-                        >
-                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => dismissFlow(`sale-${s.id}`)}
-                        className="row-action-btn is-ocultar"
-                        title="Ocultar da lista (reversível em 'Mostrar todas')"
-                      >
-                        {/* Era uma lixeira vermelha com shimmer — o botão mais
-                            gritante da tela para a ação MENOS grave que ela tem:
-                            isto some da lista e volta em 'Mostrar todas', não
-                            apaga venda nenhuma. Olho de riscado diz a verdade. */}
-                        <EyeOff size={16} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Accordion de parcelas */}
-                  {credit && isExpanded && (
-                    <div className="border-t border-gray-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
-                      <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-3">
-                        Parcelas — {credit.installments}x de R$ {(credit.amount / (credit.installments ?? 1)).toFixed(2)}
-                      </p>
-
-                      {isLoadingInst ? (
-                        <div className="flex justify-center py-4">
-                          <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                        </div>
-                      ) : saleInstallments.length === 0 ? (
-                        <p className="text-center text-xs text-gray-600 opacity-50 py-2">Nenhuma parcela encontrada.</p>
-                      ) : (
-                        saleInstallments.map(inst => (
-                          <div
-                            key={inst.id}
-                            className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                              inst.status === 'paid'
-                                ? 'bg-emerald-500/5 border-emerald-500/20'
-                                : 'bg-gray-50 border-gray-200'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className={`text-sm font-black w-10 shrink-0 ${inst.status === 'paid' ? 'text-emerald-400' : 'text-gray-600'}`}>
-                                {inst.installment_number}/{inst.total_installments}
-                              </span>
-                              <div>
-                                <p className="text-xs font-bold text-gray-900">R$ {inst.amount.toFixed(2)}</p>
-                                <p className="text-sm text-gray-600">
-                                  Venc. {new Date(inst.due_date + 'T12:00:00').toLocaleDateString()}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase tracking-widest whitespace-nowrap ${
-                                inst.status === 'paid'
-                                  ? 'bg-emerald-500/15 text-emerald-400'
-                                  : 'bg-yellow-500/15 text-yellow-400'
-                              }`}>
-                                {inst.status === 'paid' ? 'Paga' : 'Pendente'}
-                              </span>
-                              {inst.status === 'pending' ? (
-                                <button
-                                  onClick={() => handlePayInstallment(inst.id, s.id)}
-                                  className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all"
-                                  title="Dar Baixa"
-                                >
-                                  <CheckCircle2 size={14} />
-                                </button>
-                              ) : (
-                                <div className="p-2 text-emerald-500 opacity-50">
-                                  <CheckCircle2 size={14} />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {!loading && filteredAccounts.length === 0 && filteredSales.length === 0 && (
-              <div className="text-center py-10 opacity-30">
-                <History size={48} className="mx-auto mb-2" />
-                <p className="text-xs font-black uppercase tracking-widest">Nenhuma movimentação para os filtros selecionados</p>
               </div>
-            )}
+            ))}
           </div>
+
+          {!loading && lancamentos.length === 0 && (
+            <div className="text-center py-10 text-gray-600">
+              <History size={40} className="mx-auto mb-2 text-gray-400" />
+              <p className="text-sm font-medium">Nenhuma movimentação para os filtros escolhidos.</p>
+            </div>
+          )}
         </div>
 
-        {/* Controle de Fiado */}
-        <div className="neumorphic p-4 md:p-8">
-          <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2 text-gray-900">
-            <CreditCard className="text-blue-500" /> Controle de Fiado
+        <div className="neumorphic p-4 md:p-6">
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-900">
+            <CreditCard size={20} className="text-blue-600" /> Controle de fiado
           </h3>
-          <div className="space-y-4">
-            {fiadoClients.map((c, i) => (
-              <div key={i} className="p-4 neumorphic-inset">
-                <div className="flex justify-between items-center mb-2">
-                  <p className="font-bold text-sm text-gray-900">{c.name}</p>
-                  <p className="text-xs text-red-500 font-bold">R$ {Math.abs(c.balance).toFixed(2)}</p>
+          <div className="space-y-3">
+            {fiadoClients.map(c => (
+              <div key={c.id} className="p-4 neumorphic-inset">
+                <div className="flex justify-between items-center gap-2 mb-2">
+                  <p className="font-semibold text-sm text-gray-900 truncate">{c.name}</p>
+                  <p className="text-sm text-red-600 font-bold tabular-nums whitespace-nowrap">{formatBRL(Math.abs(c.balance))}</p>
                 </div>
-                <div className="w-full h-1 bg-black/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500" style={{ width: `${Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100)}%` }} />
+                <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-600" style={{ width: `${c.creditLimit ? Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100) : 100}%` }} />
                 </div>
-                <p className="text-sm text-gray-600 mt-2 text-right">LIMITE: R$ {c.creditLimit.toFixed(2)}</p>
+                <p className="text-xs text-gray-600 mt-2 text-right">Limite: {formatBRL(c.creditLimit)}</p>
               </div>
             ))}
             {fiadoClients.length === 0 && (
-              <div className="text-center py-10 opacity-30">
-                <CreditCard size={48} className="mx-auto mb-2" />
-                <p className="text-xs font-black uppercase tracking-widest">Sem registros de fiado</p>
-              </div>
+              <p className="text-sm text-gray-600 flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" /> Nenhum cliente devendo no fiado.
+              </p>
             )}
           </div>
         </div>
