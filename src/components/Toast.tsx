@@ -4,7 +4,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckCircle2, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import type { PdvMode } from '../types';
@@ -88,9 +88,14 @@ function ToastCard({ toast, onClose }: { toast: ToastInterno; onClose: () => voi
     return () => clearTimeout(t);
   }, [pausado, onClose]);
 
+  // O cartão leva o próprio data-filial: o toast é desenhado fora do elemento
+  // raiz que tem o atributo, e sem isto ele não herdava as cores da empresa.
+  // Painel escuro com o acento, como os formulários — antes era um cartão
+  // branco genérico, com a empresa só numa faixa fina e num rótulo miúdo.
   return (
     <motion.div
       layout
+      data-filial={toast.loja}
       initial={{ opacity: 0, x: 40, scale: 0.96 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 40, scale: 0.96, transition: { duration: 0.18 } }}
@@ -98,58 +103,54 @@ function ToastCard({ toast, onClose }: { toast: ToastInterno; onClose: () => voi
       // Some ao passar o mouse: ler a mensagem inteira não pode ser corrida.
       onMouseEnter={() => setPausado(true)}
       onMouseLeave={() => setPausado(false)}
-      className="pointer-events-auto overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25"
-      style={{ border: `1px solid ${m.color}55` }}
+      className="pointer-events-auto overflow-hidden rounded-2xl shadow-2xl shadow-black/40"
+      style={{ background: 'var(--navy)', border: '1px solid rgb(255 255 255 / 0.12)' }}
     >
-      <div className="flex items-stretch">
-        {/* Faixa da empresa: a cor identifica a loja antes de qualquer leitura. */}
-        <div className="w-1.5 shrink-0" style={{ background: m.dark }} />
+      <div className="flex items-start gap-3 p-4">
+        <span
+          className="w-10 h-10 rounded-full shrink-0 flex items-center justify-center shadow-md"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+        >
+          <Check size={22} strokeWidth={3} />
+        </span>
 
-        <div className="flex items-start gap-3 p-4 flex-1 min-w-0">
-          {/* Placa do logo — o fundo vem do PNG de cada loja (ver FILIAL_META.plate). */}
-          <div
-            className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center overflow-hidden"
-            style={{ background: m.plate, boxShadow: `0 0 0 1px ${m.color}44` }}
-          >
-            <img src={m.logo} alt="" className="w-9 h-9 object-contain" />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 size={15} style={{ color: m.dark }} className="shrink-0" />
-              <span
-                className="text-[10px] font-black uppercase tracking-[0.18em] truncate"
-                style={{ color: m.dark }}
-              >
-                {m.label}
-              </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-bold text-white leading-snug break-words">
+            {toast.titulo}
+          </p>
+          {toast.mensagem && (
+            <div
+              className="text-[13px] leading-relaxed mt-1 break-words"
+              style={{ color: 'color-mix(in srgb, var(--accent) 22%, #ffffff)' }}
+            >
+              {toast.mensagem}
             </div>
-            <p className="text-[15px] font-black text-gray-900 leading-snug mt-0.5 break-words">
-              {toast.titulo}
-            </p>
-            {toast.mensagem && (
-              <div className="text-[13px] text-gray-600 leading-relaxed mt-1 break-words">
-                {toast.mensagem}
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-900 transition-colors shrink-0 -mt-1 -mr-1 p-1"
-            aria-label="Fechar aviso"
-          >
-            <X size={16} />
-          </button>
+          )}
+          {/* Selo da empresa: as três lojas são negócios separados, e o
+              aviso diz em qual delas a ação aconteceu. */}
+          <span className="mt-2 inline-flex items-center gap-1.5 pl-0.5 pr-2.5 py-0.5 rounded-full bg-white/10">
+            <span className="w-5 h-5 rounded-full overflow-hidden flex items-center justify-center" style={{ background: m.plate }}>
+              <img src={m.logo} alt="" className="w-4 h-4 object-contain" />
+            </span>
+            <span className="text-[11px] font-semibold text-white">{m.label}</span>
+          </span>
         </div>
+
+        <button
+          onClick={onClose}
+          className="text-white hover:bg-white/10 rounded-full transition-colors shrink-0 -mt-1 -mr-1 p-1.5"
+          aria-label="Fechar aviso"
+        >
+          <X size={16} />
+        </button>
       </div>
 
       {/* Barra de tempo: mostra que o aviso vai embora sozinho, para o operador
           não ficar procurando onde clicar. Congela junto com o timer no hover. */}
-      <div className="h-1 w-full bg-gray-100">
+      <div className="h-1 w-full bg-white/10">
         <motion.div
           className="h-full"
-          style={{ background: m.color }}
+          style={{ background: 'var(--accent)' }}
           initial={{ width: '100%' }}
           animate={{ width: pausado ? undefined : '0%' }}
           transition={{ duration: DURACAO_MS / 1000, ease: 'linear' }}

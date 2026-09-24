@@ -55,42 +55,36 @@ export function ConfirmDialogHost({ dialog, onClose }: {
       className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
-      <div className="neumorphic p-8 max-w-md w-full space-y-6 text-center animate-in zoom-in duration-200" style={{ background: '#e0e5ec' }}>
-        <div
-          className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${
-            isDanger ? 'bg-red-500/10 text-red-500 shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]'
-                     : 'bg-blue-500/10 text-blue-600 shadow-[inset_0_0_20px_rgba(59,130,246,0.2)]'
-          }`}
-        >
-          <AlertTriangle size={32} />
+      <div className="aviso-card max-w-md w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true" aria-labelledby="confirm-titulo">
+        <div className="aviso-faixa" style={{ background: isDanger ? '#dc2626' : 'var(--navy)' }}>
+          <span className="aviso-icone" style={{ color: isDanger ? '#dc2626' : 'var(--navy)' }}>
+            <AlertTriangle size={30} strokeWidth={2.4} />
+          </span>
+          <h3 id="confirm-titulo" className="aviso-titulo">{dialog.title}</h3>
         </div>
-        <div className="space-y-2">
-          <h3 className="text-lg font-black text-gray-900 uppercase tracking-widest">
-            {dialog.title}
-          </h3>
-          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-            {dialog.message}
+        <div className="aviso-corpo">
+          <div className="aviso-mensagem">{dialog.message}</div>
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            <button
+              autoFocus={isDanger}
+              onClick={() => !busy && onClose()}
+              disabled={busy}
+              className="aviso-btn aviso-btn-sec"
+            >
+              {dialog.cancelLabel ?? 'Cancelar'}
+            </button>
+            <button
+              autoFocus={!isDanger}
+              onClick={handleConfirm}
+              disabled={busy}
+              className="aviso-btn"
+              style={isDanger
+                ? { background: '#dc2626', color: '#fff' }
+                : { background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            >
+              {busy ? 'Aguarde…' : (dialog.confirmLabel ?? (isDanger ? 'Confirmar' : 'OK'))}
+            </button>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 pt-2">
-          <button
-            autoFocus={isDanger}
-            onClick={() => !busy && onClose()}
-            disabled={busy}
-            className="p-3 neumorphic-inset text-gray-700 font-black text-sm tracking-widest uppercase hover:text-gray-900 disabled:opacity-50"
-          >
-            {dialog.cancelLabel ?? 'Cancelar'}
-          </button>
-          <button
-            autoFocus={!isDanger}
-            onClick={handleConfirm}
-            disabled={busy}
-            className={`p-3 text-white font-black rounded-xl shadow-lg active:scale-95 transition-all text-sm tracking-widest uppercase disabled:opacity-50 ${
-              isDanger ? 'bg-red-500 shadow-red-500/20' : 'bg-blue-600 shadow-blue-600/20'
-            }`}
-          >
-            {busy ? 'Aguarde…' : (dialog.confirmLabel ?? (isDanger ? 'Confirmar' : 'OK'))}
-          </button>
         </div>
       </div>
     </div>
@@ -120,16 +114,18 @@ export interface AlertOptions {
   onClose?: () => void;
 }
 
+// Cor sólida por tipo: pinta a faixa do topo e o botão. O cinza-azulado de
+// antes, com o ícone num círculo pálido, deixava erro e aviso com a mesma cara.
 const ALERT_STYLE: Record<AlertVariant, {
   icon: typeof CheckCircle2;
-  bg: string;
-  ring: string;
+  cor: string;
+  texto: string;
   defaultTitle: string;
 }> = {
-  success: { icon: CheckCircle2, bg: 'bg-emerald-500/10 text-emerald-600', ring: 'shadow-[inset_0_0_20px_rgba(16,185,129,0.2)]', defaultTitle: 'Sucesso' },
-  error:   { icon: XCircle,      bg: 'bg-red-500/10 text-red-500',        ring: 'shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]',  defaultTitle: 'Erro'    },
-  warning: { icon: AlertTriangle,bg: 'bg-amber-500/10 text-amber-600',    ring: 'shadow-[inset_0_0_20px_rgba(245,158,11,0.2)]', defaultTitle: 'Atenção' },
-  info:    { icon: Info,         bg: 'bg-blue-500/10 text-blue-600',      ring: 'shadow-[inset_0_0_20px_rgba(59,130,246,0.2)]', defaultTitle: 'Aviso'   },
+  success: { icon: CheckCircle2,  cor: '#059669', texto: '#ffffff', defaultTitle: 'Tudo certo' },
+  error:   { icon: XCircle,       cor: '#dc2626', texto: '#ffffff', defaultTitle: 'Algo deu errado' },
+  warning: { icon: AlertTriangle, cor: '#f59e0b', texto: '#1c1207', defaultTitle: 'Atenção' },
+  info:    { icon: Info,          cor: '#2563eb', texto: '#ffffff', defaultTitle: 'Aviso' },
 };
 
 export function AlertDialogHost({ alert, onClose }: {
@@ -158,23 +154,22 @@ export function AlertDialogHost({ alert, onClose }: {
       className="fixed inset-0 z-[310] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="neumorphic p-8 max-w-md w-full space-y-6 text-center animate-in zoom-in duration-200" style={{ background: '#e0e5ec' }}>
-        <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${style.bg} ${style.ring}`}>
-          <Icon size={32} />
+      <div className="aviso-card max-w-md w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true" aria-labelledby="alerta-titulo">
+        <div className="aviso-faixa" style={{ background: style.cor }}>
+          <span className="aviso-icone" style={{ color: style.cor }}>
+            <Icon size={30} strokeWidth={2.4} />
+          </span>
+          <h3 id="alerta-titulo" className="aviso-titulo" style={{ color: style.texto }}>{title}</h3>
         </div>
-        <div className="space-y-2">
-          <h3 className="text-lg font-black text-gray-900 uppercase tracking-widest">{title}</h3>
-          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-            {alert.message}
-          </div>
-        </div>
-        <div className="pt-2">
+        <div className="aviso-corpo">
+          <div className="aviso-mensagem">{alert.message}</div>
           <button
             autoFocus
             onClick={onClose}
-            className="w-full p-3 bg-gray-900 text-white font-black rounded-xl shadow-lg shadow-gray-900/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
+            className="aviso-btn w-full mt-6"
+            style={{ background: style.cor, color: style.texto }}
           >
-            OK
+            Entendi
           </button>
         </div>
       </div>

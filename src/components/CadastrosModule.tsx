@@ -3525,107 +3525,94 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             escuro — o operador clicava em "Editar estoque" e a tela parecia não
             fazer nada. Os alertas (z-300) seguem por cima. */}
         {stockModal.isOpen && (
-          <div className="fixed inset-0 min-h-screen z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="neumorphic w-full max-w-lg bg-card overflow-hidden animate-in zoom-in duration-300 rounded-xl">
-              <div className="bg-[#124163] p-4 text-center">
-                 <h3 className="text-white font-black uppercase tracking-widest text-xl">EDITAR ESTOQUE</h3>
-              </div>
-              
-              <div className="p-10 space-y-10">
-                <div className="space-y-3">
-                  <label className="text-sm font-bold text-gray-600 ml-1">Ação</label>
-                  <div className="relative">
-                    <select 
-                      value={stockModal.action}
-                      onChange={e => setStockModal({ ...stockModal, action: e.target.value as any })}
-                      className="w-full neumorphic-inset p-3 bg-transparent border-none outline-none text-gray-900 text-lg font-medium appearance-none"
-                    >
-                      <option value="sum" className="bg-card">Somar ao estoque</option>
-                      <option value="subtract" className="bg-card">Subtrair do estoque</option>
-                      <option value="correct" className="bg-card">Corrigir o estoque</option>
-                    </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                      <ChevronRight size={20} className="rotate-90 text-blue-500" />
+          <div className="fixed inset-0 min-h-screen z-[90] overflow-y-auto bg-black/70 backdrop-blur-md p-4 flex justify-center items-start animate-in fade-in duration-200">
+            {(() => {
+              const fechar = () => setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 });
+              const saldo = Number(products.find(p => p.id === stockModal.product?.id)?.stock ?? stockModal.product?.stock ?? 0);
+              const q = stockModal.amount || 0;
+              const previsto = stockModal.action === 'sum' ? saldo + q : stockModal.action === 'subtract' ? saldo - q : q;
+              const un = stockModal.product?.unit || 'UN';
+              return (
+                <div className="form-cadastro p-5 md:p-7 max-w-md w-full my-16 animate-in slide-in-from-top duration-300">
+                  <CabecalhoForm titulo="Editar estoque" onFechar={fechar} />
+                  <section className="fc-section space-y-4">
+                    <p className="text-sm text-white font-semibold truncate">{stockModal.product?.name}</p>
+                    <Segmentado
+                      rotulo="Operação"
+                      valor={stockModal.action}
+                      opcoes={[
+                        { valor: 'sum', rotulo: 'Entrada' },
+                        { valor: 'subtract', rotulo: 'Baixa' },
+                        { valor: 'correct', rotulo: 'Corrigir' },
+                      ]}
+                      onChange={action => setStockModal({ ...stockModal, action })}
+                    />
+                    <div className="space-y-1.5">
+                      <label className="fc-label">
+                        {stockModal.action === 'correct' ? 'Saldo correto' : 'Quantidade'} ({un})
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        autoFocus
+                        value={stockModal.amount || ''}
+                        onChange={e => setStockModal({ ...stockModal, amount: Math.max(0, parseInt(e.target.value) || 0) })}
+                        onKeyDown={e => { if (e.key === 'Enter') confirmStockAdjustment(); }}
+                        className={`${CAMPO} !text-2xl !font-bold`}
+                        placeholder="0"
+                      />
                     </div>
-                  </div>
+                    {/* Mostra o resultado antes de gravar: é aqui que um
+                        "Corrigir" digitado no lugar de "Entrada" se revela. */}
+                    <div className="flex items-center justify-between rounded-xl bg-white/10 px-4 py-3 tabular-nums">
+                      <span className="fc-label">Saldo</span>
+                      <span className="text-lg font-bold text-white">
+                        {saldo} → <span className={previsto < 0 ? 'text-red-300' : ''}>{previsto}</span> {un}
+                      </span>
+                    </div>
+                  </section>
+                  <RodapeForm rotulo="Aplicar" onCancelar={fechar} onSalvar={confirmStockAdjustment} />
                 </div>
-
-                <div className="space-y-3">
-                  <label className="text-sm font-bold text-gray-600 ml-1">Estoque</label>
-                  <input 
-                    type="number"
-                    value={stockModal.amount || ''}
-                    onChange={e => setStockModal({ ...stockModal, amount: parseInt(e.target.value) || 0 })}
-                    className="w-full neumorphic-inset p-3 bg-transparent outline-none text-gray-900 text-2xl font-bold" 
-                    placeholder="0"
-                  />
-                </div>
-
-                <div className="flex gap-4 justify-end items-center pt-4">
-                  <button 
-                    onClick={() => setStockModal({ isOpen: false, product: null, action: 'sum', amount: 0 })}
-                    className="text-[#f19006] font-black uppercase text-xl hover:underline tracking-widest px-8"
-                  >
-                    CANCELAR
-                  </button>
-                  <button 
-                    onClick={confirmStockAdjustment}
-                    className="bg-[#f19006] text-white font-black px-12 py-4 rounded-lg shadow-lg active:scale-95 transition-transform uppercase text-xl tracking-widest"
-                  >
-                    OK
-                  </button>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
           </div>
         )}
 
         {/* Delete Confirmation Modal */}
         {deleteConfirm && (
           <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="neumorphic p-10 max-w-sm w-full space-y-8 text-center animate-in zoom-in duration-300">
-              <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]">
-                <Trash2 size={40} />
-              </div>
-              
-              <div className="space-y-4">
+            <div className="aviso-card max-w-sm w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true">
+              <div className="aviso-faixa" style={{ background: '#dc2626' }}>
+                <span className="aviso-icone" style={{ color: '#dc2626' }}><Trash2 size={28} strokeWidth={2.4} /></span>
                 {/* Pessoa nao e "excluida" desta tela: ela SAI DESTA EMPRESA.
                     Dizer "excluir" aqui seria mentira — ela continua operando
                     nas outras lojas dela. */}
-                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">
-                  {deleteConfirm.type === 'equipe' ? 'Remover da empresa' : 'Confirmar Exclusão'}
+                <h3 className="aviso-titulo">
+                  {deleteConfirm.type === 'equipe' ? 'Remover da empresa?' : 'Excluir de vez?'}
                 </h3>
+              </div>
+              <div className="aviso-corpo">
                 {deleteConfirm.type === 'equipe' ? (
-                  <p className="text-sm text-gray-600">
-                    Tirar <strong>{deleteConfirm.name}</strong> da{' '}
-                    <strong>{FILIAL_META[nichoFilter].label}</strong>?
-                    <br />
-                    <span className="text-xs text-gray-500 mt-2 inline-block">
-                      A conta continua ativa nas outras empresas em que ele opera.
-                    </span>
+                  <p className="aviso-mensagem">
+                    Tirar <strong>{deleteConfirm.name}</strong> da <strong>{FILIAL_META[nichoFilter].label}</strong>?
+                    {'\n'}
+                    <span className="text-sm text-gray-600">A conta continua ativa nas outras empresas em que ele opera.</span>
                   </p>
                 ) : (
-                  <p className="text-sm text-gray-600">
-                    Deseja realmente excluir <strong>{deleteConfirm.name}</strong>?
-                    <br />
-                    <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
+                  <p className="aviso-mensagem">
+                    <strong>{deleteConfirm.name}</strong> será excluído.
+                    {'\n'}
+                    <span className="text-sm font-semibold text-red-700">Esta ação não pode ser desfeita.</span>
                   </p>
                 )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 pt-4">
-                <button 
-                  onClick={() => setDeleteConfirm(null)}
-                  className="p-4 neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmDelete}
-                  className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
-                >
-                  Confirmar
-                </button>
+                <div className="grid grid-cols-2 gap-3 mt-6">
+                  <button autoFocus onClick={() => setDeleteConfirm(null)} className="aviso-btn aviso-btn-sec">
+                    Cancelar
+                  </button>
+                  <button onClick={confirmDelete} className="aviso-btn" style={{ background: '#dc2626', color: '#fff' }}>
+                    {deleteConfirm.type === 'equipe' ? 'Remover' : 'Excluir'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -3636,27 +3623,25 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             irreversivel, por isso vem separado e com outra pergunta. */}
         {excluirContaConfirm && (
           <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="neumorphic p-10 max-w-sm w-full space-y-8 text-center animate-in zoom-in duration-300">
-              <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto shadow-[inset_0_0_20px_rgba(239,68,68,0.2)]">
-                <Trash2 size={40} />
+            <div className="aviso-card max-w-sm w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true">
+              <div className="aviso-faixa" style={{ background: '#dc2626' }}>
+                <span className="aviso-icone" style={{ color: '#dc2626' }}><Trash2 size={28} strokeWidth={2.4} /></span>
+                <h3 className="aviso-titulo">Excluir a conta?</h3>
               </div>
-              <div className="space-y-4">
-                <h3 className="text-xl font-black text-gray-900 uppercase tracking-widest">Excluir a conta?</h3>
-                <p className="text-sm text-gray-600">
+              <div className="aviso-corpo">
+                <p className="aviso-mensagem">
                   A <strong>{FILIAL_META[nichoFilter].label}</strong> é a única empresa de{' '}
                   <strong>{excluirContaConfirm.name}</strong> — não há de onde removê-lo.
-                  <br />
-                  <span className="text-xs text-gray-500 mt-2 inline-block">
-                    Excluir apaga o acesso dele por completo, e o e-mail volta a ficar livre.
-                  </span>
-                  <br />
-                  <span className="text-sm uppercase font-black text-red-500/60 tracking-tighter mt-2 inline-block">Esta ação não pode ser desfeita.</span>
+                  {'\n'}
+                  <span className="text-sm text-gray-600">Excluir apaga o acesso dele por completo, e o e-mail volta a ficar livre.</span>
+                  {'\n'}
+                  <span className="text-sm font-semibold text-red-700">Esta ação não pode ser desfeita.</span>
                 </p>
-              </div>
-              <div className="grid grid-cols-2 gap-4 pt-4">
+              <div className="grid grid-cols-2 gap-3 mt-6">
                 <button
+                  autoFocus
                   onClick={() => setExcluirContaConfirm(null)}
-                  className="p-4 neumorphic-inset text-gray-600 font-black text-sm tracking-widest uppercase hover:text-gray-900 transition-colors"
+                  className="aviso-btn aviso-btn-sec"
                 >
                   Cancelar
                 </button>
@@ -3672,10 +3657,12 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       showAlert(explicarErro(err, `excluir a conta de ${alvo.name}`));
                     }
                   }}
-                  className="p-4 bg-red-500 text-white font-black rounded-xl shadow-lg shadow-red-500/20 active:scale-95 transition-all text-sm tracking-widest uppercase"
+                  className="aviso-btn"
+                  style={{ background: '#dc2626', color: '#fff' }}
                 >
-                  Excluir
+                  Excluir conta
                 </button>
+              </div>
               </div>
             </div>
           </div>

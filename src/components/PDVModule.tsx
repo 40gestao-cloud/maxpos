@@ -4550,17 +4550,21 @@ Para não cobrar nada, cancele a venda (F9).`,
           {!checkoutMode && pdvMode === 'supermax' && (
             <>
               <div className="flex-1 flex overflow-hidden min-h-0">
-                {/* Items table */}
-                <div className="flex-1 flex flex-col min-w-0 border-r border-gray-300">
+                {/* Items table. @container: abaixo de 900px nesta área, CÓDIGO e
+                    ESTOQUE saem e a DESCRIÇÃO fica com o espaço. Antes as colunas
+                    fixas (~730px) não cabiam numa tela de 1130px e a descrição
+                    encolhia até ZERO — o nome do produto sumia e QTD/ESTOQUE/
+                    UNIT deslizavam para baixo do cabeçalho errado. */}
+                <div className="@container flex-1 flex flex-col min-w-0 border-r border-gray-300">
                   <div
-                    className="grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
+                    className="grid grid-cols-[48px_minmax(0,1fr)_64px_100px_110px_36px] @[900px]:grid-cols-[60px_140px_minmax(0,1fr)_70px_90px_110px_130px_40px] gap-2 px-4 py-3 text-sm font-bold uppercase tracking-wide shrink-0 text-white"
                     style={{ background: NAVY_DARK }}
                   >
                     <div>ITEM</div>
-                    <div>CÓDIGO</div>
+                    <div className="hidden @[900px]:block">CÓDIGO</div>
                     <div>DESCRIÇÃO</div>
                     <div className="text-right">QTD</div>
-                    <div className="text-right">ESTOQUE</div>
+                    <div className="text-right hidden @[900px]:block">ESTOQUE</div>
                     <div className="text-right">UNIT R$</div>
                     <div className="text-right">TOTAL R$</div>
                     <div></div>
@@ -4583,7 +4587,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                       return (
                         <div
                           key={item.id}
-                          className={`grid grid-cols-[60px_140px_1fr_70px_90px_110px_130px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b ${
+                          className={`grid grid-cols-[48px_minmax(0,1fr)_64px_100px_110px_36px] @[900px]:grid-cols-[60px_140px_minmax(0,1fr)_70px_90px_110px_130px_40px] gap-2 px-4 py-2.5 text-lg tabular-nums border-b ${
                             idx === selectedCartIdx
                               ? 'bg-yellow-200 border-yellow-500 ring-2 ring-yellow-500'
                               : idx === cart.length - 1 && selectedCartIdx < 0
@@ -4592,7 +4596,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                           }`}
                         >
                           <div className="text-gray-500">{String(idx + 1).padStart(3, '0')}</div>
-                          <div className="text-gray-500 truncate">{item.ean13 || item.ref || '—'}</div>
+                          <div className="text-gray-500 truncate hidden @[900px]:block">{item.ean13 || item.ref || '—'}</div>
                           <div className="truncate font-semibold flex items-center gap-2 min-w-0">
                             <span className="truncate">{(item.name || '').toUpperCase()}</span>
                             {ruptura && (
@@ -4642,7 +4646,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                           </div>
                           <div className="text-right">{fmtQty(item.quantity, item.unit)}{item.unit && (item.unit.toUpperCase() === 'KG' || item.unit.toUpperCase() === 'G') ? ` ${item.unit.toLowerCase()}` : ''}</div>
                           <div
-                            className={`text-right font-bold ${!controla ? 'text-gray-400' : restante <= 0 ? 'text-red-700' : restante <= (live?.minStock ?? 0) ? 'text-yellow-700' : 'text-gray-700'}`}
+                            className={`text-right font-bold hidden @[900px]:block ${!controla ? 'text-gray-400' : restante <= 0 ? 'text-red-700' : restante <= (live?.minStock ?? 0) ? 'text-yellow-700' : 'text-gray-700'}`}
                             title={controla ? `Em estoque: ${fmtQty(baseStock, item.unit)} · Após venda: ${fmtQty(Math.max(restante, 0), item.unit)}` : 'Sem controle de estoque'}
                           >
                             {controla ? fmtQty(baseStock, item.unit) : '∞'}
