@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, Smartphone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
+import { Plus, Search, Users, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, Smartphone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -196,6 +196,9 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
   const normalizar = (s?: string) => (s || '').trim().toLocaleLowerCase('pt-BR');
   const mostrarFantasia = !!normalizar(item.tradeName) && normalizar(item.tradeName) !== normalizar(item.name);
   const semAcao = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+  // Cliente inativo esmaece e perde o amarelo: numa lista grande, só o selo
+  // não bastava para separar quem ainda compra de quem não compra.
+  const apagado = kind === 'cliente' && !ativo;
 
   return (
     <div
@@ -203,8 +206,8 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
       tabIndex={0}
       onClick={onView}
       onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onView(); } }}
-      className="neumorphic p-5 rounded-2xl flex flex-col gap-4 group cursor-pointer transition-shadow hover:shadow-lg focus-visible:outline-2 focus-visible:outline-[#FFC107]"
-      style={{ borderTop: '4px solid #FFC107' }}
+      className={`neumorphic p-5 rounded-2xl flex flex-col gap-4 group cursor-pointer transition hover:shadow-lg focus-visible:outline-2 focus-visible:outline-[#FFC107] ${apagado ? 'opacity-70 hover:opacity-100' : ''}`}
+      style={{ borderTop: `4px solid ${apagado ? '#9ca3af' : '#FFC107'}` }}
     >
       <div className="flex justify-between items-start gap-3">
         <div className="flex items-start gap-3 min-w-0">
@@ -223,9 +226,10 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
                 {ehPJ ? 'Pessoa Jurídica' : 'Pessoa Física'}
               </span>
               {kind === 'cliente' && (
-                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
-                  ativo ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'
-                }`}>
+                <span
+                  className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded text-white"
+                  style={{ background: ativo ? '#16a34a' : '#dc2626' }}
+                >
                   {ativo ? 'Ativo' : 'Inativo'}
                 </span>
               )}
@@ -296,7 +300,9 @@ function CardPessoa({ item, kind, podeExcluir, onEdit, onDelete, onView }: CardP
       {kind === 'cliente' ? (
         <div className="flex justify-between items-center text-xs pt-1 mt-auto border-t border-gray-200 pt-3">
           <span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Limite de crédito</span>
-          <strong className="text-[var(--navy)] tabular-nums">{formatBRL(item.creditLimit || 0)}</strong>
+          {Number(item.creditLimit) > 0
+            ? <strong className="text-[var(--navy)] tabular-nums">{formatBRL(item.creditLimit)}</strong>
+            : <span className="text-gray-400 font-semibold">Sem limite</span>}
         </div>
       ) : item.contact ? (
         // "Contato" aqui e "Contato" no cabeçalho do painel acima eram a mesma
@@ -3894,7 +3900,25 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           );
         })()}
 
-        {currentListLength === 0 && (
+        {currentListLength === 0 && emCards && !loading && (() => {
+          const nome = subTab === 'clientes' ? 'cliente' : 'fornecedor';
+          const vazioDeVerdade = totalLength === 0;
+          return (
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-14">
+              <span className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ background: '#FFF3C4', color: '#B8860B' }}>
+                {vazioDeVerdade ? <Users size={30} /> : <Search size={28} />}
+              </span>
+              <p className="text-lg font-black" style={{ color: 'var(--navy)' }}>
+                {vazioDeVerdade ? `Nenhum ${nome} cadastrado` : `Nenhum ${nome} encontrado`}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                {vazioDeVerdade ? 'Use o botão Novo para cadastrar o primeiro.' : 'Tente outra busca ou mude o filtro.'}
+              </p>
+            </div>
+          );
+        })()}
+
+        {currentListLength === 0 && !emCards && (
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-gray-600 opacity-50 space-y-4">
             <Search size={48} />
             <p className="font-bold">Nenhum registro em "{subTab}"{search ? ` para "${search}"` : ''}</p>
@@ -3910,9 +3934,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             estado de pagina — eram desenho de paginacao, e a lista ja mostra
             todos os registros de uma vez. Controle que nao controla nada custa
             mais confianca do que economiza espaco. */}
-        <div className={`mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-sm text-gray-600 font-medium ${emCards ? '' : 'border-t border-gray-200 bg-white'}`}>
+        {!(emCards && (currentListLength === 0 || loading)) && <div className={`mt-auto px-4 py-2.5 flex justify-between items-center gap-4 text-sm text-gray-600 font-medium ${emCards ? '' : 'border-t border-gray-200 bg-white'}`}>
           <span>{currentListLength} de {totalLength} {totalLength === 1 ? 'registro' : 'registros'}</span>
-        </div>
+        </div>}
       </div>
     </div>
   );
