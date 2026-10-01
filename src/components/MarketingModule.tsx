@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { Megaphone } from 'lucide-react';
+import { Tag, Star } from 'lucide-react';
 import PromocoesModule from './PromocoesModule';
 import VitrineModule from './VitrineModule';
 import { User } from '../types';
@@ -18,14 +18,16 @@ import { User } from '../types';
  * assunto. São as duas pontas da mesma decisão comercial: a oferta define o
  * preço e a vitrine define o que o cliente vê antes de entrar na loja.
  *
- * Mesmo desenho de abas do ConfiguracoesModule (glass-blue + anel no accent)
- * pra não inventar um terceiro padrão de aba dentro do mesmo sistema.
+ * As abas são de SUBLINHADO, à esquerda, e não o seletor em pílula: a pílula
+ * amarela é o desenho dos FILTROS de cada tela (Todas / Vigentes / ...). Com as
+ * duas coisas iguais, uma em cima da outra, não dava para ver qual mandava em
+ * qual.
  */
 type SubTab = 'promocoes' | 'vitrine';
 
-const TABS: { id: SubTab; label: string }[] = [
-  { id: 'promocoes', label: 'Promoções' },
-  { id: 'vitrine', label: 'Vitrine' },
+const TABS: { id: SubTab; label: string; icon: typeof Tag; dica: string }[] = [
+  { id: 'promocoes', label: 'Promoções', icon: Tag, dica: 'Ofertas de preço com período' },
+  { id: 'vitrine', label: 'Vitrine', icon: Star, dica: 'O que aparece no carrossel do login' },
 ];
 
 export default function MarketingModule({ currentUser }: { currentUser: User }) {
@@ -33,29 +35,29 @@ export default function MarketingModule({ currentUser }: { currentUser: User }) 
 
   return (
     <div className="space-y-5 animate-in fade-in duration-500">
-      {/* O título "Marketing" já está na barra do topo; aqui ficam só a frase
-          do que se faz na tela e as abas, no mesmo seletor do Financeiro. A aba
-          ativa é amarela sólida — antes as duas eram azul-escuro e só um anel
-          fino dizia qual estava aberta. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-gray-700 flex items-center gap-2">
-          <Megaphone size={18} className="text-[var(--accent-text)]" /> Ofertas de preço e a vitrine da tela de login.
-        </p>
-        <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200" role="tablist">
-          {TABS.map(t => (
+      {/* O título "Marketing" já está na barra do topo, e cada aba diz a que
+          veio — por isso não há card de título nem frase solta aqui. */}
+      <div className="flex items-end gap-1 border-b-2 border-gray-200" role="tablist">
+        {TABS.map(t => {
+          const ativa = subTab === t.id;
+          return (
             <button
               key={t.id}
               role="tab"
-              aria-selected={subTab === t.id}
+              aria-selected={ativa}
+              title={t.dica}
               onClick={() => setSubTab(t.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-                subTab === t.id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+              className={`-mb-0.5 px-4 py-2.5 inline-flex items-center gap-2 text-base font-bold border-b-[3px] transition-colors ${
+                ativa
+                  ? 'border-[var(--accent)] text-[var(--navy)]'
+                  : 'border-transparent text-gray-500 hover:text-gray-900'
               }`}
             >
+              <t.icon size={18} className={ativa ? 'text-[var(--accent-text)]' : ''} />
               {t.label}
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
       {/* Montagem condicional, não `hidden`: a Vitrine carrega os produtos da

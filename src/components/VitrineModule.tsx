@@ -4,13 +4,13 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Star, ImageOff, Search, Package, X } from 'lucide-react';
+import { Star, ImageOff, Search, Package } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { Product } from '../types';
 import { formatBRL } from '../lib/masks';
 import { useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
-import { useFilial, FILIAL_META } from '../contexts/FilialContext';
+import { useFilial } from '../contexts/FilialContext';
 import { buscarProdutos } from '../lib/produtoBusca';
 
 // Curadoria do carrossel da tela de login.
@@ -73,7 +73,6 @@ export default function VitrineModule() {
     }
   };
 
-  const meta = FILIAL_META[filialAtiva ?? 'supermax'];
   const visiveis = filtroVitrine === 'dentro' ? filtrados.filter(p => p.vitrine)
     : filtroVitrine === 'fora' ? filtrados.filter(p => !p.vitrine)
     : filtrados;
@@ -83,20 +82,40 @@ export default function VitrineModule() {
     <div className="space-y-5 max-w-full">
       {alertHost}
 
-      <div className="neumorphic neumorphic-accent p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-[14rem]">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <Star size={18} style={{ color: meta.dark }} /> Vitrine
-          </h2>
-          <p className="text-sm text-gray-700 mt-0.5">
-            <b className="tabular-nums">{naVitrine.length} de {LIMITE_VITRINE}</b> — aparecem no carrossel da tela de login
-          </p>
-          <div className="mt-2 h-2 w-56 rounded-full bg-gray-200 overflow-hidden" aria-hidden="true">
-            <div className="h-full rounded-full transition-all" style={{ width: `${(naVitrine.length / LIMITE_VITRINE) * 100}%`, background: cheia ? '#dc2626' : meta.color }} />
+      {/* Uma barra só: filtro à esquerda, lotação no meio, busca à direita —
+          colada na grade que ela filtra. Havia um card de título (repetia o
+          nome da aba) e uma faixa "Na vitrine agora" que mostrava o mesmo que
+          o filtro "Na vitrine"; os escolhidos agora têm um lugar só. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200">
+          {([
+            ['todos', 'Todos', comFoto.length],
+            ['dentro', 'Na vitrine', naVitrine.length],
+            ['fora', 'Fora da vitrine', comFoto.length - naVitrine.length],
+          ] as const).map(([id, rotulo, n]) => (
+            <button
+              key={id}
+              onClick={() => setFiltroVitrine(id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
+                filtroVitrine === id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+              }`}
+            >
+              {rotulo} <span className="opacity-70 tabular-nums">{n}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2.5" title="Quantos produtos desta empresa estão no carrossel da tela de login">
+          <span className="text-sm text-gray-700 whitespace-nowrap">
+            <b className="tabular-nums text-gray-900">{naVitrine.length} de {LIMITE_VITRINE}</b> no carrossel do login
+          </span>
+          <div className="h-2 w-28 rounded-full bg-gray-200 overflow-hidden" aria-hidden="true">
+            <div className="h-full rounded-full transition-all" style={{ width: `${(naVitrine.length / LIMITE_VITRINE) * 100}%`, background: cheia ? '#dc2626' : 'var(--accent)' }} />
           </div>
         </div>
-        <div className="flex-1 md:flex-none md:w-72 neumorphic-inset flex items-center px-4 py-2 gap-3">
-          <Search size={18} className="text-gray-600" />
+
+        <div className="ml-auto flex-1 sm:flex-none sm:w-72 neumorphic-inset flex items-center px-3 py-2 gap-2">
+          <Search size={16} className="text-gray-600 shrink-0" />
           <input
             value={busca}
             onChange={e => setBusca(e.target.value)}
@@ -104,49 +123,6 @@ export default function VitrineModule() {
             className="bg-transparent border-none outline-none text-gray-900 text-sm w-full font-medium placeholder:text-gray-400"
           />
         </div>
-      </div>
-
-      {/* Os escolhidos em primeiro plano: antes a única pista era uma borda
-          fina e uma estrela pequena, perdidas no meio de todos os produtos. */}
-      {!loading && naVitrine.length > 0 && (
-        <div className="neumorphic p-4">
-          <h3 className="text-sm font-bold text-gray-900 mb-3">Na vitrine agora</h3>
-          <div className="flex flex-wrap gap-2">
-            {naVitrine.map(p => (
-              <div key={p.id} className="flex items-center gap-2 pl-1 pr-1.5 py-1 rounded-xl border-2 bg-white" style={{ borderColor: meta.color }}>
-                <img src={p.image} alt="" className="w-9 h-9 rounded-lg object-cover" />
-                <span className="text-sm font-semibold text-gray-900 max-w-[10rem] truncate">{p.name}</span>
-                <button
-                  onClick={() => alternar(p)}
-                  disabled={salvando === p.id}
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-gray-600 hover:bg-red-600 hover:text-white disabled:opacity-50"
-                  title="Tirar da vitrine"
-                  aria-label={`Tirar ${p.name} da vitrine`}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200">
-        {([
-          ['todos', 'Todos'],
-          ['dentro', 'Na vitrine'],
-          ['fora', 'Fora da vitrine'],
-        ] as const).map(([id, rotulo]) => (
-          <button
-            key={id}
-            onClick={() => setFiltroVitrine(id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
-              filtroVitrine === id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
-            }`}
-          >
-            {rotulo}
-          </button>
-        ))}
       </div>
 
       {loading ? (
@@ -172,31 +148,34 @@ export default function VitrineModule() {
                   title={ativo ? 'Tirar da vitrine' : 'Pôr na vitrine'}
                   aria-pressed={ativo}
                   className="neumorphic neumorphic-clickable p-3 flex flex-col gap-2 text-left relative disabled:opacity-50"
+                  // Destaque no amarelo da marca, igual para as três empresas.
+                  // Era a cor da empresa a 10%: com a SuperMax em navy o card
+                  // escolhido ficava cinza, com cara de desabilitado.
                   style={ativo
-                    ? { borderColor: meta.color, borderWidth: 3, background: `color-mix(in srgb, ${meta.color} 10%, white)` }
+                    ? { borderColor: 'var(--accent)', borderWidth: 3, background: 'color-mix(in srgb, var(--accent) 14%, white)' }
                     : undefined}
                 >
                   {ativo && (
-                    <span
-                      className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full text-[11px] font-bold shadow"
-                      style={{ background: meta.color, color: meta.fg }}
-                    >
+                    <span className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full text-[11px] font-bold shadow bg-[var(--accent)] text-[var(--accent-fg)]">
                       Na vitrine
                     </span>
                   )}
                   <span
                     className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full flex items-center justify-center border-2"
                     style={ativo
-                      ? { background: meta.color, color: meta.fg, borderColor: meta.dark }
+                      ? { background: 'var(--accent)', color: 'var(--accent-fg)', borderColor: 'var(--accent-dark)' }
                       : { background: 'rgba(255,255,255,0.95)', color: '#6b7280', borderColor: 'rgba(0,0,0,0.2)' }}
                   >
                     <Star size={14} fill={ativo ? 'currentColor' : 'none'} />
                   </span>
-                  <div className="w-full rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center" style={{ aspectRatio: '1 / 1' }}>
-                    <img src={p.image} alt="" className="w-full h-full object-cover" loading="lazy" />
+                  {/* `contain` sobre branco, como no carrossel do login: o que
+                      se vê aqui é o que vai aparecer lá. `cover` recortava a
+                      embalagem. */}
+                  <div className="w-full rounded-lg overflow-hidden bg-white flex items-center justify-center" style={{ aspectRatio: '1 / 1' }}>
+                    <img src={p.image} alt="" className="w-full h-full object-contain" loading="lazy" />
                   </div>
-                  <span className="text-sm font-semibold text-gray-900 leading-tight line-clamp-2">{p.name}</span>
-                  <span className="text-sm font-black tabular-nums" style={{ color: meta.dark }}>
+                  <span className="text-sm font-semibold text-gray-900 leading-tight line-clamp-3" title={p.name}>{p.name}</span>
+                  <span className="mt-auto text-sm font-black tabular-nums text-gray-900">
                     {formatBRL(p.price)}
                   </span>
                 </button>

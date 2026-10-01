@@ -11,7 +11,7 @@ import { formatBRL, maskCurrency, parseCurrencyToNumber } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
 import { useToast } from './Toast';
-import { useFilial, FILIAL_META } from '../contexts/FilialContext';
+import { useFilial } from '../contexts/FilialContext';
 import { buscarProdutos } from '../lib/produtoBusca';
 import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm } from './FormCadastro';
 
@@ -55,7 +55,6 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
   const toast = useToast();
   const { filialAtiva } = useFilial();
   const loja = filialAtiva ?? 'supermax';
-  const meta = FILIAL_META[loja];
   // Liberar é da gestão — é o passo que troca o preço. Espelha o
   // `meu_nivel() >= 80` das RPCs: com o CHECK `user_profiles_role_valido`
   // vigente (admin_master, ceo, operador_caixa) esses dois são a gestão inteira.
@@ -66,6 +65,8 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'todas' | 'andamento' | 'vigentes' | 'encerradas'>('todas');
+  // Busca da LISTA de ofertas; `busca` acima é a do produto, no formulário.
+  const [buscaLista, setBuscaLista] = useState('');
   const [mostrarAjuda, setMostrarAjuda] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [reprovando, setReprovando] = useState<{ id: string; motivo: string } | null>(null);
@@ -228,32 +229,60 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
   const vigentes = promos.filter(ehVigente);
   const pendentes = promos.filter(ehAndamento);
   const encerradas = promos.filter(p => !ehVigente(p) && !ehAndamento(p));
-  const lista = filtro === 'vigentes' ? vigentes : filtro === 'andamento' ? pendentes : filtro === 'encerradas' ? encerradas : promos;
+  const daSituacao = filtro === 'vigentes' ? vigentes : filtro === 'andamento' ? pendentes : filtro === 'encerradas' ? encerradas : promos;
+  const termo = buscaLista.trim().toLowerCase();
+  const lista = termo
+    ? daSituacao.filter(p => `${p.productName} ${p.description ?? ''}`.toLowerCase().includes(termo))
+    : daSituacao;
 
   return (
     <div className="space-y-5 max-w-full">
       {alertHost}
       {confirmHost}
 
-      <div className="neumorphic neumorphic-accent p-5 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <Tag size={18} style={{ color: meta.dark }} /> Promoções
-          </h2>
-          <p className="text-sm text-gray-700 mt-0.5">
-            {vigentes.length} {vigentes.length === 1 ? 'vigente' : 'vigentes'} · {pendentes.length} em andamento
+      {/* Uma barra só: situação à esquerda, busca e ação à direita — a mesma
+          ordem da Vitrine. O card de título que havia aqui repetia o nome da
+          aba e as contagens que já estão nos filtros. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex flex-wrap p-1 rounded-xl bg-gray-100 border border-gray-200">
+          {([
+            ['todas', 'Todas', promos.length],
+            ['andamento', 'Em andamento', pendentes.length],
+            ['vigentes', 'Vigentes', vigentes.length],
+            ['encerradas', 'Encerradas', encerradas.length],
+          ] as const).map(([id, rotulo, n]) => (
             <button
-              onClick={() => setMostrarAjuda(v => !v)}
-              className="ml-3 inline-flex items-center gap-1 text-sm font-semibold text-[var(--navy)] hover:underline"
-              aria-expanded={mostrarAjuda}
+              key={id}
+              onClick={() => setFiltro(id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
+                filtro === id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+              }`}
             >
-              <HelpCircle size={14} /> Como funciona?
+              {rotulo} <span className="opacity-70 tabular-nums">{n}</span>
             </button>
-          </p>
+          ))}
         </div>
-        <button onClick={abrirForm} className="smart-btn-primary !text-sm !py-2">
-          <Plus size={16} /> Nova oferta
+        <button
+          onClick={() => setMostrarAjuda(v => !v)}
+          className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--navy)] hover:underline"
+          aria-expanded={mostrarAjuda}
+        >
+          <HelpCircle size={14} /> Como funciona?
         </button>
+        <div className="flex items-center gap-3 ml-auto flex-1 sm:flex-none justify-end">
+          <div className="flex-1 sm:flex-none sm:w-64 neumorphic-inset flex items-center px-3 py-2 gap-2">
+            <Search size={16} className="text-gray-600 shrink-0" />
+            <input
+              value={buscaLista}
+              onChange={e => setBuscaLista(e.target.value)}
+              placeholder="Buscar oferta..."
+              className="bg-transparent border-none outline-none text-gray-900 text-sm w-full font-medium placeholder:text-gray-400"
+            />
+          </div>
+          <button onClick={abrirForm} className="smart-btn-primary !text-sm !py-2 shrink-0">
+            <Plus size={16} /> Nova oferta
+          </button>
+        </div>
       </div>
 
       {/* Era um parágrafo fixo que ocupava a tela toda vez. Continua a um
@@ -267,25 +296,6 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
           No fim do período o preço volta sozinho.
         </div>
       )}
-
-      <div className="inline-flex flex-wrap p-1 rounded-xl bg-gray-100 border border-gray-200">
-        {([
-          ['todas', 'Todas', promos.length],
-          ['andamento', 'Em andamento', pendentes.length],
-          ['vigentes', 'Vigentes', vigentes.length],
-          ['encerradas', 'Encerradas', encerradas.length],
-        ] as const).map(([id, rotulo, n]) => (
-          <button
-            key={id}
-            onClick={() => setFiltro(id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
-              filtro === id ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
-            }`}
-          >
-            {rotulo} <span className="opacity-70 tabular-nums">{n}</span>
-          </button>
-        ))}
-      </div>
 
       {form && (
         <div className="fixed inset-0 min-h-screen z-[100] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
@@ -402,6 +412,7 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
         <div className="neumorphic p-10 text-center text-sm text-gray-700">
           {promos.length === 0
             ? 'Nenhuma oferta cadastrada nesta empresa. O preço do PDV é o do cadastro do produto.'
+            : termo ? 'Nenhuma oferta encontrada para essa busca.'
             : 'Nenhuma oferta nesta situação.'}
         </div>
       ) : (
@@ -410,52 +421,75 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
             const vigente = ehVigente(p);
             const chip = vigente ? CHIP_VIGENTE : CHIP[p.status];
             return (
-              <div key={p.id} className="neumorphic p-4 flex flex-wrap items-center gap-4 border-l-4" style={{ borderLeftColor: chip.bg }}>
-                <div className="min-w-[12rem] flex-1">
-                  <div className="font-bold text-gray-900 text-base truncate">{p.productName}</div>
+              // Colunas de largura fixa a partir do `lg`: preço, situação e
+              // ações caem sempre no mesmo lugar, qualquer que seja o tamanho
+              // do texto da oferta. Antes eram itens soltos de um flex.
+              <div
+                key={p.id}
+                className="neumorphic p-4 border-l-4 grid items-center gap-x-4 gap-y-3 grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_7.5rem_15rem_13.5rem]"
+                style={{ borderLeftColor: chip.bg }}
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-gray-900 text-base truncate" title={p.productName}>{p.productName}</div>
                   <div className="text-sm text-gray-700 mt-0.5 flex items-center gap-1.5 flex-wrap">
                     <Clock size={14} />
                     {new Date(p.startDate + 'T12:00:00').toLocaleDateString('pt-BR')} a{' '}
                     {new Date(p.endDate + 'T12:00:00').toLocaleDateString('pt-BR')}
                     {p.description ? ` · ${p.description}` : ''}
                   </div>
-                  {(p.createdByName || p.analisadoPorNome || p.decidedByName) && (
-                    <div className="text-xs text-gray-600 mt-1">
-                      {p.createdByName ? `Proposta por ${p.createdByName}` : ''}
-                      {p.analisadoPorNome ? ` · parecer de ${p.analisadoPorNome}` : ''}
-                      {p.decidedByName ? ` · decidida por ${p.decidedByName}` : ''}
-                      {p.observacao ? ` · ${p.observacao}` : ''}
-                    </div>
-                  )}
-                  {p.parecerFinanceiro && (
-                    <div className="text-xs text-gray-700 mt-1.5 bg-gray-50 border border-gray-200 px-2.5 py-1.5 rounded-lg">
-                      <b>Parecer:</b> {p.parecerFinanceiro}
-                      {p.margemPct != null && (
-                        <span className="font-semibold" style={{ color: p.margemPct < 0 ? '#991b1b' : '#166534' }}>
-                          {' '}· margem {p.margemPct.toFixed(1)}%
-                          {p.margemPct < 0 ? ' (vende abaixo do custo)' : ''}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  {(() => {
+                    // Quem fez o quê: um nome só, uma vez. No simulador a
+                    // mesma pessoa costuma percorrer os três passos, e a
+                    // linha repetia o nome dela três vezes.
+                    const nomes = [p.createdByName, p.analisadoPorNome, p.decidedByName].filter(Boolean);
+                    const umSo = nomes.length > 1 && new Set(nomes).size === 1;
+                    const quem = umSo
+                      ? `Proposta, parecer e decisão de ${nomes[0]}`
+                      : [
+                          p.createdByName ? `Proposta por ${p.createdByName}` : '',
+                          p.analisadoPorNome ? `parecer de ${p.analisadoPorNome}` : '',
+                          p.decidedByName ? `decidida por ${p.decidedByName}` : '',
+                        ].filter(Boolean).join(' · ');
+                    // Parecer igual à descrição não é informação nova.
+                    const parecer = p.parecerFinanceiro && p.parecerFinanceiro.trim() !== (p.description ?? '').trim()
+                      ? p.parecerFinanceiro : '';
+                    const linha = [quem, p.observacao, parecer ? `Parecer: ${parecer}` : ''].filter(Boolean).join(' · ');
+                    return linha ? <div className="text-xs text-gray-600 mt-1">{linha}</div> : null;
+                  })()}
                 </div>
 
                 <div className="tabular-nums text-right">
                   <div className="text-sm text-gray-500 line-through">{formatBRL(p.priceBefore)}</div>
-                  <div className="text-lg font-black text-emerald-700">{formatBRL(p.promoPrice)}</div>
+                  <div className="text-lg font-black text-emerald-700 leading-tight">{formatBRL(p.promoPrice)}</div>
                 </div>
 
-                <span
-                  className="px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap"
-                  style={{ background: chip.bg, color: chip.fg }}
-                >
-                  {chip.label}
-                </span>
+                <div className="col-span-2 lg:col-span-1 flex flex-wrap items-center lg:justify-center gap-1.5">
+                  <span
+                    className="px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap"
+                    style={{ background: chip.bg, color: chip.fg }}
+                  >
+                    {chip.label}
+                  </span>
+                  {p.priceBefore > 0 && p.promoPrice < p.priceBefore && (
+                    <span className="px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap tabular-nums bg-emerald-100 text-emerald-800" title="Desconto sobre o preço anterior">
+                      −{((1 - p.promoPrice / p.priceBefore) * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {p.margemPct != null && (
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap tabular-nums ${p.margemPct < 0 ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}
+                      title={p.margemPct < 0 ? 'Vende abaixo do custo' : 'Margem que sobra no preço promocional'}
+                    >
+                      margem {p.margemPct.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
 
+                <div className="col-span-2 lg:col-span-1 flex flex-wrap items-center lg:justify-end gap-1.5">
                 {/* Passo 1. Recusar cabe aqui também: o Financeiro que não vê
                     margem barra a oferta em vez de empurrá-la para a gestão. */}
                 {p.status === 'Pendente' && (
-                  <div className="flex items-center gap-1.5">
+                  <>
                     <button
                       onClick={() => setAnalisando({ id: p.id, parecer: '' })}
                       className="smart-btn-secondary !py-1.5 !px-3 !text-sm"
@@ -470,11 +504,11 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
                     >
                       <X size={15} /> Reprovar
                     </button>
-                  </div>
+                  </>
                 )}
 
                 {podeLiberar && (
-                  <div className="flex items-center gap-1.5">
+                  <>
                     {p.status === 'Em Analise' && (
                       <>
                         <button
@@ -496,8 +530,9 @@ export default function PromocoesModule({ currentUser }: { currentUser: User }) 
                     <button onClick={() => excluir(p)} title="Excluir oferta" className="row-action-btn is-excluir">
                       <Trash2 size={16} />
                     </button>
-                  </div>
+                  </>
                 )}
+                </div>
               </div>
             );
           })}
