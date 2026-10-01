@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { User, LogIn, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { VitrineCarousel } from './VitrineCarousel';
 
@@ -38,6 +38,14 @@ export default function Login({ onLogin }: LoginProps) {
     }
   };
 
+  // Campo no desenho dos formulários do sistema: branco, borda de 2px e halo
+  // amarelo no foco. Em repouso a borda é cinza — amarelo direto, como nos
+  // modais escuros, some no card branco.
+  const campo = 'group flex items-center gap-3 px-4 h-14 bg-white rounded-xl border-2 border-gray-200 transition-all hover:border-gray-300 focus-within:border-[var(--accent)] focus-within:hover:border-[var(--accent)] focus-within:shadow-[0_0_0_4px_rgba(255,193,7,0.3)]';
+  const icone = 'shrink-0 text-gray-400 transition-colors group-focus-within:text-[#021D55]';
+  const rotulo = 'block text-xs font-black text-[#021D55] uppercase tracking-widest ml-1';
+  const entrada = 'bg-transparent border-none outline-none text-gray-900 w-full h-full font-semibold placeholder:text-gray-400 placeholder:font-normal';
+
   return (
     // Duas colunas no modelo do LogMax: vitrine à esquerda (só desktop) e
     // login à direita, agrupados num container central — em tela widescreen
@@ -63,15 +71,16 @@ export default function Login({ onLogin }: LoginProps) {
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">E-mail</label>
-            <div className="neumorphic-inset flex items-center p-4 gap-3">
-              <User size={20} className="text-gray-600" />
+            <label htmlFor="login-email" className={rotulo}>E-mail</label>
+            <div className={campo}>
+              <Mail size={20} className={icone} />
               <input
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="exemplo@gmail.com"
-                className="bg-transparent border-none outline-none text-gray-900 w-full font-bold placeholder:text-gray-400"
+                className={entrada}
                 required
                 disabled={loading}
               />
@@ -79,22 +88,24 @@ export default function Login({ onLogin }: LoginProps) {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-black text-gray-600 uppercase tracking-widest ml-1">Senha</label>
-            <div className="neumorphic-inset flex items-center p-4 gap-3">
-              <LogIn size={20} className="text-gray-600" />
+            <label htmlFor="login-senha" className={rotulo}>Senha</label>
+            <div className={campo}>
+              <Lock size={20} className={icone} />
               <input
+                id="login-senha"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="bg-transparent border-none outline-none text-gray-900 w-full font-bold placeholder:text-gray-400"
+                className={entrada}
                 required
                 disabled={loading}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="text-gray-600 hover:text-[var(--accent)] transition-colors"
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                className="text-gray-400 hover:text-[#021D55] transition-colors"
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>

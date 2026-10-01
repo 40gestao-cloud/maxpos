@@ -52,6 +52,9 @@ export function VitrineCarousel() {
 
   const atual = items[idx];
   const meta = FILIAL_META[atual.pdvMode];
+  // O navy da SuperMax some no fundo navy do login: aqui o realce dela
+  // (borda, preço, indicador) vai no amarelo da marca.
+  const realce = atual.pdvMode === 'supermax' ? '#FFC107' : meta.color;
 
   return (
     <div
@@ -62,7 +65,7 @@ export function VitrineCarousel() {
     >
       <div
         className="w-full rounded-2xl overflow-hidden border-2 flex flex-col"
-        style={{ maxWidth: 420, background: 'rgba(255,255,255,0.04)', borderColor: `${meta.color}55` }}
+        style={{ maxWidth: 420, background: 'rgba(255,255,255,0.04)', borderColor: `${realce}55` }}
       >
         <div className="w-full bg-white flex items-center justify-center" style={{ aspectRatio: '4 / 3' }}>
           {/* key na imagem força o fade recomeçar a cada troca de slide. */}
@@ -78,7 +81,7 @@ export function VitrineCarousel() {
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.15em] border"
-              style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+              style={{ background: meta.color, color: meta.fg, borderColor: atual.pdvMode === 'supermax' ? realce : meta.dark }}
             >
               {meta.label}
             </span>
@@ -89,7 +92,7 @@ export function VitrineCarousel() {
             )}
           </div>
           <h3 className="text-base font-black text-white leading-tight line-clamp-2">{atual.name}</h3>
-          <span className="text-xl font-black tabular-nums" style={{ color: meta.color }}>
+          <span className="text-xl font-black tabular-nums" style={{ color: realce }}>
             {formatBRL(atual.price)}
           </span>
         </div>
@@ -106,7 +109,7 @@ export function VitrineCarousel() {
                 aria-selected={i === idx}
                 aria-label={`Ver ${it.name}`}
                 className="h-1.5 flex-1 rounded-full transition-colors"
-                style={{ background: i === idx ? meta.color : 'rgba(255,255,255,0.18)' }}
+                style={{ background: i === idx ? realce : 'rgba(255,255,255,0.18)' }}
               />
             ))}
           </div>

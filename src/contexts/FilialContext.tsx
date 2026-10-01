@@ -123,7 +123,9 @@ export const FILIAL_META: Record<PdvMode, {
     label: 'SuperMax',
     descricao: 'Supermercado',
     logo: '/icon-supermax.png',
-    color: '#3b82f6', dark: '#1d4ed8', fg: '#ffffff', plate: '#ffffff',
+    // Navy da marca (--navy). Sobre fundo navy (login, painéis de formulário)
+    // ele some: quem desenha ali usa o amarelo como borda/realce.
+    color: '#172554', dark: '#0f1a3d', fg: '#ffffff', plate: '#ffffff',
   },
   maxlook: {
     label: 'MaxLook',
