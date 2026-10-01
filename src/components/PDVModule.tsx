@@ -1673,6 +1673,15 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // render e devolveriam o foco ao CODIGO por cima de um modal aberto.
   const anyOverlayOpenRef = useRef(false);
   anyOverlayOpenRef.current = anyOverlayOpen || cardPickerOpen || valePickerOpen;
+  // Fechou a busca (F8): o foco volta ao CÓDIGO. O input da busca desmonta com
+  // o foco nele e o navegador o entrega ao <body>; dali o próximo F8 dependia
+  // de a tecla chegar à página sem ninguém focado.
+  useEffect(() => {
+    if (classicSearchOpen) return;
+    const t = setTimeout(() => refocusCodeInput(), 0);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classicSearchOpen]);
   // Beeps do PDV — pré-carregados como elementos Audio (HTMLAudioElement reaproveita o buffer)
   const beepScanRef = useRef<HTMLAudioElement | null>(null);
   const beepFinalizeRef = useRef<HTMLAudioElement | null>(null);
@@ -4917,19 +4926,15 @@ Para não cobrar nada, cancele a venda (F9).`,
                     Enter (campo vazio) = SUBTOTAL
                   </span>
                   <span className="opacity-40">·</span>
-                  <span><b>F4</b> Subtotal · <b>F5</b> Pagamentos</span>
+                  <span><b>F4</b> Subtotal · <b>F5</b> Pagamentos · <b>F6</b> Desconto</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F8</b> Buscar produto</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>↑↓</b> Escolher item · <b>Del</b> Cancelar</span>
-                  <span className="opacity-40">·</span>
-                  <span><b>F3</b> / <b>F9</b> / <b>Esc</b> Cancelar cupom</span>
+                  <span><b>F7</b> Consulta preço · <b>F8</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
                   <span><b>2*</b> Qtd — sozinho arma p/ o próximo item, ou <b>2*EAN</b> / <b>2*nome</b> (peso: <b>0,350*</b>)</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F6</b> Desconto</span>
+                  <span><b>↑↓</b> Escolher item · <b>Del</b> Cancelar</span>
                   <span className="opacity-40">·</span>
-                  <span><b>F7</b> Consulta preço</span>
+                  <span><b>F3</b> / <b>F9</b> / <b>Esc</b> Cancelar cupom · <b>Ctrl+G</b> Suspender</span>
                   <span className="opacity-40">·</span>
                   <span><b>F10</b> Sangria · <b>F11</b> Suprimento · <b>F12</b> Fechar caixa</span>
                 </div>
@@ -6295,11 +6300,24 @@ Para não cobrar nada, cancele a venda (F9).`,
                     </span>
                   )}
                 </div>
-                <div ref={classicListRef} className="mt-4 max-h-[55vh] overflow-y-auto custom-scrollbar border border-gray-300">
+                {/* Estoque na própria busca: antes o operador só descobria que o
+                    produto estava zerado DEPOIS de escolher, pelo aviso. */}
+                <div className="mt-4 grid grid-cols-[140px_1fr_90px_120px] gap-3 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white" style={{ background: NAVY_DARK }}>
+                  <span>Código</span>
+                  <span>Descrição</span>
+                  <span className="text-right">Estoque</span>
+                  <span className="text-right">Preço</span>
+                </div>
+                <div ref={classicListRef} className="max-h-[55vh] overflow-y-auto custom-scrollbar border border-t-0 border-gray-300">
                   {filteredClassic.length === 0 ? (
                     <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto.</div>
                   ) : (
-                    filteredClassic.map((p, idx) => { const active = idx === classicSearchIdx; return (
+                    filteredClassic.map((p, idx) => {
+                      const active = idx === classicSearchIdx;
+                      const controla = p.controlStock !== false;
+                      const zerado = controla && p.stock <= 0;
+                      const baixo = controla && !zerado && p.stock <= (p.minStock ?? 0);
+                      return (
                       <button
                         key={p.id}
                         tabIndex={-1}
@@ -6318,11 +6336,20 @@ Para não cobrar nada, cancele a venda (F9).`,
                         // Linha ativa invertida (navy cheio, texto claro): o
                         // amarelo pálido de antes sumia sobre o branco em
                         // monitor de sala.
-                        className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${active ? '' : 'hover:bg-gray-100'}`}
+                        className={`w-full grid grid-cols-[140px_1fr_90px_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${active ? '' : 'hover:bg-gray-100'}`}
                         style={active ? { background: NAVY_DARK } : undefined}
                       >
                         <span className={`tabular-nums ${active ? 'text-white/70' : 'text-gray-500'}`}>{p.ref || '—'}</span>
                         <span className={`truncate ${active ? 'font-bold text-white' : 'font-medium text-gray-900'}`}>{(p.name || '').toUpperCase()}</span>
+                        <span
+                          className={`text-right tabular-nums font-bold ${
+                            zerado ? (active ? 'text-red-300' : 'text-red-600')
+                              : baixo ? (active ? 'text-yellow-300' : 'text-yellow-700')
+                              : active ? 'text-white' : 'text-gray-700'}`}
+                          title={zerado ? 'Sem estoque' : baixo ? 'Estoque no mínimo ou abaixo' : undefined}
+                        >
+                          {controla ? fmtQty(p.stock, p.unit) : '∞'}
+                        </span>
                         <span className="text-right font-bold tabular-nums" style={{ color: active ? YELLOW : MONEY }}>R$ {fmt(p.price)}</span>
                       </button>
                     ); })
