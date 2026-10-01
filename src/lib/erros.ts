@@ -165,15 +165,8 @@ export function explicarErro(err: unknown, acao: string): ErroExplicado {
   //    erro de banco, então não pode cair no caso 9 e aparecer como "o banco
   //    recusou" — o admin ia procurar defeito no sistema em vez de trocar a
   //    senha. Aqui a mensagem já vem pronta e diz o que fazer.
-  if (codigo === 'SENHA_CURTA' || codigo === 'SENHA_VAZADA') {
-    const vazada = codigo === 'SENHA_VAZADA';
-    return {
-      title: vazada ? 'Escolha outra senha' : 'Senha muito curta',
-      message: vazada
-        ? `${msg} Ela é conhecida por quem tenta invadir contas, mesmo que pareça segura. Escolha uma senha que você nunca usou em outro site.`
-        : `${msg} Combine letras, números e símbolos — e evite datas e nomes.`,
-      variant: 'warning',
-    };
+  if (codigo === 'SENHA_CURTA') {
+    return { title: 'Senha muito curta', message: msg, variant: 'warning' };
   }
 
   // 9. Desconhecido: mantém o texto original, identificado como tal. Traduzir

@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseCadastro } from './supabase';
 import { exigirSenhaSegura } from './senhaSegura';
 import { Product, Client, Service, Category, VitrineItem, Sale, Account, Appointment, User, CreditInstallment, CashSession, CashMovement, AuditLogEntry, FolhaPagamento, MaxbankConta, MaxbankTransacao, Promocao, OfertaVigente, AjusteEstoque } from '../types';
 
@@ -958,8 +958,8 @@ export const Storage = {
   // o banco nao consegue distinguir esta tela de um estranho batendo em
   // /auth/v1/signup com a chave publica. Por isso o trigger handle_new_user
   // ignora cargo e empresa — todo mundo nasce Operador de Caixa sem empresa,
-  // que nao enxerga nada — e quem decide e a RPC provisionar_usuario, ja com
-  // a sessao do admin restaurada e o nivel dele conferido no servidor.
+  // que nao enxerga nada — e quem decide e a RPC provisionar_usuario, com a
+  // sessao do admin e o nivel dele conferido no servidor.
   createUser: async (
     email: string,
     password: string,
@@ -968,18 +968,18 @@ export const Storage = {
     parentId?: string,
     loja?: string | null,
   ): Promise<User> => {
-    // Antes de qualquer coisa: senha curta ou vazada nem chega no Auth. Vem
-    // primeiro de propósito — recusar aqui não deixa usuário meio-criado,
-    // porque o signUp ainda não rodou. (Ver `senhaSegura`: o Supabase só
-    // oferece essa trava no plano Pro.)
-    await exigirSenhaSegura(password);
+    // Vem primeiro de propósito: recusar aqui não deixa usuário meio-criado,
+    // porque o signUp ainda não rodou.
+    exigirSenhaSegura(password);
 
-    // Preserva a sessão do admin antes do signUp
-    const { data: { session: adminSession } } = await supabase.auth.getSession();
-
+    // O signUp vai pelo `supabaseCadastro`, que não guarda sessão: a conta
+    // nova não toma o lugar do admin neste navegador. Antes era o cliente
+    // principal, com "salva a sessão do admin, cadastra, restaura" — três
+    // passos que um clique duplo embaralhava.
+    //
     // Só `name` vai no metadata: é rótulo, não concede nada. Cargo e empresa
     // não viajam por aqui — quem os manda é o passo 2, autenticado.
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error } = await supabaseCadastro.auth.signUp({
       email,
       password,
       options: { data: { name } },
@@ -987,38 +987,43 @@ export const Storage = {
 
     if (error) throw error;
     if (!data.user) throw new Error('Falha ao criar usuário');
+    const novoId = data.user.id;
 
-    // Restaura a sessão do admin imediatamente
-    if (adminSession) {
-      await supabase.auth.setSession({
-        access_token: adminSession.access_token,
-        refresh_token: adminSession.refresh_token,
-      });
-    } else {
-      // Sem a sessão do admin o passo 2 seria recusado pelo servidor, e a
-      // conta ficaria criada porém inerte. Melhor falhar dizendo isso.
-      throw new Error(
-        'Sessão do administrador perdida durante o cadastro. A conta foi criada ' +
-        'sem cargo nem empresa — entre de novo e conclua o cadastro na tela de Usuários.'
-      );
-    }
-
-    // Passo 2: cargo e empresa, agora com quem está pedindo identificado.
+    // Passo 2: cargo e empresa, com quem está pedindo identificado. `p_senha`
+    // alimenta o cofre (patch 2026-10-01_cofre_de_senhas), na mesma transação.
     const { error: provisionErr } = await supabase.rpc('provisionar_usuario', {
-      p_user_id: data.user.id,
+      p_user_id: novoId,
       p_role: role,
       p_loja: loja ?? null,
       p_parent_id: parentId ?? null,
+      p_senha: password,
     });
-    if (provisionErr) throw provisionErr;
+    if (provisionErr) {
+      // A conta já existe no Auth, mas sem cargo nem empresa: não aparece em
+      // lista nenhuma e ainda prende o e-mail ("já cadastrado" na próxima
+      // tentativa). Apaga para a pessoa poder simplesmente tentar de novo.
+      await supabase.rpc('delete_user_completely', { p_user_id: novoId }).then(() => {}, () => {});
+      throw provisionErr;
+    }
 
     return {
-      id: data.user.id,
+      id: novoId,
       email: data.user.email ?? email,
       name,
       role: role as any,
       parentId,
+      // Operador nasce na empresa aberta; gestão recebe as três do trigger.
+      lojas: role === 'operador_caixa' && loja ? [loja] : ['supermax', 'maxlook', 'techmax'],
     } as User;
+  },
+
+  /** Senhas do cofre, por id de usuário. A RLS só entrega linhas ao Admin
+   *  Master; quem foi cadastrado antes do cofre não tem registro. Erro vira
+   *  objeto vazio: a lista de equipe não pode cair por causa disto. */
+  getSenhasVisiveis: async (): Promise<Record<string, string>> => {
+    const { data, error } = await supabase.from('senhas_visiveis').select('user_id, senha');
+    if (error || !data) return {};
+    return Object.fromEntries(data.map((r: any) => [r.user_id, r.senha]));
   },
 
   /**

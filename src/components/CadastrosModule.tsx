@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Users, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, Smartphone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown } from 'lucide-react';
+import { Plus, Search, Users, Edit2, Trash2, UserPlus, Shield, User as UserIcon, Mail, Lock, Barcode, Download, X as CloseIcon, Printer, Package, Upload, FileText, FileSpreadsheet, FolderTree, Eye, EyeOff, ExternalLink, CreditCard, Phone, Smartphone, MapPin, ClipboardPaste, Tag, CircleDollarSign, Boxes, ListChecks, Image as ImageIcon, ChevronDown, Crown, Briefcase, Copy } from 'lucide-react';
 import JsBarcode from 'jsbarcode';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -14,6 +14,7 @@ import { assinarTabelas, semRemovidos, mesclarAlterados, porNome, type Mudancas 
 import { maskCPF, maskCNPJ, maskRG, maskPhone, maskCellphone, maskCEP, maskCurrency, parseCurrencyToNumber, formatBRL, isValidCpfCnpj } from '../lib/masks';
 import { useAlertDialog, useConfirmDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
+import { MIN_SENHA, motivoSenhaInvalida } from '../lib/senhaSegura';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado, Dado } from './FormCadastro';
 import { AvatarCadastro } from './AvatarCadastro';
@@ -432,7 +433,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const [senhaVisivel, setSenhaVisivel] = useState(false);
   // Segundo passo da remocao: aparece so quando a empresa atual e a UNICA da
   // pessoa, e a escolha passa a ser entre nada e apagar a conta.
-  const [excluirContaConfirm, setExcluirContaConfirm] = useState<{ id: string; name: string } | null>(null);
+  const [excluirContaConfirm, setExcluirContaConfirm] = useState<{ id: string; name: string; outrasEmpresas: number } | null>(null);
   // Empresas marcadas no formulario de edicao. So vale para Operador de
   // Caixa: gestao opera nas tres por definicao do cargo.
   const [lojasForm, setLojasForm] = useState<string[]>([]);
@@ -791,13 +792,75 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
   const [users, setUsers] = useState<User[]>([]);
 
+  // Trava de envio do formulário de membro. Sem ela, o segundo clique (ou
+  // Enter + clique) cadastrava o mesmo e-mail duas vezes: a primeira criava a
+  // conta e a segunda devolvia "já cadastrado" — erro na tela com o usuário
+  // criado. O ref é o que barra de fato; o state só desenha o botão.
+  const enviandoUsuario = useRef(false);
+  const [salvandoUsuario, setSalvandoUsuario] = useState(false);
+  // Erro do cadastro aparece DENTRO do formulário, que continua aberto e
+  // preenchido. Antes era um alerta e o modal fechava limpando tudo: senha
+  // recusada significava redigitar nome, e-mail e cargo a cada tentativa.
+  const [erroUsuario, setErroUsuario] = useState<string | null>(null);
+
+  // ---- Cofre de senhas (patch 2026-10-01_cofre_de_senhas) ----
+  // O Auth guarda só o hash; o que aparece na lista é a senha anotada no
+  // momento do cadastro. A RLS só entrega ao Admin Master — o `if` abaixo
+  // evita o request de quem sabidamente receberia lista vazia.
+  const veSenhas = currentUser?.role === 'admin_master';
+  const [senhas, setSenhas] = useState<Record<string, string>>({});
+  const [senhaRevelada, setSenhaRevelada] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!veSenhas) return;
+    let vivo = true;
+    Storage.getSenhasVisiveis().then(s => { if (vivo) setSenhas(s); });
+    return () => { vivo = false; };
+  }, [veSenhas]);
+
+  const copiarSenha = async (senha: string) => {
+    try {
+      await navigator.clipboard.writeText(senha);
+      toast.sucesso({ titulo: 'Senha copiada' });
+    } catch {
+      showAlert('Não foi possível copiar. Selecione a senha e copie à mão.');
+    }
+  };
+
+  const fecharFormUsuario = () => {
+    setShowAddUser(false);
+    setNewUser({ name: '', email: '', password: '', role: '' as UserRole });
+    setSenhaVisivel(false);
+    setEditingItem(null);
+    setErroUsuario(null);
+  };
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUser.role) return showAlert('Selecione um cargo');
+    if (enviandoUsuario.current) return;
+    if (!newUser.role) return setErroUsuario('Selecione um cargo.');
+    if (!editingItem) {
+      const motivo = motivoSenhaInvalida(newUser.password);
+      if (motivo) return setErroUsuario(motivo);
+    }
+    enviandoUsuario.current = true;
+    setSalvandoUsuario(true);
+    setErroUsuario(null);
+    try {
+      if (await salvarUsuario()) fecharFormUsuario();
+    } finally {
+      enviandoUsuario.current = false;
+      setSalvandoUsuario(false);
+    }
+  };
+
+  /** Devolve true quando gravou — é o que autoriza fechar o formulário. */
+  const salvarUsuario = async (): Promise<boolean> => {
     if (editingItem && newUser.role === 'operador_caixa' && lojasForm.length === 0) {
       // Sem empresa nenhuma o usuario some de todas as listas e nao entra em
       // lugar nenhum. Para tirar o acesso, o caminho e excluir a conta.
-      return showAlert('Marque pelo menos uma empresa para o Operador de Caixa.');
+      setErroUsuario('Marque pelo menos uma empresa para o Operador de Caixa.');
+      return false;
     }
 
     if (editingItem) {
@@ -827,22 +890,25 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
         // Sai da lista se deixou de operar na empresa aberta.
         setUsers(updatedUsers.filter(u => (u.lojas ?? []).includes(nichoFilter)));
         toast.sucesso({ titulo: `${newUser.name} atualizado` });
+        return true;
       } catch (err: any) {
-        showAlert(explicarErro(err, 'atualizar o membro da equipe'));
+        setErroUsuario(explicarErro(err, 'atualizar o membro da equipe').message);
+        return false;
       }
     } else {
-      if (!newUser.password) return showAlert('Defina uma senha temporária');
       try {
         const created = await Storage.createUser(
-          newUser.email,
+          newUser.email.trim().toLowerCase(),
           newUser.password,
-          newUser.name,
+          newUser.name.trim(),
           newUser.role,
           currentUser?.id,
           // A empresa do novo usuario e a que esta aberta na tela.
           filialAtiva ?? 'supermax',
         );
-        setUsers(prev => [...prev, created]);
+        // O realtime também entrega esta linha; sem o filtro ela dobraria.
+        setUsers(prev => [...prev.filter(u => u.id !== created.id), created]);
+        if (veSenhas) setSenhas(prev => ({ ...prev, [created.id]: newUser.password }));
         // Toast, nao modal: cadastrar cinco pessoas seguidas exigia cinco
         // cliques em OK no meio da tela. Sucesso avisa, nao interrompe.
         toast.sucesso({
@@ -854,23 +920,31 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             </>
           ),
         });
+        return true;
       } catch (err: any) {
         // "ja registrado" e a mensagem crua do Auth e ela confunde: o e-mail e
         // unico em TODAS as empresas, entao a pessoa pode existir em outra
         // loja e nao aparecer nesta lista, que e filtrada pela empresa ativa.
         // Sem esta traducao parece que sobrou um usuario fantasma no banco.
-        const jaExiste = /already been registered|already exists|already registered/i.test(err?.message ?? '');
-        showAlert(jaExiste
-          ? `Este e-mail já está cadastrado no sistema — possivelmente em OUTRA empresa, `
-            + `por isso não aparece nesta lista. O e-mail é único entre as três empresas: `
-            + `para a mesma pessoa operar em duas, use um e-mail por empresa.`
-          : 'Erro ao cadastrar membro: ' + err.message);
+        const bruto = String(err?.message ?? '');
+        const jaExiste = /already been registered|already exists|already registered/i.test(bruto);
+        // O Auth tem a própria régua de senha, configurada no painel do
+        // Supabase; se ela for mais alta que a daqui, a recusa chega em inglês.
+        const senhaFraca = err?.code === 'weak_password' || /password should/i.test(bruto);
+        setErroUsuario(
+          jaExiste
+            ? 'Este e-mail já está cadastrado no sistema — possivelmente em OUTRA empresa, '
+              + 'por isso não aparece nesta lista. Para incluí-lo aqui, edite o cadastro dele '
+              + 'na empresa de origem e marque esta; ou use outro e-mail.'
+          : senhaFraca
+            ? 'O servidor recusou a senha por ser fraca demais. Use uma senha mais longa.'
+          : /rate limit|too many/i.test(bruto)
+            ? 'Muitos cadastros em sequência. Aguarde um minuto e tente de novo.'
+          : explicarErro(err, 'cadastrar o membro').message,
+        );
+        return false;
       }
     }
-    setShowAddUser(false);
-    setNewUser({ name: '', email: '', password: '', role: '' as UserRole });
-    setSenhaVisivel(false);
-    setEditingItem(null);
   };
 
   // Espelha nivel_cargo()/prevent_role_escalation() do banco. Aqui e so
@@ -918,9 +992,16 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   const podeEditarEstoqueDireto = currentUser?.role === 'admin_master';
 
   const COR_CARGO: Record<UserRole, string> = {
-    admin_master: 'bg-[var(--navy)] text-white',
-    ceo: 'bg-amber-100 text-amber-900',
-    operador_caixa: 'bg-sky-100 text-sky-900',
+    admin_master: 'bg-[var(--accent)] text-black border-[var(--accent-dark)]',
+    ceo: 'bg-[var(--navy)] text-white border-[var(--navy)]',
+    operador_caixa: 'bg-orange-500 text-white border-orange-600',
+  };
+
+  // Um ícone por cargo: a cor sozinha não dizia qual era qual.
+  const ICONE_CARGO: Record<UserRole, typeof Crown> = {
+    admin_master: Crown,
+    ceo: Briefcase,
+    operador_caixa: CreditCard,
   };
 
   const ROLE_LABELS: Record<UserRole, string> = {
@@ -1151,6 +1232,21 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
   });
 
   const handleDelete = (id: string, type: string, name: string) => {
+    // A lixeira da equipe EXCLUI A CONTA, no banco, sempre. Ate 2026-10-01 ela
+    // so tirava a pessoa da empresa aberta: quem operava em duas continuava
+    // existindo depois de "apagado", e CEO (que opera nas tres por definicao)
+    // nem isso — a RPC recusava. Para tirar alguem de uma empresa so, o
+    // caminho e Editar e desmarcar a empresa.
+    if (type === 'equipe') {
+      const alvo = users.find(u => u.id === id);
+      // Só Operador de Caixa pode ser tirado de uma empresa; para gestão o
+      // aviso "use Editar" seria um caminho que não existe.
+      const outras = alvo?.role === 'operador_caixa'
+        ? (alvo.lojas ?? []).filter(l => l !== nichoFilter).length
+        : 0;
+      setExcluirContaConfirm({ id, name, outrasEmpresas: outras });
+      return;
+    }
     setDeleteConfirm({ isOpen: true, id, type, name });
   };
 
@@ -1171,31 +1267,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       } else if (type === 'servico') {
         await Storage.deleteService(id);
         setServices(prev => prev.filter(s => s.id !== id));
-      } else if (type === 'equipe') {
-        // A pessoa pode operar em mais de uma empresa, e e UM registro so.
-        // A lixeira desta lista significa "sai DESTA loja", nao "some do
-        // sistema" — senao remover alguem da MaxLook o apagaria tambem do
-        // SuperMax, onde ele continua trabalhando.
-        const r = await Storage.removerUsuarioDaEmpresa(id, nichoFilter);
-
-        if (r === 'ultima_empresa') {
-          // Nao ha loja para tirar: esta e a unica. Deixar o usuario sem
-          // nenhuma empresa o tornaria invisivel em todas as listas, sem
-          // conseguir entrar em lugar nenhum — pior que apagar. Entao a
-          // decisao volta para quem clicou, agora explicita.
-          setDeleteConfirm(null);
-          setExcluirContaConfirm({ id, name: deleteConfirm.name });
-          return;
-        }
-
-        setUsers(prev => prev.filter(u => u.id !== id));
-        toast.sucesso({
-          titulo: `${deleteConfirm.name} saiu da ${FILIAL_META[nichoFilter].label}`,
-          mensagem: 'A conta continua ativa nas outras empresas em que ele opera.',
-        });
       }
     } catch (err: any) {
-      // O catch cobre os cinco tipos; sem o nome, "Erro ao excluir" não dizia
+      // O catch cobre os quatro tipos; sem o nome, "Erro ao excluir" não dizia
       // sequer o que tinha falhado quando o operador apagava em série.
       showAlert(explicarErro(err, `excluir "${deleteConfirm.name}"`));
     }
@@ -2066,13 +2140,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
       }
       case 'equipe':
         return (
-          <table className="tabela-lista w-full text-left min-w-[720px]">
+          <table className={`tabela-lista w-full text-left ${veSenhas ? 'min-w-[880px]' : 'min-w-[720px]'}`}>
             <thead className="text-black text-sm font-bold sticky top-0 z-10" style={{ background: 'var(--accent)', borderBottom: '2px solid var(--accent-dark)' }}>
               <tr>
                 <th className="px-5 py-3">Membro</th>
-                <th className="px-5 py-3">Cargo</th>
-                <th className="px-5 py-3">Empresas</th>
-                <th className="px-5 py-3 w-28">Ações</th>
+                {veSenhas && <th className="px-5 py-3 text-center">Senha</th>}
+                <th className="px-5 py-3 text-center">Cargo</th>
+                <th className="px-5 py-3 text-center">Empresas</th>
+                <th className="px-5 py-3 w-28 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -2092,21 +2167,77 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                       </div>
                     </div>
                   </td>
-                  <td className="px-5 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${COR_CARGO[u.role] ?? 'bg-gray-100 text-gray-800'}`}>
-                      {ROLE_LABELS[u.role] ?? u.role.replace('_', ' ')}
-                    </span>
+                  {veSenhas && (
+                    <td className="px-5 py-3">
+                      {senhas[u.id] ? (
+                        <div className="flex items-center justify-center gap-1.5">
+                          <span
+                            className={`inline-block min-w-[5.5rem] text-center font-semibold text-gray-900 select-all ${
+                              senhaRevelada[u.id] ? 'text-sm' : 'text-lg leading-none tracking-wider'}`}
+                            style={senhaRevelada[u.id] ? { fontFamily: 'Consolas, "Courier New", monospace' } : undefined}
+                          >
+                            {senhaRevelada[u.id] ? senhas[u.id] : '••••••••'}
+                          </span>
+                          <button
+                            onClick={() => setSenhaRevelada(p => ({ ...p, [u.id]: !p[u.id] }))}
+                            title={senhaRevelada[u.id] ? 'Ocultar senha' : 'Mostrar senha'}
+                            aria-label={senhaRevelada[u.id] ? 'Ocultar senha' : 'Mostrar senha'}
+                            className="text-gray-500 hover:text-gray-900 transition-colors"
+                          >
+                            {senhaRevelada[u.id] ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                          {senhaRevelada[u.id] && (
+                            <button
+                              onClick={() => copiarSenha(senhas[u.id])}
+                              title="Copiar senha"
+                              aria-label="Copiar senha"
+                              className="text-gray-500 hover:text-gray-900 transition-colors"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span
+                          className="block text-center text-xs text-gray-500"
+                          title="Senha definida antes do cofre existir — o Auth só guarda o hash, que não pode ser lido de volta."
+                        >
+                          não registrada
+                        </span>
+                      )}
+                    </td>
+                  )}
+                  <td className="px-5 py-3 text-center">
+                    {(() => {
+                      const Icone = ICONE_CARGO[u.role] ?? UserIcon;
+                      return (
+                        <span className={`inline-flex items-center justify-center gap-1.5 h-7 px-3 rounded-full border text-xs font-bold whitespace-nowrap ${COR_CARGO[u.role] ?? 'bg-gray-100 text-gray-800 border-gray-300'}`}>
+                          <Icone size={13} strokeWidth={2.5} className="shrink-0" />
+                          {ROLE_LABELS[u.role] ?? u.role.replace('_', ' ')}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-5 py-3">
                     {/* Operador de caixa pode atender só uma parte das lojas —
                         antes isso só se via abrindo o cadastro. */}
-                    <div className="flex flex-wrap gap-1.5">
-                      {(['supermax', 'maxlook', 'techmax'] as const)
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                      {/* Gestão opera nas três por definição do cargo: três
+                          badges em toda linha de CEO era ruído. */}
+                      {u.role !== 'operador_caixa' && (
+                        <span className="inline-flex items-center justify-center h-7 px-3 rounded-full text-xs font-bold border whitespace-nowrap bg-[var(--accent)] text-black border-[var(--accent-dark)]" title="Opera nas três empresas">
+                          Geral
+                        </span>
+                      )}
+                      {u.role === 'operador_caixa' && (['supermax', 'maxlook', 'techmax'] as const)
                         .filter(f => (u.lojas ?? []).includes(f))
                         .map(f => {
                           const m = FILIAL_META[f];
                           return (
-                            <span key={f} className="px-2 py-0.5 rounded-full text-xs font-semibold border" style={{ background: m.color, color: m.fg, borderColor: m.dark }}>
+                            <span key={f} className="inline-flex items-center gap-1.5 h-7 pl-1 pr-3 rounded-full text-xs font-bold border whitespace-nowrap" style={{ background: m.color, color: m.fg, borderColor: m.dark }}>
+                              <span className="w-5 h-5 rounded-full flex items-center justify-center overflow-hidden shrink-0" style={{ background: m.plate }}>
+                                <img src={m.logo} alt="" className="w-4 h-4 object-contain" />
+                              </span>
                               {m.label}
                             </span>
                           );
@@ -2120,7 +2251,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         cargo concedivel para os botoes surgirem em TODA linha,
                         e o clique so morria no erro do trigger. */}
                     {availableRoles.length > 0 && podeEditarUsuario(u) ? (
-                      <div className="flex gap-1.5">
+                      <div className="flex justify-center gap-1.5">
                         <button
                           onClick={() => handleEdit(u, 'equipe')}
                           className="row-action-btn is-editar"
@@ -2143,7 +2274,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         )}
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-600">
+                      <span className="block text-center text-xs text-gray-600">
                         {u.role === 'admin_master' ? 'Não editável' : 'Somente leitura'}
                       </span>
                     )}
@@ -2528,10 +2659,11 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
 
       {showAddUser && subTab === 'equipe' && (() => {
         const fechar = () => {
-          setShowAddUser(false);
-          setEditingItem(null);
+          // Fechar no meio do envio deixaria o cadastro terminando sozinho,
+          // sem ninguém vendo o resultado.
+          if (salvandoUsuario) return;
+          fecharFormUsuario();
           setFormData({});
-          setNewUser({ name: '', email: '', password: '', role: '' as UserRole });
         };
         return (
         <div className="fixed inset-0 min-h-screen z-[80] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
@@ -2572,8 +2704,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                     <div className="neumorphic-inset px-3 py-2.5 flex items-center gap-2">
                       <Lock size={16} className="text-gray-500 shrink-0" />
                       <input
-                        type={senhaVisivel ? 'text' : 'password'} required value={newUser.password}
-                        onChange={e => setNewUser({...newUser, password: e.target.value})}
+                        type={senhaVisivel ? 'text' : 'password'} required minLength={MIN_SENHA} value={newUser.password}
+                        autoComplete="new-password"
+                        onChange={e => { setNewUser({...newUser, password: e.target.value}); setErroUsuario(null); }}
                         className="bg-transparent border-none outline-none text-sm w-full text-gray-900 font-medium"
                         style={senhaVisivel ? { fontFamily: 'Consolas, "Courier New", monospace', letterSpacing: '0.05em' } : undefined}
                       />
@@ -2593,6 +2726,7 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
                         {senhaVisivel ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     </div>
+                    <p className="fc-hint">Mínimo de {MIN_SENHA} caracteres.</p>
                   </div>
                 )}
                 <div className="space-y-1.5 md:col-span-2">
@@ -2658,7 +2792,17 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
             </section>
 
-            <RodapeForm rotulo={editingItem ? 'Salvar alterações' : 'Cadastrar membro'} onCancelar={fechar} />
+            {erroUsuario && (
+              <p role="alert" className="mt-4 px-4 py-3 rounded-xl border-2 border-red-400 bg-red-500/15 text-sm font-semibold text-red-100 whitespace-pre-line">
+                {erroUsuario}
+              </p>
+            )}
+
+            <RodapeForm
+              rotulo={editingItem ? 'Salvar alterações' : 'Cadastrar membro'}
+              onCancelar={fechar}
+              ocupado={salvandoUsuario}
+            />
           </form>
           </div>
         </div>
@@ -3631,33 +3775,20 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
             <div className="aviso-card max-w-sm w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true">
               <div className="aviso-faixa" style={{ background: '#dc2626' }}>
                 <span className="aviso-icone" style={{ color: '#dc2626' }}><Trash2 size={28} strokeWidth={2.4} /></span>
-                {/* Pessoa nao e "excluida" desta tela: ela SAI DESTA EMPRESA.
-                    Dizer "excluir" aqui seria mentira — ela continua operando
-                    nas outras lojas dela. */}
-                <h3 className="aviso-titulo">
-                  {deleteConfirm.type === 'equipe' ? 'Remover da empresa?' : 'Excluir de vez?'}
-                </h3>
+                <h3 className="aviso-titulo">Excluir de vez?</h3>
               </div>
               <div className="aviso-corpo">
-                {deleteConfirm.type === 'equipe' ? (
-                  <p className="aviso-mensagem">
-                    Tirar <strong>{deleteConfirm.name}</strong> da <strong>{FILIAL_META[nichoFilter].label}</strong>?
-                    {'\n'}
-                    <span className="text-sm text-gray-600">A conta continua ativa nas outras empresas em que ele opera.</span>
-                  </p>
-                ) : (
-                  <p className="aviso-mensagem">
-                    <strong>{deleteConfirm.name}</strong> será excluído.
-                    {'\n'}
-                    <span className="text-sm font-semibold text-red-700">Esta ação não pode ser desfeita.</span>
-                  </p>
-                )}
+                <p className="aviso-mensagem">
+                  <strong>{deleteConfirm.name}</strong> será excluído.
+                  {'\n'}
+                  <span className="text-sm font-semibold text-red-700">Esta ação não pode ser desfeita.</span>
+                </p>
                 <div className="grid grid-cols-2 gap-3 mt-6">
                   <button autoFocus onClick={() => setDeleteConfirm(null)} className="aviso-btn aviso-btn-sec">
                     Cancelar
                   </button>
                   <button onClick={confirmDelete} className="aviso-btn" style={{ background: '#dc2626', color: '#fff' }}>
-                    {deleteConfirm.type === 'equipe' ? 'Remover' : 'Excluir'}
+                    Excluir
                   </button>
                 </div>
               </div>
@@ -3665,9 +3796,9 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
           </div>
         )}
 
-        {/* Segundo passo: a empresa atual e a UNICA da pessoa, entao nao ha o
-            que remover. A escolha vira "apagar a conta" — e isso, sim, e
-            irreversivel, por isso vem separado e com outra pergunta. */}
+        {/* Exclusao de membro da equipe: apaga a conta inteira (auth.users +
+            perfil), nas tres empresas. Separado do modal acima porque a
+            pergunta e outra e o aviso sobre as outras empresas so cabe aqui. */}
         {excluirContaConfirm && (
           <div className="fixed inset-0 min-h-screen z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
             <div className="aviso-card max-w-sm w-full animate-in zoom-in-95 duration-200" role="alertdialog" aria-modal="true">
@@ -3677,10 +3808,14 @@ export default function CadastrosModule({ currentUser, subTab }: CadastrosModule
               </div>
               <div className="aviso-corpo">
                 <p className="aviso-mensagem">
-                  A <strong>{FILIAL_META[nichoFilter].label}</strong> é a única empresa de{' '}
-                  <strong>{excluirContaConfirm.name}</strong> — não há de onde removê-lo.
+                  A conta de <strong>{excluirContaConfirm.name}</strong> será apagada do sistema.
                   {'\n'}
-                  <span className="text-sm text-gray-600">Excluir apaga o acesso dele por completo, e o e-mail volta a ficar livre.</span>
+                  <span className="text-sm text-gray-600">
+                    {excluirContaConfirm.outrasEmpresas > 0
+                      ? 'Ele também opera em outra empresa e perde o acesso a todas. Para tirá-lo só desta, use Editar. '
+                      : ''}
+                    O e-mail volta a ficar livre.
+                  </span>
                   {'\n'}
                   <span className="text-sm font-semibold text-red-700">Esta ação não pode ser desfeita.</span>
                 </p>

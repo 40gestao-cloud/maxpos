@@ -23,7 +23,9 @@ export function CabecalhoForm({ titulo, filial, onFechar }: {
         {meta && (
           <span
             className="px-2.5 py-0.5 rounded-full text-xs font-bold border inline-flex items-center"
-            style={{ background: meta.color, color: meta.fg, borderColor: meta.dark }}
+            // O painel é navy: o chip da SuperMax, também navy, precisa da
+            // borda amarela para não sumir.
+            style={{ background: meta.color, color: meta.fg, borderColor: filial === 'supermax' ? '#FFC107' : meta.dark }}
             title="Cadastrado na empresa em que você está operando."
           >
             {meta.label}
@@ -38,10 +40,12 @@ export function CabecalhoForm({ titulo, filial, onFechar }: {
 }
 
 /** Sem `onSalvar` o botão vira submit — é o caso do formulário de membro. */
-export function RodapeForm({ rotulo, onCancelar, onSalvar }: {
+export function RodapeForm({ rotulo, onCancelar, onSalvar, ocupado }: {
   rotulo: string;
   onCancelar: () => void;
   onSalvar?: () => void;
+  /** Envio em andamento: trava o botão, para o segundo clique não repetir. */
+  ocupado?: boolean;
 }) {
   return (
     <div className="mt-6 pt-5 border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:items-center gap-3">
@@ -49,8 +53,14 @@ export function RodapeForm({ rotulo, onCancelar, onSalvar }: {
       <button type="button" onClick={onCancelar} className="smart-btn-secondary !text-sm !bg-transparent !text-white !border-white/30 hover:!bg-white/10">
         Cancelar
       </button>
-      <button type={onSalvar ? 'button' : 'submit'} onClick={onSalvar} className="smart-btn-primary !text-sm !px-8">
-        {rotulo}
+      <button
+        type={onSalvar ? 'button' : 'submit'}
+        onClick={onSalvar}
+        disabled={ocupado}
+        className="smart-btn-primary !text-sm !px-8 disabled:opacity-60 disabled:cursor-wait inline-flex items-center justify-center gap-2"
+      >
+        {ocupado && <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />}
+        {ocupado ? 'Salvando…' : rotulo}
       </button>
     </div>
   );
