@@ -1612,6 +1612,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [selectedCartIdx, setSelectedCartIdx] = useState<number>(-1);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const partialAmountRef = useRef<HTMLInputElement>(null);
+  // Última posição do mouse sobre a lista do F8 (ver onMouseMove das linhas).
+  const classicMouseRef = useRef({ x: -1, y: -1 });
   const pixConfirmedRef = useRef<Set<string>>(new Set());
 
   // "Ninguem esta com o foco" — precisa ser mais largo que `=== body`.
@@ -5131,7 +5133,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                     do valor parcial (era o que sobrava no fim de um scroll). */}
                 <div className="px-6 pt-4">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">
-                    FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(← → e ↑ ↓ navegam · Tab sai do quadro · Enter seleciona · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span>
+                    FORMA DE PAGAMENTO <span className="text-gray-400 normal-case font-medium">(Tab, ← → e ↑ ↓ navegam · Enter seleciona · F1 Dinheiro · F2 Cartão · F3 PIX/Vale/Fiado)</span>
                   </h3>
                   <div className="relative grid grid-cols-3 gap-2">
                     {(() => {
@@ -5177,6 +5179,24 @@ Para não cobrar nada, cancele a venda (F9).`,
                               // desabilitados, `.focus()` neles não faz nada
                               // e o preventDefault já tinha matado o Tab
                               // nativo: a tecla morria de vez no DÉBITO.
+                              //
+                              // Mas o Tab também não pode FUGIR para os botões
+                              // de baixo (DESCONTO, CPF, CLIENTE, VOLTAR,
+                              // CANCELAR) antes de a forma ser escolhida: na
+                              // última forma habilitada ele volta ao VALOR
+                              // DESTA FORMA, fechando o ciclo valor → formas.
+                              // Os extras seguem pelo F5, e com a venda paga as
+                              // formas desabilitam e o Tab desce sozinho até o
+                              // FECHAR VENDA.
+                              if (e.key === 'Tab' && !e.shiftKey) {
+                                const depois = arr.slice(mIdx + 1).some(c =>
+                                  !document.querySelector<HTMLButtonElement>(`[data-pay-method="${c.id}"]`)?.disabled);
+                                if (!depois) {
+                                  e.preventDefault(); e.stopPropagation();
+                                  partialAmountRef.current?.focus();
+                                }
+                                return;
+                              }
                               const horiz = e.key === 'ArrowRight' || e.key === 'ArrowLeft';
                               const vert = e.key === 'ArrowDown' || e.key === 'ArrowUp';
                               if (!horiz && !vert) return;
@@ -6279,20 +6299,33 @@ Para não cobrar nada, cancele a venda (F9).`,
                   {filteredClassic.length === 0 ? (
                     <div className="py-10 text-center text-gray-400 text-sm">Nenhum produto.</div>
                   ) : (
-                    filteredClassic.map((p, idx) => (
+                    filteredClassic.map((p, idx) => { const active = idx === classicSearchIdx; return (
                       <button
                         key={p.id}
                         tabIndex={-1}
                         data-classic-idx={idx}
-                        onMouseEnter={() => setClassicSearchIdx(idx)}
+                        // Só mouse que ANDOU move a seleção: com o cursor
+                        // parado sobre a lista, a rolagem das setas passava
+                        // linhas por baixo dele e a seleção pulava para a que
+                        // parasse ali.
+                        onMouseMove={(e) => {
+                          const m = classicMouseRef.current;
+                          if (m.x === e.clientX && m.y === e.clientY) return;
+                          classicMouseRef.current = { x: e.clientX, y: e.clientY };
+                          if (!active) setClassicSearchIdx(idx);
+                        }}
                         onClick={() => { addToCart(p, qtdDoF8); setClassicSearchOpen(false); setClassicMsg(null); }}
-                        className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${idx === classicSearchIdx ? 'bg-yellow-100' : 'hover:bg-yellow-50'}`}
+                        // Linha ativa invertida (navy cheio, texto claro): o
+                        // amarelo pálido de antes sumia sobre o branco em
+                        // monitor de sala.
+                        className={`w-full grid grid-cols-[140px_1fr_120px] gap-3 text-left py-2 px-3 text-sm border-b border-gray-200 ${active ? '' : 'hover:bg-gray-100'}`}
+                        style={active ? { background: NAVY_DARK } : undefined}
                       >
-                        <span className="tabular-nums text-gray-500">{p.ref || '—'}</span>
-                        <span className="truncate font-medium text-gray-900">{(p.name || '').toUpperCase()}</span>
-                        <span className="text-right font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.price)}</span>
+                        <span className={`tabular-nums ${active ? 'text-white/70' : 'text-gray-500'}`}>{p.ref || '—'}</span>
+                        <span className={`truncate ${active ? 'font-bold text-white' : 'font-medium text-gray-900'}`}>{(p.name || '').toUpperCase()}</span>
+                        <span className="text-right font-bold tabular-nums" style={{ color: active ? YELLOW : MONEY }}>R$ {fmt(p.price)}</span>
                       </button>
-                    ))
+                    ); })
                   )}
                 </div>
                 <div className="text-[10px] text-gray-500 text-center pt-2 leading-relaxed">
