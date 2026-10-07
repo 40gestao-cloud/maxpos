@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import {
-  DollarSign, ArrowUpCircle, ArrowDownCircle, CreditCard, History,
+  ArrowUpCircle, ArrowDownCircle, CreditCard, History,
   Printer, Plus, Filter, Calendar, Trash2, CheckCircle2,
   ChevronDown, ChevronUp, EyeOff,
 } from 'lucide-react';
@@ -18,7 +18,7 @@ import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
-import KpiCard from './KpiCard';
+import PainelIndicadores from './PainelIndicadores';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -385,15 +385,14 @@ export default function FinanceiroModule() {
     }
   };
 
-  // `cor` é a cor crua do indicador: pinta a barra do topo do card E o valor.
-  // Ticket médio saiu do dourado (--accent-text), que sobre branco lia como
-  // marrom; zerado fica cinza em vez da cor de alerta.
+  // `cor` é a marquinha ao lado do rótulo, sobre o fundo escuro da faixa —
+  // por isso tons claros. O primeiro é o número principal da tela.
   const ticketMedio = resumo?.quantidade ? totalSales / resumo.quantidade : 0;
   const stats = [
-    { label: 'Total de vendas (PDV)', value: formatBRL(totalSales), cor: 'var(--money)', icon: DollarSign, zerado: totalSales === 0 },
-    { label: 'Contas a receber', value: formatBRL(totalReceivable), cor: 'var(--info)', icon: ArrowUpCircle, zerado: totalReceivable === 0 },
-    { label: 'Contas a pagar', value: formatBRL(totalPayable), cor: 'var(--danger)', icon: ArrowDownCircle, zerado: totalPayable === 0 },
-    { label: 'Ticket médio', value: formatBRL(ticketMedio), cor: 'var(--navy)', icon: CreditCard, zerado: ticketMedio === 0 },
+    { label: 'Total de vendas (PDV)', value: formatBRL(totalSales), cor: '#4ade80', zerado: totalSales === 0, skelW: '11rem' },
+    { label: 'Contas a receber', value: formatBRL(totalReceivable), cor: '#60a5fa', zerado: totalReceivable === 0 },
+    { label: 'Contas a pagar', value: formatBRL(totalPayable), cor: '#f87171', zerado: totalPayable === 0 },
+    { label: 'Ticket médio', value: formatBRL(ticketMedio), cor: 'rgb(255 255 255 / 0.6)', zerado: ticketMedio === 0 },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
@@ -485,11 +484,8 @@ export default function FinanceiroModule() {
   const renderConta = (a: Account) => {
     const pagar = a.type === 'payable';
     return (
-      <div key={`acc-${a.id}`} className="flex items-center justify-between gap-3 px-2 py-3 hover:bg-slate-50">
+      <div key={`acc-${a.id}`} className="linha-caixa" style={{ ['--linha-cor' as string]: pagar ? 'var(--danger)' : 'var(--info)' }}>
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-lg shrink-0 ${pagar ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-            {pagar ? <ArrowDownCircle size={20} /> : <ArrowUpCircle size={20} />}
-          </div>
           <div className="min-w-0">
             <p className="font-bold text-base text-gray-900 truncate">{a.description}</p>
             <p className="text-sm text-gray-600 mt-0.5 flex items-center gap-1.5 flex-wrap">
@@ -501,7 +497,7 @@ export default function FinanceiroModule() {
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className={`text-lg font-bold tabular-nums whitespace-nowrap ${pagar ? 'text-[var(--danger)]' : 'text-[var(--info)]'}`}>
+          <span className={`valor-caixa ${pagar ? 'text-[var(--danger)]' : 'text-[var(--info)]'}`}>
             {pagar ? '−' : '+'} {formatBRL(a.amount)}
           </span>
           <div className="flex gap-1">
@@ -530,11 +526,8 @@ export default function FinanceiroModule() {
 
     return (
       <div key={`sale-${s.id}`}>
-        <div className="flex items-center justify-between gap-3 px-2 py-3 hover:bg-slate-50">
+        <div className="linha-caixa" style={{ ['--linha-cor' as string]: credit ? '#7c3aed' : 'var(--money)' }}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 flex items-center justify-center rounded-lg shrink-0 ${credit ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>
-              {credit ? <CreditCard size={20} /> : <ArrowUpCircle size={20} />}
-            </div>
             <div className="min-w-0" title={`Venda ${s.id.slice(0, 8)}`}>
               <p className="font-bold text-base text-gray-900 flex flex-wrap items-center gap-2">
                 Venda · {formas}
@@ -544,14 +537,14 @@ export default function FinanceiroModule() {
                   </span>
                 )}
               </p>
-              <p className="text-sm text-gray-600 mt-0.5 tabular-nums">
+              <p className="text-sm text-gray-600 mt-0.5 num">
                 {s.date ? new Date(s.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-lg font-bold tabular-nums text-[var(--money)] whitespace-nowrap">
+            <span className="valor-caixa text-[var(--money)]">
               + {formatBRL(s.total)}
             </span>
             <div className="flex gap-1">
@@ -580,7 +573,7 @@ export default function FinanceiroModule() {
         </div>
 
         {credit && isExpanded && (
-          <div className="mx-2 mb-3 rounded-xl bg-slate-50 border border-slate-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
+          <div className="ml-4 mr-2 mb-3 rounded-md bg-slate-50 border border-slate-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
             <p className="text-xs font-semibold text-gray-700 mb-2">
               {credit.installments} parcelas de {formatBRL(credit.amount / (credit.installments ?? 1))}
             </p>
@@ -595,16 +588,16 @@ export default function FinanceiroModule() {
               saleInstallments.map(inst => (
                 <div
                   key={inst.id}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-md border ${
                     inst.status === 'paid' ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className={`text-sm font-bold w-10 shrink-0 tabular-nums ${inst.status === 'paid' ? 'text-emerald-700' : 'text-gray-700'}`}>
+                    <span className={`num text-base font-bold w-10 shrink-0 ${inst.status === 'paid' ? 'text-emerald-700' : 'text-gray-700'}`}>
                       {inst.installment_number}/{inst.total_installments}
                     </span>
                     <div>
-                      <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatBRL(inst.amount)}</p>
+                      <p className="num text-lg font-bold text-gray-900 leading-tight">{formatBRL(inst.amount)}</p>
                       <p className="text-xs text-gray-600">
                         Vence em {new Date(inst.due_date + 'T12:00:00').toLocaleDateString('pt-BR')}
                       </p>
@@ -637,19 +630,16 @@ export default function FinanceiroModule() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="visual-caixa space-y-6 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
-      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. Era uma
-          faixa em card, repetindo o selo de empresa do cabeçalho; uma linha
-          discreta basta para dizer de QUEM são estes números. */}
-      <p className="text-sm text-gray-600">
-        Números de <b className="text-gray-900">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.
-      </p>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map(stat => <KpiCard key={stat.label} {...stat} loading={loading} />)}
-      </div>
+      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. A frase
+          que diz de QUEM são os números vai dentro da própria faixa. */}
+      <PainelIndicadores
+        itens={stats}
+        loading={loading}
+        legenda={<>Números de <b className="text-white">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.</>}
+      />
 
       {showAddModal && (
         <div className="fixed inset-0 min-h-screen z-[100] overflow-y-auto bg-black/70 backdrop-blur-md animate-in fade-in duration-200 p-4 flex justify-center items-start">
@@ -732,13 +722,13 @@ export default function FinanceiroModule() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => openAddModal('payable')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap text-white bg-[var(--danger)] hover:brightness-110 active:scale-[0.98] transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-bold whitespace-nowrap text-white bg-[var(--danger)] hover:brightness-110 active:scale-[0.98] transition"
               >
                 <Plus size={16} strokeWidth={3} /> Conta a pagar
               </button>
               <button
                 onClick={() => openAddModal('receivable')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap text-white bg-[var(--info)] hover:brightness-110 active:scale-[0.98] transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-bold whitespace-nowrap text-white bg-[var(--info)] hover:brightness-110 active:scale-[0.98] transition"
               >
                 <Plus size={16} strokeWidth={3} /> Conta a receber
               </button>
@@ -746,12 +736,12 @@ export default function FinanceiroModule() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mb-5">
-            <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-300">
+            <div className="inline-flex p-1 rounded-md bg-slate-100 border border-slate-300">
               {(['all', 'payable', 'receivable'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
+                  className={`px-3 py-1.5 rounded text-sm font-semibold transition-colors whitespace-nowrap ${
                     activeTab === tab ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-900 hover:bg-white'
                   }`}
                 >
@@ -783,7 +773,7 @@ export default function FinanceiroModule() {
           </div>
 
           {showFilters && (
-            <div className="mb-5 p-4 rounded-xl bg-gray-50 border border-gray-200 animate-in slide-in-from-top-2 duration-200">
+            <div className="mb-5 p-4 rounded-md bg-gray-50 border border-gray-200 animate-in slide-in-from-top-2 duration-200">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <label className="fc-label flex items-center gap-1.5"><Calendar size={14} /> De</label>
@@ -849,10 +839,10 @@ export default function FinanceiroModule() {
           </h3>
           <div className="space-y-3">
             {fiadoClients.map(c => (
-              <div key={c.id} className="p-4 rounded-lg border border-slate-200">
+              <div key={c.id} className="p-4 rounded-md border border-slate-200">
                 <div className="flex justify-between items-center gap-2 mb-2">
                   <p className="font-bold text-base text-gray-900 truncate">{c.name}</p>
-                  <p className="text-lg text-[var(--danger)] font-bold tabular-nums whitespace-nowrap">{formatBRL(Math.abs(c.balance))}</p>
+                  <p className="valor-caixa !min-w-0 text-[var(--danger)]">{formatBRL(Math.abs(c.balance))}</p>
                 </div>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                   <div className="h-full bg-[var(--info)]" style={{ width: `${c.creditLimit ? Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100) : 100}%` }} />

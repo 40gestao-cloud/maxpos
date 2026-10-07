@@ -121,6 +121,9 @@ select:-webkit-autofill {
   /* Indicador zerado: cinza, não a cor de alerta. "R$ 0,00" em vermelho
      gritava por um problema que não existia.                               */
   --zero:           #64748b;
+  /* Fonte só para VALORES: condensada e de algarismos de largura fixa, com
+     cara de visor de caixa. Texto continua na fonte do sistema.             */
+  --font-num:       "Barlow Condensed", ui-sans-serif, system-ui, sans-serif;
 
   /* legado (mantidos para compat com componentes antigos) */
   --shadow-dark:    transparent;
@@ -976,4 +979,97 @@ body {
   color: #ffffff;
   margin-top: 0.125rem;
   overflow-wrap: anywhere;
+}
+
+/* ============================================================
+   Visual "caixa" — Financeiro (e, aprovado, as outras telas).
+   O que dava cara de template: quatro cards soltos iguais, ícone num
+   quadrado pastel em toda linha, mesmo arredondamento e sombra em tudo.
+   ============================================================ */
+@layer components {
+  .num {
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+  }
+
+  /* Cantos e sombra mais secos dentro da tela: ferramenta, não template. */
+  .visual-caixa .neumorphic {
+    border-radius: 0.375rem;
+    box-shadow: 0 1px 0 rgb(var(--brand-rgb) / 0.06);
+  }
+
+  /* ── Faixa de indicadores ──
+     Os mesmos números, numa faixa da cor escura da empresa, como o visor
+     do caixa. Segue o --navy/--accent de cada loja. */
+  .painel-kpi {
+    background: var(--navy);
+    color: #fff;
+    border-radius: 0.375rem;
+    overflow: hidden;
+    border-bottom: 3px solid var(--accent);
+  }
+  .painel-kpi-cel {
+    padding: 0.75rem 0.875rem 0.875rem;
+    min-width: 0;
+  }
+  @media (min-width: 1024px) {
+    .painel-kpi-cel { padding: 0.875rem 1.25rem 1rem; }
+  }
+  .painel-kpi-rotulo {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    font-size: 0.6875rem;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgb(255 255 255 / 0.72);
+  }
+  .painel-kpi-marca {
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-top: 0.2rem;
+    border-radius: 1px;
+    flex-shrink: 0;
+  }
+  @media (min-width: 1024px) {
+    .painel-kpi-rotulo { letter-spacing: 0.12em; gap: 0.5rem; }
+  }
+
+  /* ── Lista livro-caixa ──
+     Sem ícone por linha: entrada/saída se lê pelo traço à esquerda e pelo
+     sinal, e os valores ficam alinhados numa coluna à direita. */
+  .linha-caixa {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0.5rem 0.75rem 1rem;
+  }
+  .linha-caixa::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.625rem;
+    bottom: 0.625rem;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--linha-cor, var(--navy));
+  }
+  .linha-caixa:hover { background: #f5f7fb; }
+  .valor-caixa {
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 1.25rem;
+    line-height: 1;
+    text-align: right;
+    white-space: nowrap;
+  }
+  @media (min-width: 640px) {
+    .valor-caixa { min-width: 7.5rem; }
+  }
 }
