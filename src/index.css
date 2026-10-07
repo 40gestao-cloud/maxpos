@@ -74,6 +74,10 @@ select:-webkit-autofill {
   --bg-main:        #f3f4f6;   /* cinza muito claro (fundo principal)   */
   --bg-card:        #ffffff;   /* cards/superfícies                      */
   --bg-soft:        #f9fafb;   /* inputs e áreas internas                */
+  /* Fundo da área de conteúdo. Era bg-gray-50 (#f9fafb): branco sobre
+     quase-branco, e o card só se separava do fundo pela borda. Um cinza
+     levemente azulado faz o card branco se destacar sozinho.               */
+  --bg-content:     #eef1f6;
   /* Bordas TINGIDAS DE AZUL-MARINHO, não cinza neutro. O cinza #d1d5db
      sumia sobre o branco do card: a superfície ficava sem limite visível e
      vários cards só ganhavam contorno no hover. Tingir com a cor da marca
@@ -113,6 +117,10 @@ select:-webkit-autofill {
   --shadow-raised:  0 2px 4px rgb(var(--brand-rgb) / 0.06),
                     0 14px 28px -8px rgb(var(--brand-rgb) / 0.18);
   --danger:         #b91c1c;   /* vermelho (erros)                       */
+  --info:           #1d4ed8;   /* azul (a receber, entradas previstas)   */
+  /* Indicador zerado: cinza, não a cor de alerta. "R$ 0,00" em vermelho
+     gritava por um problema que não existia.                               */
+  --zero:           #64748b;
 
   /* legado (mantidos para compat com componentes antigos) */
   --shadow-dark:    transparent;
@@ -456,13 +464,13 @@ body {
   .kpi-card {
     position: relative;
     overflow: hidden;
-    padding-top: calc(1rem + 3px);
+    padding-top: calc(1rem + 4px);
   }
   .kpi-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 3px;
+    height: 4px;
     background: var(--kpi-cor, var(--navy));
   }
 

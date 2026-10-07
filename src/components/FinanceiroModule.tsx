@@ -18,6 +18,7 @@ import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
 import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
+import KpiCard from './KpiCard';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -385,14 +386,14 @@ export default function FinanceiroModule() {
   };
 
   // `cor` é a cor crua do indicador: pinta a barra do topo do card E o valor.
-  // O Ticket Médio era 'text-[var(--accent)]' — amarelo #FFC107 sobre branco,
-  // ~1.7:1 de contraste. O número simplesmente não se lia; agora usa o dourado
-  // escuro de --accent-text.
+  // Ticket médio saiu do dourado (--accent-text), que sobre branco lia como
+  // marrom; zerado fica cinza em vez da cor de alerta.
+  const ticketMedio = resumo?.quantidade ? totalSales / resumo.quantidade : 0;
   const stats = [
-    { label: 'Total de vendas (PDV)', value: formatBRL(totalSales), cor: 'var(--money)', icon: DollarSign },
-    { label: 'Contas a receber', value: formatBRL(totalReceivable), cor: '#2563eb', icon: ArrowUpCircle },
-    { label: 'Contas a pagar', value: formatBRL(totalPayable), cor: 'var(--danger)', icon: ArrowDownCircle },
-    { label: 'Ticket médio', value: formatBRL(resumo?.quantidade ? totalSales / resumo.quantidade : 0), cor: 'var(--accent-text)', icon: CreditCard },
+    { label: 'Total de vendas (PDV)', value: formatBRL(totalSales), cor: 'var(--money)', icon: DollarSign, zerado: totalSales === 0 },
+    { label: 'Contas a receber', value: formatBRL(totalReceivable), cor: 'var(--info)', icon: ArrowUpCircle, zerado: totalReceivable === 0 },
+    { label: 'Contas a pagar', value: formatBRL(totalPayable), cor: 'var(--danger)', icon: ArrowDownCircle, zerado: totalPayable === 0 },
+    { label: 'Ticket médio', value: formatBRL(ticketMedio), cor: 'var(--navy)', icon: CreditCard, zerado: ticketMedio === 0 },
   ];
 
   const openAddModal = (type: 'payable' | 'receivable') => { setAccountType(type); setShowAddModal(true); };
@@ -477,28 +478,30 @@ export default function FinanceiroModule() {
       .then(c => setFiadoClients(c.filter(cl => cl.balance < 0)));
   }, [filialAtiva]);
 
+  const fiadoVazio = !loading && fiadoClients.length === 0;
+
   // ─── render ────────────────────────────────────────────────
 
   const renderConta = (a: Account) => {
     const pagar = a.type === 'payable';
     return (
-      <div key={`acc-${a.id}`} className="flex items-center justify-between gap-3 px-4 py-3 neumorphic-inset border-l-4" style={{ borderLeftColor: pagar ? '#ef4444' : '#3b82f6' }}>
+      <div key={`acc-${a.id}`} className="flex items-center justify-between gap-3 px-2 py-3 hover:bg-slate-50">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`p-2 rounded-lg shrink-0 ${pagar ? 'bg-red-500/10 text-red-600' : 'bg-blue-500/10 text-blue-600'}`}>
-            {pagar ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
+          <div className={`w-10 h-10 flex items-center justify-center rounded-lg shrink-0 ${pagar ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+            {pagar ? <ArrowDownCircle size={20} /> : <ArrowUpCircle size={20} />}
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-sm text-gray-900 truncate">{a.description}</p>
-            <p className="text-xs text-gray-600 mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <p className="font-bold text-base text-gray-900 truncate">{a.description}</p>
+            <p className="text-sm text-gray-600 mt-0.5 flex items-center gap-1.5 flex-wrap">
               {pagar ? 'Conta a pagar' : 'Conta a receber'}
-              <span className={`px-1.5 py-px rounded font-semibold ${a.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+              <span className={`px-1.5 py-px rounded text-xs font-semibold border ${a.status === 'paid' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-900 border-amber-300'}`}>
                 {a.status === 'paid' ? 'Pago' : 'Pendente'}
               </span>
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className={`font-bold tabular-nums whitespace-nowrap ${pagar ? 'text-red-600' : 'text-blue-600'}`}>
+          <span className={`text-lg font-bold tabular-nums whitespace-nowrap ${pagar ? 'text-[var(--danger)]' : 'text-[var(--info)]'}`}>
             {pagar ? '−' : '+'} {formatBRL(a.amount)}
           </span>
           <div className="flex gap-1">
@@ -526,14 +529,14 @@ export default function FinanceiroModule() {
     const formas = [...new Set((s.payments ?? []).map(p => ROTULO_PAGAMENTO[p.method] ?? p.method))].join(' + ') || 'PDV';
 
     return (
-      <div key={`sale-${s.id}`} className="neumorphic-inset overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div key={`sale-${s.id}`}>
+        <div className="flex items-center justify-between gap-3 px-2 py-3 hover:bg-slate-50">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`p-2 rounded-lg shrink-0 ${credit ? 'bg-violet-500/10 text-violet-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
-              {credit ? <CreditCard size={18} /> : <ArrowUpCircle size={18} />}
+            <div className={`w-10 h-10 flex items-center justify-center rounded-lg shrink-0 ${credit ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>
+              {credit ? <CreditCard size={20} /> : <ArrowUpCircle size={20} />}
             </div>
             <div className="min-w-0" title={`Venda ${s.id.slice(0, 8)}`}>
-              <p className="font-semibold text-sm text-gray-900 flex flex-wrap items-center gap-2">
+              <p className="font-bold text-base text-gray-900 flex flex-wrap items-center gap-2">
                 Venda · {formas}
                 {credit && (
                   <span className="text-[11px] font-semibold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full whitespace-nowrap">
@@ -541,14 +544,14 @@ export default function FinanceiroModule() {
                   </span>
                 )}
               </p>
-              <p className="text-xs text-gray-600 mt-0.5 tabular-nums">
+              <p className="text-sm text-gray-600 mt-0.5 tabular-nums">
                 {s.date ? new Date(s.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            <span className="font-bold tabular-nums text-emerald-700 whitespace-nowrap">
+            <span className="text-lg font-bold tabular-nums text-[var(--money)] whitespace-nowrap">
               + {formatBRL(s.total)}
             </span>
             <div className="flex gap-1">
@@ -577,7 +580,7 @@ export default function FinanceiroModule() {
         </div>
 
         {credit && isExpanded && (
-          <div className="border-t border-gray-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
+          <div className="mx-2 mb-3 rounded-xl bg-slate-50 border border-slate-200 px-4 pb-4 pt-3 space-y-2 animate-in slide-in-from-top-2 duration-300">
             <p className="text-xs font-semibold text-gray-700 mb-2">
               {credit.installments} parcelas de {formatBRL(credit.amount / (credit.installments ?? 1))}
             </p>
@@ -637,63 +640,15 @@ export default function FinanceiroModule() {
     <div className="space-y-6 animate-in fade-in duration-500">
       {confirmHost}
       {alertHost}
-      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. Uma frase
-          basta: o que o operador precisa saber é de QUEM são estes números. */}
-      <div className="neumorphic neumorphic-accent px-4 py-2.5">
-        <p className="text-sm text-gray-700">
-          Números de <b className="text-gray-900">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.
-        </p>
-      </div>
+      {/* Tudo nesta tela e da empresa da sessao — vendas E contas. Era uma
+          faixa em card, repetindo o selo de empresa do cabeçalho; uma linha
+          discreta basta para dizer de QUEM são estes números. */}
+      <p className="text-sm text-gray-600">
+        Números de <b className="text-gray-900">{FILIAL_META[filialAtiva ?? 'supermax'].label}</b> — cada empresa tem o próprio contas a pagar e a receber.
+      </p>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, i) => {
-          const Icon = stat.icon;
-          return (
-            <div
-              key={i}
-              className="neumorphic kpi-card p-4 md:p-5 cursor-default min-w-0"
-              style={{ ['--kpi-cor' as string]: stat.cor }}
-            >
-              <div className="flex justify-between items-start gap-2 mb-1.5">
-                <span className="text-xs md:text-sm text-gray-700 font-semibold leading-tight">{stat.label}</span>
-                <Icon size={16} style={{ color: stat.cor }} className="shrink-0" />
-              </div>
-              <h3 className="text-lg md:text-2xl font-black tabular-nums tracking-tight whitespace-nowrap" style={{ color: stat.cor }}>
-                {loading
-                  ? <span className="skeleton" style={{ width: '5.5rem', height: '1.75rem' }} aria-hidden="true">&nbsp;</span>
-                  : stat.value}
-              </h3>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <button
-          onClick={() => openAddModal('payable')}
-          className="neumorphic neumorphic-clickable action-tile"
-          style={{ ['--acao-cor' as string]: 'var(--danger)' }}
-        >
-          <span className="action-chip"><ArrowDownCircle size={22} /></span>
-          <span className="min-w-0">
-            <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a pagar</span>
-            <span className="block text-xs text-gray-600 font-medium">Uma saída que ainda vai acontecer</span>
-          </span>
-          <Plus size={20} className="action-plus" strokeWidth={3} />
-        </button>
-
-        <button
-          onClick={() => openAddModal('receivable')}
-          className="neumorphic neumorphic-clickable action-tile"
-          style={{ ['--acao-cor' as string]: '#2563eb' }}
-        >
-          <span className="action-chip"><ArrowUpCircle size={22} /></span>
-          <span className="min-w-0">
-            <span className="block text-[15px] font-black text-gray-900 tracking-tight">Lançar conta a receber</span>
-            <span className="block text-xs text-gray-600 font-medium">Uma entrada que ainda vai acontecer</span>
-          </span>
-          <Plus size={20} className="action-plus" strokeWidth={3} />
-        </button>
+        {stats.map(stat => <KpiCard key={stat.label} {...stat} loading={loading} />)}
       </div>
 
       {showAddModal && (
@@ -752,33 +707,52 @@ export default function FinanceiroModule() {
         </div>
       )}
 
+      {/* Sem ninguém devendo, o Fiado ocupava um terço da largura para uma
+          linha de texto. Vira faixa, e o fluxo ganha a largura toda. */}
+      {fiadoVazio && (
+        <div className="neumorphic flex items-center gap-3 px-5 py-3 border-l-4 !border-l-[var(--money)]">
+          <CheckCircle2 size={20} className="text-[var(--money)] shrink-0" />
+          <p className="text-sm text-gray-800">
+            <b className="text-[var(--navy)]">Controle de fiado:</b> nenhum cliente devendo no fiado.
+          </p>
+        </div>
+      )}
+
       {/* items-start: sem ele o Fiado esticava até a altura do fluxo inteiro,
           uma coluna vazia do tamanho da página. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        <div className="lg:col-span-2 neumorphic p-4 md:p-6">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <h3 className="text-lg font-bold flex items-center gap-2 text-gray-900">
-              <History size={20} className="text-[var(--accent-text)]" /> Fluxo de caixa
+      <div className={`grid grid-cols-1 ${fiadoVazio ? '' : 'lg:grid-cols-3'} gap-6 items-start`}>
+        <div className={`${fiadoVazio ? '' : 'lg:col-span-2'} neumorphic p-4 md:p-6`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-gray-200">
+            <h3 className="section-header">
+              <History size={20} /> Fluxo de caixa
             </h3>
-            {dismissedFlowCount > 0 && (
+            {/* Os lançamentos eram dois cards grandes numa linha só deles,
+                entre os indicadores e o fluxo. Aqui ficam junto da lista que
+                eles alimentam. */}
+            <div className="flex items-center gap-2">
               <button
-                onClick={restoreAllFlow}
-                className="text-sm font-semibold text-[var(--navy)] hover:underline"
-                title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} ocultado${dismissedFlowCount === 1 ? '' : 's'}`}
+                onClick={() => openAddModal('payable')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap text-white bg-[var(--danger)] hover:brightness-110 active:scale-[0.98] transition"
               >
-                Mostrar ocultas ({dismissedFlowCount})
+                <Plus size={16} strokeWidth={3} /> Conta a pagar
               </button>
-            )}
+              <button
+                onClick={() => openAddModal('receivable')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap text-white bg-[var(--info)] hover:brightness-110 active:scale-[0.98] transition"
+              >
+                <Plus size={16} strokeWidth={3} /> Conta a receber
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mb-5">
-            <div className="inline-flex p-1 rounded-xl bg-gray-100 border border-gray-200">
+            <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-300">
               {(['all', 'payable', 'receivable'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap ${
-                    activeTab === tab ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-700 hover:bg-white'
+                    activeTab === tab ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow' : 'text-gray-900 hover:bg-white'
                   }`}
                 >
                   {tab === 'all' ? 'Tudo' : tab === 'payable' ? 'A pagar' : 'A receber'}
@@ -792,9 +766,20 @@ export default function FinanceiroModule() {
             >
               <Filter size={15} /> Filtros{filtrosAtivos ? ' •' : ''}
             </button>
-            <button onClick={handlePrintReport} className="smart-btn-secondary !py-1.5 !px-3 !text-sm sm:ml-auto">
-              <Printer size={15} /> Gerar PDF
-            </button>
+            <div className="flex items-center gap-3 sm:ml-auto">
+              {dismissedFlowCount > 0 && (
+                <button
+                  onClick={restoreAllFlow}
+                  className="text-sm font-semibold text-[var(--navy)] hover:underline"
+                  title={`Restaurar ${dismissedFlowCount} lançamento${dismissedFlowCount === 1 ? '' : 's'} ocultado${dismissedFlowCount === 1 ? '' : 's'}`}
+                >
+                  Mostrar ocultas ({dismissedFlowCount})
+                </button>
+              )}
+              <button onClick={handlePrintReport} className="smart-btn-secondary !py-1.5 !px-3 !text-sm">
+                <Printer size={15} /> Gerar PDF
+              </button>
+            </div>
           </div>
 
           {showFilters && (
@@ -836,8 +821,13 @@ export default function FinanceiroModule() {
           <div className="space-y-5">
             {porDia.map(grupo => (
               <div key={grupo.dia}>
-                <h4 className="text-sm font-bold text-gray-700 mb-2">{grupo.dia}</h4>
-                <div className="space-y-2">
+                {/* Cada lançamento era uma caixa cinza dentro do card branco —
+                    caixa dentro de caixa, quase sem contraste. Agora é lista
+                    com divisórias, como a do Estoque. */}
+                <h4 className="flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  {grupo.dia}<span className="h-px flex-1 bg-slate-200" />
+                </h4>
+                <div className="divide-y divide-gray-200">
                   {grupo.itens.map(l => l.tipo === 'conta' ? renderConta(l.conta) : renderVenda(l.venda))}
                 </div>
               </div>
@@ -852,30 +842,27 @@ export default function FinanceiroModule() {
           )}
         </div>
 
+        {!fiadoVazio && (
         <div className="neumorphic p-4 md:p-6">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-900">
-            <CreditCard size={20} className="text-blue-600" /> Controle de fiado
+          <h3 className="section-header mb-4 pb-3 border-b border-gray-200">
+            <CreditCard size={20} /> Controle de fiado
           </h3>
           <div className="space-y-3">
             {fiadoClients.map(c => (
-              <div key={c.id} className="p-4 neumorphic-inset">
+              <div key={c.id} className="p-4 rounded-lg border border-slate-200">
                 <div className="flex justify-between items-center gap-2 mb-2">
-                  <p className="font-semibold text-sm text-gray-900 truncate">{c.name}</p>
-                  <p className="text-sm text-red-600 font-bold tabular-nums whitespace-nowrap">{formatBRL(Math.abs(c.balance))}</p>
+                  <p className="font-bold text-base text-gray-900 truncate">{c.name}</p>
+                  <p className="text-lg text-[var(--danger)] font-bold tabular-nums whitespace-nowrap">{formatBRL(Math.abs(c.balance))}</p>
                 </div>
-                <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-600" style={{ width: `${c.creditLimit ? Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100) : 100}%` }} />
+                <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-[var(--info)]" style={{ width: `${c.creditLimit ? Math.min((Math.abs(c.balance) / c.creditLimit) * 100, 100) : 100}%` }} />
                 </div>
-                <p className="text-xs text-gray-600 mt-2 text-right">Limite: {formatBRL(c.creditLimit)}</p>
+                <p className="text-sm text-gray-600 mt-2 text-right">Limite: {formatBRL(c.creditLimit)}</p>
               </div>
             ))}
-            {fiadoClients.length === 0 && (
-              <p className="text-sm text-gray-600 flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" /> Nenhum cliente devendo no fiado.
-              </p>
-            )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

@@ -572,7 +572,7 @@ function AppInterno() {
         )}
 
         {/* Content */}
-        <div className={`${activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'flex-1 overflow-y-auto custom-scrollbar bg-gray-50 p-6'}`}>
+        <div className={`${activeIsPDV ? 'flex-1 flex flex-col min-h-0' : 'flex-1 overflow-y-auto custom-scrollbar bg-[var(--bg-content)] p-6'}`}>
           <AnimatePresence mode="wait">
             <motion.div
               // As sub-abas de Cadastros dividem UMA chave: com a aba inteira
