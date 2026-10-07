@@ -1034,6 +1034,11 @@ body {
     border-radius: 1px;
     flex-shrink: 0;
   }
+  /* Celular: três colunas de ~110px; "MOVIMENTAÇÕES" em 11px invadia a
+     vizinha. Letra menor e quebra permitida dentro da palavra. */
+  @media (max-width: 1023px) {
+    .painel-kpi-rotulo { font-size: 0.625rem; overflow-wrap: anywhere; min-width: 0; }
+  }
   @media (min-width: 1024px) {
     .painel-kpi-rotulo { letter-spacing: 0.12em; gap: 0.5rem; }
   }

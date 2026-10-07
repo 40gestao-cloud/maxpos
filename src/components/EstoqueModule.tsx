@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { AlertTriangle, TrendingUp, TrendingDown, DollarSign, Package, FileText, EyeOff, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, TrendingUp, FileText, EyeOff, CheckCircle2 } from 'lucide-react';
 import { Storage } from '../lib/storage';
 import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { assinarTabelas, semRemovidos, mesclarAlterados, porNome } from '../lib/realtime';
@@ -12,7 +12,7 @@ import { PDFReport } from '../lib/pdfReport';
 import { formatBRL } from '../lib/masks';
 import { Product, Sale, AjusteEstoque } from '../types';
 import { useAlertDialog } from './ConfirmDialog';
-import KpiCard from './KpiCard';
+import PainelIndicadores from './PainelIndicadores';
 
 const DISMISSED_MOVES_KEY = 'estoque_dismissed_moves';
 
@@ -240,26 +240,23 @@ export default function EstoqueModule() {
 
   // `skelW` = largura da barra enquanto carrega, proxima do valor final pra
   // o card nao pular de tamanho quando o dado chega.
-  // Uma cor por significado. Antes três dos quatro tinham a mesma barra navy,
-  // e o valor em estoque vinha em dourado — dinheiro é verde, como no
-  // Financeiro. Crítico zerado é boa notícia: verde, não vermelho.
+  // O primeiro é o número principal da faixa: o valor investido é o que o
+  // dono olha primeiro. `cor` é a marquinha do rótulo, clara por estar sobre
+  // o fundo escuro. Crítico zerado é boa notícia: marca verde, sem alerta.
   const semCritico = criticalProducts.length === 0;
   const alertasVazios = !loading && semCritico;
   const stats = [
-    { label: 'Estoque crítico', value: criticalProducts.length.toString(), skelW: '2.5rem', icon: semCritico ? CheckCircle2 : AlertTriangle, cor: semCritico ? 'var(--money)' : 'var(--danger)', desc: 'Produtos abaixo do mínimo' },
-    { label: 'Valor em estoque', value: formatBRL(totalValue), skelW: '7rem', icon: DollarSign, cor: 'var(--money)', desc: 'Total investido', zerado: totalValue === 0 },
-    { label: 'Movimentações', value: totalMovimentacoes?.toString() ?? '…', skelW: '3rem', icon: TrendingUp, cor: 'var(--info)',
+    { label: 'Valor em estoque', value: formatBRL(totalValue), skelW: '11rem', cor: '#4ade80', desc: 'Total investido', zerado: totalValue === 0 },
+    { label: 'Estoque crítico', value: criticalProducts.length.toString(), skelW: '2.5rem', cor: semCritico ? '#4ade80' : '#f87171', alerta: !semCritico, desc: 'Produtos abaixo do mínimo' },
+    { label: 'Movimentações', value: totalMovimentacoes?.toString() ?? '…', skelW: '3rem', cor: '#60a5fa',
       desc: totalMovimentacoes == null ? 'Vendas e ajustes' : `${saidasVisiveis} por venda · ${ajustesVisiveis} ${ajustesVisiveis === 1 ? 'ajuste' : 'ajustes'}` },
-    { label: 'Total de itens', value: totalItems.toString(), skelW: '3.5rem', icon: Package, cor: 'var(--navy)', desc: 'Unidades em estoque', zerado: totalItems === 0 },
+    { label: 'Total de itens', value: totalItems.toString(), skelW: '3.5rem', cor: 'rgb(255 255 255 / 0.6)', desc: 'Unidades em estoque', zerado: totalItems === 0 },
   ];
 
   return (
-    <div className="space-y-6 max-w-full">
+    <div className="visual-caixa space-y-6 max-w-full">
       {alertHost}
-      {/* Stats grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map(stat => <KpiCard key={stat.label} {...stat} loading={loading} />)}
-      </div>
+      <PainelIndicadores itens={stats} loading={loading} />
 
       {/* Sem item crítico o card de alertas ocupava meia tela para uma linha
           de texto. Vira uma faixa, e a movimentação ganha a largura toda. */}
@@ -277,13 +274,13 @@ export default function EstoqueModule() {
       <div className={`grid grid-cols-1 ${alertasVazios ? '' : 'xl:grid-cols-2'} gap-6 items-start`}>
         {/* Alertas */}
         {!alertasVazios && (
-        <section className="neumorphic p-6 flex flex-col min-w-0">
+        <section className="neumorphic p-4 md:p-6 flex flex-col min-w-0">
           <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-200">
             <h2 className="section-header">
               <AlertTriangle size={20} className="text-red-700" /> Alertas de reposição
             </h2>
             {criticalProducts.length > 0 && (
-              <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-100 text-red-700 border border-red-200">
+              <span className="px-2.5 py-1 rounded text-sm font-bold bg-red-100 text-red-800 border border-red-300">
                 {criticalProducts.length} {criticalProducts.length === 1 ? 'crítico' : 'críticos'}
               </span>
             )}
@@ -297,19 +294,16 @@ export default function EstoqueModule() {
             ) : (
               <div className="divide-y divide-gray-200">
                 {criticalProducts.map((p, i) => (
-                  <div key={i} className="flex items-center justify-between py-3 first:pt-0">
+                  <div key={i} className="linha-caixa" style={{ ['--linha-cor' as string]: 'var(--danger)' }}>
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-red-100 text-red-700 flex items-center justify-center shrink-0">
-                        <Package size={20} />
-                      </div>
                       <div className="min-w-0">
                         <p className="font-bold text-base text-gray-900 truncate">{p.name}</p>
                         <p className="text-sm text-gray-600">Categoria: {p.category || 'Geral'}</p>
                       </div>
                     </div>
                     <div className="text-right shrink-0 ml-3">
-                      <p className="text-lg font-bold text-red-700 tabular-nums">{p.stock}</p>
-                      <p className="text-xs text-gray-600 font-semibold">{p.unit || 'un.'} · mín. {p.minStock || 5}</p>
+                      <p className="valor-caixa !min-w-0 text-[var(--danger)]">{p.stock}</p>
+                      <p className="text-xs text-gray-600 font-semibold mt-1">{p.unit || 'un.'} · mín. {p.minStock || 5}</p>
                     </div>
                   </div>
                 ))}
@@ -327,7 +321,7 @@ export default function EstoqueModule() {
         )}
 
         {/* Movimentações */}
-        <section className="neumorphic p-6 min-w-0">
+        <section className="neumorphic p-4 md:p-6 min-w-0">
           <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-200">
             <h2 className="section-header">
               <TrendingUp size={20} className="text-emerald-700" /> Movimentação recente
@@ -342,7 +336,7 @@ export default function EstoqueModule() {
                   Mostrar ocultas ({dismissedCount})
                 </button>
               )}
-              <span className="px-3 py-1 rounded-full text-sm font-bold bg-slate-100 text-slate-800 border border-slate-300">
+              <span className="px-2.5 py-1 rounded text-sm font-bold bg-slate-100 text-slate-800 border border-slate-300">
                 {recentMoves.length} última{recentMoves.length === 1 ? '' : 's'}
               </span>
             </div>
@@ -362,22 +356,17 @@ export default function EstoqueModule() {
             ) : (
               <div className="divide-y divide-gray-200">
                 {recentMoves.map((move) => (
-                  <div key={move.key} className="flex items-center justify-between py-3 first:pt-0 group">
+                  // Entrada/saída pelo traço à esquerda e pelo sinal, como o
+                  // fluxo do Financeiro — sem o ícone repetido em toda linha.
+                  <div key={move.key} className="linha-caixa" style={{ ['--linha-cor' as string]: move.qty > 0 ? 'var(--money)' : 'var(--danger)' }}>
                     <div className="flex items-center gap-3 min-w-0">
-                      {/* Saída era laranja, com a mesma seta da entrada girada.
-                          Vermelho e seta própria, como no Financeiro. */}
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${move.qty > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                        {move.qty > 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
-                      </div>
                       <div className="min-w-0">
                         <p className="font-bold text-base text-gray-900 truncate">{move.item}</p>
-                        <p className="text-sm text-gray-600">{ROTULO_MOVIMENTO[move.tipo]} · {move.quando.toLocaleDateString('pt-BR')}</p>
+                        <p className="text-sm text-gray-600">{ROTULO_MOVIMENTO[move.tipo]} · <span className="num">{move.quando.toLocaleDateString('pt-BR')}</span></p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0 ml-3">
-                      {/* Era 24px black: o número pesava mais que o nome do
-                          produto, que é o que se procura na lista. */}
-                      <div className={`text-lg font-bold tabular-nums ${move.qty > 0 ? 'text-emerald-700' : 'text-red-700'}`}>{move.qty > 0 ? '+' : ''}{move.qty}</div>
+                      <div className={`valor-caixa !min-w-[3.5rem] ${move.qty > 0 ? 'text-[var(--money)]' : 'text-[var(--danger)]'}`}>{move.qty > 0 ? '+' : ''}{move.qty}</div>
                       <button
                         onClick={() => dismissMove(move.key)}
                         className="row-action-btn is-ocultar"

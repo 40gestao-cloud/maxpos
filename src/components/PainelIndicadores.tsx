@@ -11,6 +11,10 @@ export type IndicadorPainel = {
   /** Cor da marquinha ao lado do rótulo — o significado do número. */
   cor: string;
   zerado?: boolean;
+  /** Valor pede atenção (ex.: produtos abaixo do mínimo): vermelho claro. */
+  alerta?: boolean;
+  /** Linha de apoio sob o número. */
+  desc?: string;
   skelW?: string;
 };
 
@@ -44,12 +48,13 @@ export default function PainelIndicadores({ itens, legenda, loading }: {
               </span>
               <div
                 className={`num font-bold leading-none mt-2 whitespace-nowrap ${principal ? 'text-4xl md:text-5xl' : 'text-xl sm:text-2xl md:text-3xl'}`}
-                style={{ color: it.zerado ? 'rgb(255 255 255 / 0.45)' : principal ? 'var(--accent)' : '#fff' }}
+                style={{ color: it.zerado ? 'rgb(255 255 255 / 0.45)' : it.alerta ? '#fca5a5' : principal ? 'var(--accent)' : '#fff' }}
               >
                 {loading
                   ? <span className="skeleton !bg-white/15" style={{ width: it.skelW ?? '6rem', height: principal ? '2.75rem' : '1.75rem' }} aria-hidden="true">&nbsp;</span>
                   : it.value}
               </div>
+              {it.desc && <p className="mt-1.5 text-xs sm:text-sm text-white/70 leading-snug">{it.desc}</p>}
             </div>
           );
         })}
