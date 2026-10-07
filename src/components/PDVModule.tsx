@@ -9,7 +9,7 @@ import QRCode from 'qrcode';
 import { Product, CartItem, Payment, Sale, User, Client, CashSession, CashMovement } from '../types';
 import { Storage } from '../lib/storage';
 import { supabase } from '../lib/supabase';
-import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber, maskCpfCnpj } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, maskPercent, parsePercentToNumber, maskCpfCnpj, numeroCupom } from '../lib/masks';
 import { PDFReport } from '../lib/pdfReport';
 import { buildPixQrValue, buildCartaoQrValue } from '../lib/paymentQr';
 import { buscarProdutos, separarQtdETermo, chaveCategoria } from '../lib/produtoBusca';
@@ -202,6 +202,12 @@ const rotuloFiado = (pdvMode?: PdvMode): string =>
 // não estorna nada — por isso uma e outra coisa pedem tratamento à parte.
 const ehPagamentoEletronico = (p: Payment): boolean =>
   p.method === 'pix' || p.method === 'credito' || p.method === 'debito';
+
+// Item vendido a peso (ou com quantidade quebrada): não se tira "uma unidade".
+const ehQtdFracionada = (it: { unit?: string; quantity: number }): boolean => {
+  const u = (it.unit || '').toUpperCase();
+  return u === 'KG' || u === 'G' || !Number.isInteger(it.quantity);
+};
 
 const valorEletronicoPago = (ps: Payment[]): number =>
   parseFloat(ps.filter(ehPagamentoEletronico).reduce((s, p) => s + p.amount, 0).toFixed(2));
@@ -1230,6 +1236,19 @@ function NichoLeituraView({
 }
 
 // Ícone de check compacto usado no botão FECHAR VENDA.
+// Relógio do cabeçalho. Componente à parte de propósito: o `new Date()` direto
+// no PDV só mudava quando outra coisa re-renderizava a tela (um bipe), e
+// fazer o PDV inteiro re-renderizar a cada segundo custaria caro. Aqui só
+// este <span> atualiza.
+function RelogioPdv() {
+  const [agora, setAgora] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setAgora(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{agora.toLocaleString('pt-BR')}</>;
+}
+
 function CheckCircleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1364,8 +1383,12 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   const [qtdArmada, setQtdArmada] = useState<number | null>(null);
   const qtdArmadaRef = useRef<number | null>(null);
   qtdArmadaRef.current = qtdArmada;
-  // Cupom regenerado a cada venda: '------' quando não há venda em andamento.
-  const [cupomSeq, setCupomSeq] = useState<string>('------');
+  // Id da venda em andamento, sorteado quando o primeiro item entra. É ESTE
+  // id que o finalizeSale grava: o "CUPOM" do cabeçalho sai dele e bate com o
+  // número do recibo, da reimpressão e da devolução. Antes o cabeçalho
+  // mostrava um número de relógio que não existia em lugar nenhum.
+  const [vendaId, setVendaId] = useState<string | null>(null);
+  const cupomSeq = vendaId ? numeroCupom(vendaId) : '------';
   const [helpOpen, setHelpOpen] = useState(false);
   // Tela cheia REAL (Fullscreen API), não um overlay CSS: no MaxPOS o PDV já
   // ocupa toda a área do app (o header some e a sidebar vira overlay), então
@@ -1476,6 +1499,10 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     const o = ofertas.get(productId);
     return o && o.de > precoCobrado + 0.001 ? o : null;
   };
+  // Preço que o caixa VAI cobrar por um produto do catálogo (antes de entrar
+  // no carrinho). As listas de busca mostravam o de tabela enquanto o
+  // addToCart cobrava a oferta — mesma regra que o F7 já seguia.
+  const precoDeVenda = (p: Product) => ofertas.get(p.id)?.por ?? p.price;
 
   const askSupervisorAuth = (title: string, message: string, onOk: () => void) => {
     setSupervisorAuthPin('');
@@ -1594,6 +1621,8 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     saleDiscount: number;
     cpfNota: string;
     linkedClient: Client | null;
+    // O cupom volta com o mesmo número que o operador já tinha visto.
+    vendaId: string | null;
     suspendedAt: string;
   } | null>(null);
   // Fix #17 — esconder sugestões via Esc sem limpar o input. Resetado ao digitar.
@@ -2106,11 +2135,17 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
         // Peso embutido no EAN sempre vence — armado/multiplicador não faz
         // sentido combinar com um valor que a balança já pesou.
         let scaleQty = explicitQty ?? 1;
+        // A etiqueta com VALOR foi impressa pelo preço que a loja cobra hoje.
+        // Dividir pelo de tabela com o item em oferta dava um peso menor, e o
+        // addToCart ainda aplicava a oferta por cima: etiqueta de R$ 10,00
+        // saía cobrada R$ 7,50. A conta tem de usar o mesmo preço que o
+        // addToCart vai cobrar.
+        const precoEfetivo = ofertasRef.current.get(scaleProduct.id)?.por ?? scaleProduct.price;
         if (unit === 'KG' || unit === 'G') {
           scaleQty = parseFloat((embedded / 1000).toFixed(3)); // gramas → kg
-        } else if (scaleProduct.price > 0) {
+        } else if (precoEfetivo > 0) {
           const valor = embedded / 100; // centavos → reais
-          scaleQty = parseFloat((valor / scaleProduct.price).toFixed(3));
+          scaleQty = parseFloat((valor / precoEfetivo).toFixed(3));
         }
         addToCart(scaleProduct, scaleQty);
         setClassicMsg(null);
@@ -2203,6 +2238,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       saleDiscount,
       cpfNota,
       linkedClient,
+      vendaId,
       suspendedAt: new Date().toISOString(),
     });
     setCart([]); setPayments([]); setLastAdded(null); setPartialAmount('');
@@ -2228,6 +2264,7 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
     setSaleDiscount(suspendedSale.saleDiscount);
     setCpfNota(suspendedSale.cpfNota);
     setLinkedClient(suspendedSale.linkedClient);
+    setVendaId(suspendedSale.vendaId);
     setSuspendedSale(null);
   };
 
@@ -2265,11 +2302,11 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
   // Fix #7 — cupom novo a cada venda. Reset quando não há venda em andamento.
   useEffect(() => {
     if (cart.length === 0 && payments.length === 0) {
-      if (cupomSeq !== '------') setCupomSeq('------');
-    } else if (cupomSeq === '------') {
-      setCupomSeq(String(Date.now()).slice(-6));
+      if (vendaId !== null) setVendaId(null);
+    } else if (vendaId === null) {
+      setVendaId(crypto.randomUUID());
     }
-  }, [cart.length, payments.length, cupomSeq]);
+  }, [cart.length, payments.length, vendaId]);
 
   // Fix #12 — produto deletado remotamente: remove do carrinho e avisa.
   useEffect(() => {
@@ -2598,7 +2635,9 @@ export default function PDVModule({ currentUser, onExitToMenu, onGoToInicio, isT
       : base > 0 && (desc / base) * 100 > DISCOUNT_SUPERVISOR_THRESHOLD_PCT + 0.001;
     if (exigeSupervisor) {
       askSupervisorAuth(
-        'Desconto acima do limite',
+        // No supermercado não há limite a estourar: todo desconto passa pelo
+        // supervisor, e o título dizia o contrário.
+        pdvMode === 'supermax' ? 'Desconto no caixa' : 'Desconto acima do limite',
         pdvMode === 'supermax'
           ? `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} no caixa precisa do supervisor. Peça o PIN — e registre o motivo (etiqueta divergente, avaria).`
           : `Desconto de R$ ${desc.toFixed(2).replace('.', ',')} (${((desc / base) * 100).toFixed(1)}%) excede o limite de ${DISCOUNT_SUPERVISOR_THRESHOLD_PCT}% permitido ao operador. Peça ao supervisor para digitar o PIN.`,
@@ -2803,26 +2842,36 @@ Para não cobrar nada, cancele a venda (F9).`,
         });
       };
 
+      // Del passa pela mesma confirmação do X da linha: as duas portas tiram
+      // item do cupom e antes só uma perguntava.
       const removeLastItem = () => {
         if (cart.length === 0) return;
         // Se há item selecionado por seta → age nele (remove por inteiro, sem
-        // decremento por unidade — a intenção do operador é clara). Sem seleção,
-        // comportamento antigo: decrementa/remove o último.
+        // decremento por unidade — a intenção do operador é clara).
         if (selectedCartIdx >= 0 && selectedCartIdx < cart.length) {
-          const targetIdx = selectedCartIdx;
-          setCart(prev => prev.filter((_, i) => i !== targetIdx));
-          setSelectedCartIdx(-1);
-          setLastAdded(null);
+          const alvo = cart[selectedCartIdx];
+          requestCancelItem(alvo.id, () => setSelectedCartIdx(-1));
           return;
         }
-        setCart(prev => {
-          const last = prev[prev.length - 1];
-          if (last.quantity > 1) {
-            return prev.map((it, idx) => idx === prev.length - 1 ? { ...it, quantity: it.quantity - 1 } : it);
-          }
-          return prev.slice(0, -1);
+        const last = cart[cart.length - 1];
+        // Pesado (ou fracionado) sai inteiro. Tirar "1" de 1,250 kg deixava
+        // 0,250 kg no cupom — um peso que ninguém pesou.
+        const pesado = ehQtdFracionada(last);
+        if (pesado || last.quantity <= 1) {
+          requestCancelItem(last.id);
+          return;
+        }
+        askConfirm({
+          title: 'CANCELAR 1 UNIDADE',
+          message: `Remover 1 unidade de "${(last.name || '').toUpperCase()}"? Fica ${fmtQty(last.quantity - 1, last.unit)} no cupom.`,
+          confirmLabel: 'REMOVER 1',
+          cancelLabel: 'VOLTAR',
+          variant: 'danger',
+          onConfirm: () => {
+            setCart(prev => prev.map(it => it.id === last.id ? { ...it, quantity: it.quantity - 1 } : it));
+            setLastAdded(null);
+          },
         });
-        setLastAdded(null);
       };
 
       // Simulação (MaxLook/TechMax) NÃO reage a F-keys — LogMax real não usa
@@ -2874,6 +2923,10 @@ Para não cobrar nada, cancele a venda (F9).`,
       // texto). Se ele digitou algo, Del apaga texto como o navegador faz.
       if (e.key === 'Delete') {
         if (modalOpen || pickerOpen) return;
+        // No fechamento o carrinho não está na tela e o foco costuma estar no
+        // CONFIRMAR VENDA: o Del tirava item de uma venda já paga, deixando o
+        // pago acima do total. Item se cancela na leitura.
+        if (checkoutMode) return;
         if (isEditable) {
           const el = target as HTMLInputElement | HTMLTextAreaElement;
           const isCode = el === codeInputRef.current;
@@ -3702,7 +3755,10 @@ Para não cobrar nada, cancele a venda (F9).`,
       // o relatório subnotificava o desconto de toda venda com cupom.
       const descontoTotal = parseFloat((saleDiscount + cupomDesconto).toFixed(2));
       const newSale: Sale = {
-        id: crypto.randomUUID(),
+        // O mesmo id do cabeçalho. Se a gravação falhar e o operador tentar de
+        // novo, vai o mesmo id — a RPC é atômica, a tentativa anterior não
+        // deixou linha.
+        id: vendaId ?? crypto.randomUUID(),
         date: new Date().toISOString(),
         items: cart,
         total,
@@ -4254,7 +4310,7 @@ Para não cobrar nada, cancele a venda (F9).`,
   };
 
   // Abre o card de confirmação para cancelar um item específico do carrinho.
-  const requestCancelItem = (id: string) => {
+  const requestCancelItem = (id: string, aoConfirmar?: () => void) => {
     const it = cart.find(c => c.id === id);
     if (!it) return;
     askConfirm({
@@ -4265,7 +4321,10 @@ Para não cobrar nada, cancele a venda (F9).`,
       variant: 'danger',
       onConfirm: () => {
         setCart(prev => prev.filter(c => c.id !== id));
-        if (lastAdded?.id === id) setLastAdded(null);
+        // Funcional: chamado de dentro do atalho de teclado, `lastAdded` da
+        // closure podia ser de um render anterior.
+        setLastAdded(prev => (prev?.id === id ? null : prev));
+        aoConfirmar?.();
       },
     });
   };
@@ -4506,7 +4565,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                 className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums backdrop-blur-sm border"
                 style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
               >
-                {new Date().toLocaleString('pt-BR')}
+                <RelogioPdv />
               </span>
               {checkoutMode && (
                 <span className="ml-2 px-3 py-1.5 rounded-md bg-black text-[#FFC107] text-sm uppercase font-black tracking-widest shrink-0">
@@ -4865,7 +4924,12 @@ Para não cobrar nada, cancele a venda (F9).`,
                           >
                             <span className="tabular-nums text-gray-500 truncate">{p.ref || p.ean13 || '—'}</span>
                             <span className="truncate font-semibold text-gray-900">{(p.name || '').toUpperCase()}</span>
-                            <span className="text-right font-bold tabular-nums" style={{ color: MONEY }}>R$ {fmt(p.price)}</span>
+                            <span className="text-right font-bold tabular-nums" style={{ color: MONEY }}>
+                              {ofertaDoItem(p.id, precoDeVenda(p)) && (
+                                <span className="mr-1.5 text-xs font-normal text-gray-400 line-through">{fmt(p.price)}</span>
+                              )}
+                              R$ {fmt(precoDeVenda(p))}
+                            </span>
                           </button>
                         ))}
                       </div>
@@ -4926,7 +4990,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                     Enter (campo vazio) = SUBTOTAL
                   </span>
                   <span className="opacity-40">·</span>
-                  <span><b>F4</b> Subtotal · <b>F5</b> Pagamentos · <b>F6</b> Desconto</span>
+                  <span><b>F4</b> / <b>F5</b> Subtotal · <b>F6</b> Desconto (no fechamento)</span>
                   <span className="opacity-40">·</span>
                   <span><b>F7</b> Consulta preço · <b>F8</b> Buscar produto</span>
                   <span className="opacity-40">·</span>
@@ -5121,7 +5185,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                                 <button
                                   onClick={() => removePayment(i)}
                                   className="p-1.5 rounded glass-red shimmer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                                  title="Remover (Enter / Del)"
+                                  title="Remover (Enter)"
                                 >
                                   <Trash2 size={12} className="relative z-[2]" />
                                 </button>
@@ -5622,7 +5686,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                   <div className="border-t border-b border-dashed border-gray-400 py-1 text-[11px] mb-2 space-y-0.5">
                     <div>Operador: {currentUser.name.toUpperCase()}</div>
                     <div>Data: {new Date(s.date).toLocaleString('pt-BR')}</div>
-                    <div>Venda: {s.id.slice(0, 8).toUpperCase()}</div>
+                    <div>Venda: {numeroCupom(s.id)}</div>
                     {s.cpfCnpjNota && <div>CPF/CNPJ: {maskCpfCnpj(s.cpfCnpjNota)}</div>}
                   </div>
                   <div className="text-[11px]">
@@ -5818,7 +5882,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                       try {
                         // Escopado na loja: sem isso o prefixo de um cupom do
                         // SuperMax era encontrado aqui dentro da MaxLook.
-                        const results = await Storage.getSalesByIdPrefix(v, 10, pdvMode);
+                        const results = await Storage.getSalesByCupom(v, 10, pdvMode);
                         if (results.length > 0) setReprintList(results);
                       } catch { /* silêncio: mantém a lista atual */ }
                     }
@@ -5831,7 +5895,7 @@ Para não cobrar nada, cancele a venda (F9).`,
               </div>
               <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
                 {reprintList
-                  .filter(s => !reprintSearch || s.id.toLowerCase().startsWith(reprintSearch.toLowerCase()))
+                  .filter(s => !reprintSearch || numeroCupom(s.id).endsWith(reprintSearch.toUpperCase()))
                   .map((s, idx) => (
                   <button
                     key={s.id}
@@ -5843,7 +5907,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                     <span className="tabular-nums text-gray-400 text-xs self-center">{String(idx + 1).padStart(2, '0')}</span>
                     <span className="tabular-nums text-gray-700 self-center">{new Date(s.date).toLocaleString('pt-BR')}</span>
                     <span className="text-gray-500 text-xs self-center truncate">
-                      Cupom <b className="font-mono">{s.id.slice(0, 8).toUpperCase()}</b> · {s.items.length} {s.items.length === 1 ? 'item' : 'itens'}
+                      Cupom <b className="font-mono">{numeroCupom(s.id)}</b> · {s.items.length} {s.items.length === 1 ? 'item' : 'itens'}
                     </span>
                     <span className="text-right font-bold tabular-nums text-lg self-center" style={{ color: MONEY }}>R$ {fmt(s.total)}</span>
                   </button>
@@ -6350,7 +6414,12 @@ Para não cobrar nada, cancele a venda (F9).`,
                         >
                           {controla ? fmtQty(p.stock, p.unit) : '∞'}
                         </span>
-                        <span className="text-right font-bold tabular-nums" style={{ color: active ? YELLOW : MONEY }}>R$ {fmt(p.price)}</span>
+                        <span className="text-right font-bold tabular-nums" style={{ color: active ? YELLOW : MONEY }}>
+                          {ofertaDoItem(p.id, precoDeVenda(p)) && (
+                            <span className={`mr-1.5 text-xs font-normal line-through ${active ? 'text-white/60' : 'text-gray-400'}`}>{fmt(p.price)}</span>
+                          )}
+                          R$ {fmt(precoDeVenda(p))}
+                        </span>
                       </button>
                     ); })
                   )}
@@ -7725,7 +7794,7 @@ Para não cobrar nada, cancele a venda (F9).`,
                     <div className="border-t border-b border-dashed border-gray-400 py-1 text-[11px] mb-2 space-y-0.5">
                       <div>Operador: {currentUser.name.toUpperCase()}</div>
                       <div>Data: {new Date(s.date).toLocaleString('pt-BR')}</div>
-                      <div>Venda: {s.id.slice(0, 8).toUpperCase()}</div>
+                      <div>Venda: {numeroCupom(s.id)}</div>
                       {s.cpfCnpjNota && <div>CPF/CNPJ: {maskCpfCnpj(s.cpfCnpjNota)}</div>}
                     </div>
                     <div className="text-[11px]">
@@ -7798,19 +7867,34 @@ Para não cobrar nada, cancele a venda (F9).`,
                         if (!target) return;
                         askSupervisorAuth(
                           'Estornar venda',
-                          `Cupom ${target.id.slice(0, 8).toUpperCase()} — R$ ${fmt(target.total)}\n\nEssa operação devolve o estoque, cancela dívida em fiado (se houver) e marca a venda como REVERTIDA. Afeta o fechamento de caixa. Peça ao supervisor para digitar o PIN.`,
+                          `Cupom ${numeroCupom(target.id)} — R$ ${fmt(target.total)}\n\nEssa operação devolve o estoque, cancela dívida em fiado (se houver) e marca a venda como REVERTIDA. Afeta o fechamento de caixa. Peça ao supervisor para digitar o PIN.`,
                           async () => {
                             try {
+                              // Mesma volta de estoque da devolução: sem ela a tela
+                              // seguia com o estoque de antes do estorno e acusava
+                              // ruptura de mercadoria que já tinha voltado.
                               if (runsLocalOnly) {
                                 setTrainingSalesHistory(prev => prev.filter(x => x.id !== target.id));
+                                const devolvido = new Map<string, number>();
+                                for (const it of target.items) {
+                                  devolvido.set(it.id, (devolvido.get(it.id) ?? 0) + it.quantity);
+                                }
+                                setProducts(prev => prev.map(p => {
+                                  const qtd = devolvido.get(p.id);
+                                  if (qtd === undefined || p.controlStock === false) return p;
+                                  return { ...p, stock: parseFloat(((p.stock ?? 0) + qtd).toFixed(3)) };
+                                }));
                               } else {
                                 await Storage.reverseSale(target.id);
+                                // O servidor já devolveu; aqui só relê os itens do cupom.
+                                await atualizarProdutos(target.items.map(it => it.id))
+                                  .catch(() => { /* estorno feito; a tela se acerta na próxima ressincronização */ });
                               }
                               setReversalsCount(c => c + 1);
                               setReprintSale(null);
                               showAlert({
                                 title: 'Venda estornada',
-                                message: `Cupom ${target.id.slice(0, 8).toUpperCase()} revertida. Total de R$ ${fmt(target.total)} debitado das vendas.`,
+                                message: `Cupom ${numeroCupom(target.id)} revertida. Total de R$ ${fmt(target.total)} debitado das vendas.`,
                                 variant: 'info',
                               });
                             } catch (err: any) {

@@ -14,7 +14,7 @@ import { useFilial, FILIAL_META } from '../contexts/FilialContext';
 import { assinarTabelas, semRemovidos } from '../lib/realtime';
 import { PDFReport } from '../lib/pdfReport';
 import { Sale, Account, CreditInstallment, Payment } from '../types';
-import { maskCurrency, parseCurrencyToNumber, formatBRL } from '../lib/masks';
+import { maskCurrency, parseCurrencyToNumber, formatBRL, numeroCupom } from '../lib/masks';
 import { CAMPO, Obrigatorio, CabecalhoForm, RodapeForm, Segmentado } from './FormCadastro';
 import { useConfirmDialog, useAlertDialog } from './ConfirmDialog';
 import { explicarErro } from '../lib/erros';
@@ -528,7 +528,7 @@ export default function FinanceiroModule() {
       <div key={`sale-${s.id}`}>
         <div className="linha-caixa" style={{ ['--linha-cor' as string]: credit ? '#7c3aed' : 'var(--money)' }}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="min-w-0" title={`Venda ${s.id.slice(0, 8)}`}>
+            <div className="min-w-0" title={`Venda ${numeroCupom(s.id)}`}>
               <p className="font-bold text-base text-gray-900 flex flex-wrap items-center gap-2">
                 Venda · {formas}
                 {credit && (

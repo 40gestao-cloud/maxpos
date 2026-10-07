@@ -6,6 +6,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Sale, Account, CreditInstallment } from '../types';
+import { numeroCupom } from './masks';
 
 // Mascara CPF/CNPJ a partir de string só com dígitos (11 = CPF, 14 = CNPJ).
 const maskDoc = (digits: string): string => {
@@ -72,7 +73,7 @@ export const PDFReport = {
     divider(y); y += 3;
 
     // Dados da venda
-    left(`Cupom: ${sale.id.slice(0, 8).toUpperCase()}`, y, 7.5); y += lineH;
+    left(`Cupom: ${numeroCupom(sale.id)}`, y, 7.5); y += lineH;
     left(`Data:  ${new Date(sale.date).toLocaleString('pt-BR')}`, y, 7.5); y += lineH;
     if (extras.operatorName) { left(`Op:    ${extras.operatorName.toUpperCase()}`, y, 7.5); y += lineH; }
     if (sale.cpfCnpjNota) { left(`Doc:   ${maskDoc(sale.cpfCnpjNota)}`, y, 7.5); y += lineH; }
@@ -146,7 +147,7 @@ export const PDFReport = {
     // Sempre baixa via Blob + <a download>. Evita que o navegador abra o PDF
     // numa aba/janela e tire o operador do PDV — no supermercado o recibo é
     // impresso na térmica externa, o "PDF" aqui é só backup em disco.
-    const filename = `recibo-${sale.id.slice(0, 8)}.pdf`;
+    const filename = `recibo-${numeroCupom(sale.id)}.pdf`;
     const blob = doc.output('blob');
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -218,7 +219,7 @@ export const PDFReport = {
             return `${methodLabel[p.method] ?? p.method}: R$ ${p.amount.toFixed(2)}`;
           });
           return [
-            `#${s.id.slice(0, 8)}`,
+            `#${numeroCupom(s.id)}`,
             new Date(s.date).toLocaleString(),
             `R$ ${s.total.toFixed(2)}`,
             paymentLines.join('\n'),

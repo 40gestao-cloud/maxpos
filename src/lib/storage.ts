@@ -1322,22 +1322,24 @@ export const Storage = {
     if (error) throw error;
   },
 
-  // Busca vendas por prefixo do id (uso: reimpressão por número de cupom).
-  // Case-insensitive. Retorna no máximo 10 matches, mais recentes primeiro.
+  // Busca vendas pelo número do cupom (uso: reimpressão). O número impresso
+  // são os 6 ÚLTIMOS caracteres do id (`numeroCupom`, padrão LogMax), então
+  // o trecho digitado casa com o FIM do id. Case-insensitive. Retorna no
+  // máximo 10 matches, mais recentes primeiro.
   // pdvMode: a busca alimenta a TROCA/DEVOLUCAO. Sem escopo, digitar o
-  // prefixo de um cupom do SuperMax no PDV da MaxLook achava a venda e
+  // número de um cupom do SuperMax no PDV da MaxLook achava a venda e
   // devolvia mercadoria de outra empresa ao estoque errado.
-  getSalesByIdPrefix: async (
-    prefix: string,
+  getSalesByCupom: async (
+    cupom: string,
     limit: number = 10,
     pdvMode?: Sale['pdvMode'],
   ): Promise<Sale[]> => {
-    const p = prefix.trim();
+    const p = cupom.trim();
     if (p.length < 4) return [];
     const q = escopoFilial(supabase
       .from('sales')
       .select('*, sale_items(*), sale_payments(*)')
-      .ilike('id', `${p.toLowerCase()}%`), pdvMode);
+      .ilike('id', `%${p.toLowerCase()}`), pdvMode);
     const { data, error } = await q
       .order('date', { ascending: false })
       .limit(limit);

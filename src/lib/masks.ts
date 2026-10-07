@@ -144,3 +144,9 @@ export const isValidCpfCnpj = (value: string): boolean => {
   if (d.length === 14) return isValidCNPJ(d);
   return false;
 };
+
+// Número do cupom = 6 últimos caracteres do id da venda, em maiúsculas — o
+// mesmo padrão do LogMax (reimpressão, devolução, histórico). Cabeçalho do
+// PDV, recibo, PDF e busca da devolução usam este, para o operador achar a
+// venda pelo número que viu e imprimiu.
+export const numeroCupom = (id: string): string => String(id ?? '').slice(-6).toUpperCase();
