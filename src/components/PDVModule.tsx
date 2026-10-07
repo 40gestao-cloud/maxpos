@@ -204,6 +204,20 @@ const ehPagamentoEletronico = (p: Payment): boolean =>
   p.method === 'pix' || p.method === 'credito' || p.method === 'debito';
 
 // Item vendido a peso (ou com quantidade quebrada): não se tira "uma unidade".
+// QR de cobrança como SVG (data URL), não PNG. O PNG de 320/280px era
+// mostrado em 288/208px: o navegador reamostrava a imagem e cada borda de
+// módulo virava cinza — a câmera do MaxBank demorava (ou desistia) de ler.
+// Vetor escala sem borrar, e o `qrcode` já emite shape-rendering crispEdges.
+//
+// Nível L e margem de 4 módulos: QR em tela não sofre dano, então a
+// redundância do M só adensava a grade (37×37 → 33×33 para a URL de
+// cobrança) — módulo maior no mesmo espaço lê mais rápido e de mais longe.
+// 4 módulos de margem é o mínimo da norma; com 2 alguns leitores hesitam.
+const gerarQrCobranca = async (valor: string): Promise<string> => {
+  const svg = await QRCode.toString(valor, { type: 'svg', margin: 4, errorCorrectionLevel: 'L' });
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
+
 const ehQtdFracionada = (it: { unit?: string; quantity: number }): boolean => {
   const u = (it.unit || '').toUpperCase();
   return u === 'KG' || u === 'G' || !Number.isInteger(it.quantity);
@@ -3506,7 +3520,7 @@ Para não cobrar nada, cancele a venda (F9).`,
         if (insertErr) throw insertErr;
       }
 
-      const dataUrl = await QRCode.toDataURL(payload, { width: 320, margin: 2, errorCorrectionLevel: 'M' });
+      const dataUrl = await gerarQrCobranca(payload);
       setPixAmount(finalAmount);
       setPixUuid(uuid);
       setPixQrDataUrl(dataUrl);
@@ -4066,10 +4080,7 @@ Para não cobrar nada, cancele a venda (F9).`,
             pdv_mode: pdvMode,
           });
         if (insertErr) throw insertErr;
-        qrDataUrl = await QRCode.toDataURL(
-          buildCartaoQrValue(uuid),
-          { width: 280, margin: 2, errorCorrectionLevel: 'M' },
-        );
+        qrDataUrl = await gerarQrCobranca(buildCartaoQrValue(uuid));
       }
       setCartaoModal({ metodo, amount, parcelas, uuid, qrDataUrl });
     } catch (err: any) {
@@ -6462,6 +6473,13 @@ Para não cobrar nada, cancele a venda (F9).`,
               <div className="p-5 space-y-4 flex flex-col items-center">
                 <div className="text-sm text-gray-600 text-center">
                   Aponte a câmera do <b>MaxBank</b> para o QR Code abaixo
+                  {/* QR em formato URL abre direto na Área do Cliente pela
+                      câmera do próprio celular — costuma ler mais rápido que
+                      o leitor dentro do navegador. O formato MAX-PIX não abre
+                      nada fora do MaxBank, então a dica só aparece com URL. */}
+                  {/^https?:\/\//i.test(buildPixQrValue(pixUuid)) && (
+                    <span className="block text-xs text-gray-500 mt-0.5">ou a câmera do próprio celular</span>
+                  )}
                 </div>
                 <div className="p-3 bg-white border-2 border-gray-300">
                   {pixQrDataUrl ? (
