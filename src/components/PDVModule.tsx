@@ -4531,50 +4531,57 @@ Para não cobrar nada, cancele a venda (F9).`,
               {onExitToMenu && (
                 <button
                   onClick={tryExitToMenu}
-                  className="shrink-0 glass-blue px-5 py-2.5 rounded-lg flex items-center gap-2 font-bold uppercase tracking-wide text-base md:text-lg text-white border-2 transition-all"
+                  className="shrink-0 glass-blue px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold uppercase tracking-wide text-sm text-white border-2 transition-all"
                   style={{ borderColor: '#FFC107' }}
                   title="Abrir menu / Sair do PDV (Ctrl+M)"
                 >
-                  <Menu size={20} /> MENU
+                  <Menu size={16} /> MENU
                 </button>
               )}
-              <span
-                className="text-3xl tracking-wide font-black shrink-0"
-                style={{ color: NAVY_DARK, textShadow: '0 1px 0 rgba(255,255,255,0.35)' }}
-              >
-                MAXPOS
-              </span>
+              {/* Marca em arte (482x180, transparente, ~8 KB) no lugar do texto
+                  MAXPOS. Mesmo arquivo e altura no CabecalhoPdv do LogMax.
+                  -my-1: os 56px passam dos botões da faixa, e sem a margem
+                  negativa a faixa engordava só por causa dela. */}
+              <img
+                src="/icon-maxpos-header.png"
+                alt="MaxPOS"
+                className="h-14 -my-1 w-auto shrink-0 select-none"
+                draggable={false}
+              />
               {/* PDV Mode badge — identifica qual PDV o operador está.
                   Sem picker; troca é feita pela sidebar (aba). */}
               <span
-                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2 flex items-center gap-2"
-                style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: modeMeta.accentDark }}
+                className="shrink-0 pl-1 pr-3 py-1 rounded-md text-base font-black tracking-wide border-2 flex items-center gap-2"
+                style={{ background: NAVY_DARK, color: modeMeta.accent, borderColor: '#ffffff' }}
                 title={`Você está operando o PDV ${modeMeta.label}`}
               >
-                <img src={modeMeta.logo} alt={modeMeta.label} className="w-6 h-6 object-contain rounded" />
+                {/* Placa branca e 36px, como o CabecalhoPdv do LogMax: a arte é
+                    azul-marinho e, solta sobre o navy do selo, o anel azul
+                    sumia e sobrava só o dourado — parecia o brasão 3D antigo. */}
+                <img src={modeMeta.logo} alt={modeMeta.label} className="w-9 h-9 object-contain rounded bg-white" />
                 {modeMeta.label.toUpperCase()}
               </span>
               <span
-                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border"
-                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
+                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
               >
                 CAIXA 01
               </span>
               <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border truncate max-w-[260px]"
-                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2 truncate max-w-[260px]"
+                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
               >
                 OP: {currentUser.name.toUpperCase()}
               </span>
               <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold backdrop-blur-sm border"
-                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
+                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
               >
                 CUPOM: {cupomSeq}
               </span>
               <span
-                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums backdrop-blur-sm border"
-                style={{ background: 'rgba(255,255,255,0.92)', color: NAVY_DARK, borderColor: 'rgba(23,37,84,0.15)' }}
+                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums border-2"
+                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
               >
                 <RelogioPdv />
               </span>
@@ -5980,20 +5987,18 @@ Para não cobrar nada, cancele a venda (F9).`,
               style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
             >
               {/* A logo daqui NÃO é a mesma dos menus. O `modeMeta.logo` é o
-                  selo pequeno (256x194), que servia para o ícone de 24px e
-                  ficava macio e estreito ampliado 3x nesta tela — que é vista
-                  de longe, pelo cliente do outro lado do caixa.
+                  selo leve (`icon-supermax.png`, 503x388), feito para o ícone
+                  de 24px; esta tela é vista de longe, pelo cliente do outro
+                  lado do caixa, e usa `logo-supermax-agradecimento.png`
+                  (1571x1215, transparente).
 
-                  O LogMax já resolvia assim e é de onde veio o arquivo: lá
-                  `icon-supermax-view.png` é o selo dos menus e
-                  `icon-supermax.png` (1280x720) é o desta tela. Trazer os dois
-                  papéis para cá deixa o agradecimento do MaxPOS igual ao do
-                  LogMax — mesmo arquivo, mesmo teto —, que é a paridade que o
-                  aluno percebe quando troca de sistema.
+                  O LogMax usa os mesmos dois arquivos com os mesmos nomes — é
+                  a paridade que o aluno percebe quando troca de sistema. Ao
+                  trocar a arte, trocar nos dois repos.
 
                   Trocar o `modeMeta.logo` inteiro não servia: ele também é o
                   ícone de 24-36px do menu, do seletor de empresa e do toast, e
-                  um 16:9 encolhe dentro daqueles quadrados. */}
+                  carregar 1571px ali é peso à toa. */}
               <img
                 src={pdvMode === 'supermax' ? '/logo-supermax-agradecimento.png' : modeMeta.logo}
                 alt={modeMeta.label}
