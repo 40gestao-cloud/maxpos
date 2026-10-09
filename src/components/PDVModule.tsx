@@ -4527,7 +4527,7 @@ Para não cobrar nada, cancele a venda (F9).`,
             className="px-4 py-3 flex items-center justify-between shrink-0 border-b-2 gap-3"
             style={{ background: modeMeta.accent, borderColor: modeMeta.accentDark }}
           >
-            <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-4 min-w-0 flex-1 overflow-hidden">
               {onExitToMenu && (
                 <button
                   onClick={tryExitToMenu}
@@ -4561,44 +4561,49 @@ Para não cobrar nada, cancele a venda (F9).`,
                 <img src={modeMeta.logo} alt={modeMeta.label} className="w-9 h-9 object-contain rounded bg-white" />
                 {modeMeta.label.toUpperCase()}
               </span>
-              <span
-                className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
-                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
-              >
-                CAIXA 01
-              </span>
-              <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2 truncate max-w-[260px]"
-                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
-              >
-                OP: {currentUser.name.toUpperCase()}
-              </span>
-              <span
-                className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
-                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
-              >
-                CUPOM: {cupomSeq}
-              </span>
-              <span
-                className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums border-2"
-                style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
-              >
-                <RelogioPdv />
-              </span>
-              {checkoutMode && (
-                <span className="ml-2 px-3 py-1.5 rounded-md bg-black text-[#FFC107] text-sm uppercase font-black tracking-widest shrink-0">
-                  Fechamento
-                </span>
-              )}
-              {isTraining && (
+              {/* Etiquetas do caixa encostadas à direita, junto dos botões,
+                  como no CabecalhoPdv do LogMax: MENU, marca e selo ficam com
+                  folga à esquerda em vez de espremidos contra elas. */}
+              <div className="ml-auto flex items-center gap-3 min-w-0 overflow-hidden">
                 <span
-                  className="ml-2 px-3 py-1.5 rounded-md text-sm uppercase font-black tracking-widest shrink-0 border-2 flex items-center gap-1.5"
-                  style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
-                  title="Modo Treinamento — nada é salvo"
+                  className="shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
+                  style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
                 >
-                  🎓 TREINAMENTO
+                  CAIXA 01
                 </span>
-              )}
+                <span
+                  className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2 truncate max-w-[260px]"
+                  style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
+                >
+                  OP: {currentUser.name.toUpperCase()}
+                </span>
+                <span
+                  className="hidden md:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold border-2"
+                  style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
+                >
+                  CUPOM: {cupomSeq}
+                </span>
+                <span
+                  className="hidden lg:inline-flex shrink-0 px-3 py-1.5 rounded-md text-sm font-bold tabular-nums border-2"
+                  style={{ background: '#ffffff', color: NAVY_DARK, borderColor: NAVY_DARK }}
+                >
+                  <RelogioPdv />
+                </span>
+                {checkoutMode && (
+                  <span className="ml-2 px-3 py-1.5 rounded-md bg-black text-[#FFC107] text-sm uppercase font-black tracking-widest shrink-0">
+                    Fechamento
+                  </span>
+                )}
+                {isTraining && (
+                  <span
+                    className="ml-2 px-3 py-1.5 rounded-md text-sm uppercase font-black tracking-widest shrink-0 border-2 flex items-center gap-1.5"
+                    style={{ background: NAVY_DARK, color: YELLOW, borderColor: YELLOW_DARK }}
+                    title="Modo Treinamento — nada é salvo"
+                  >
+                    🎓 TREINAMENTO
+                  </span>
+                )}
+              </div>
             </div>
             {cashSession && !checkoutMode && cart.length === 0 && payments.length === 0 && (
               <button
